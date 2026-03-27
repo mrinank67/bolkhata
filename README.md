@@ -1,4 +1,3 @@
-Markdown
 # 🗣️ Voice Bahi-Khata (Smart Inventory PoC)
 
 A lightning-fast, voice-first inventory management system designed to replace traditional pen-and-paper ledgers (*bahi-khatas*) in rural Indian shops (*kiranas*). 
