@@ -1,7 +1,3 @@
-Here is the complete, fully updated README.md containing all of our latest features, including the Udhaar (credit) system, the Hinglish translation, and the Vercel deployment fixes.
-
-You can easily copy the block below and save it directly as README.md in your project folder.
-
 Markdown
 # 🗣️ Voice Bahi-Khata (Smart Inventory PoC)
 
