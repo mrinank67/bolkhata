@@ -23,46 +23,48 @@ This Proof of Concept (PoC) prioritizes extreme low latency, ensuring the AI can
 
 **1. Clone the repository**
 ```bash
-git clone [https://github.com/YOUR_USERNAME/voice-bahi-khata.git](https://github.com/YOUR_USERNAME/voice-bahi-khata.git)
+git clone https://github.com/YOUR_USERNAME/voice-bahi-khata.git
 cd voice-bahi-khata
-2. Set up a Virtual Environment
+```
 
-Bash
+**2. Set up a Virtual Environment**
+```bash
 python -m venv venv
 # On Windows:
 venv\Scripts\activate
 # On Mac/Linux:
 source venv/bin/activate
-3. Install Dependencies
+```
 
-Bash
+**3. Install Dependencies**
+```bash
 pip install -r requirements.txt
 pip install python-dotenv uvicorn
-4. Set up Environment Variables
-Create a .env file in the root directory and add your Groq API key:
+```
 
-Plaintext
+**4. Set up Environment Variables**
+Create a `.env` file in the root directory and add your Groq API key:
+```text
 GROQ_API_KEY=gsk_your_api_key_here
-5. Run the Server
+```
 
-Bash
+**5. Run the Server**
+```bash
 uvicorn main:app --reload
-Once running, open http://localhost:8000/index.html (or serve the HTML file via a local live server) and hold the microphone button to start testing!
+```
+*Once running, open `http://localhost:8000/index.html` (or serve the HTML file via a local live server) and hold the microphone button to start testing!*
 
-🎙️ Example Voice Commands to Test
-Standard Sale: "Do colgate aur ek maggi de do."
+## 🎙️ Example Voice Commands to Test
+* **Standard Sale:** *"Do colgate aur ek maggi de do."*
+* **Restock:** *"Paanch naye lux aaye hain."*
+* **Credit (Udhaar):** *"Ek sabun Suresh ke khaate mein likh do."*
+* **Mixed Cash & Credit:** *"Ek maggi de do, aur do lux Ramesh ke khaate mein likh do."*
+* **Wipe Stock:** *"Saari maggi bech di."*
+* **Inquiry:** *"Bhai, toothpaste kitna bacha hai dekhna."*
 
-Restock: "Paanch naye lux aaye hain."
+## ☁️ Deployment Notes (Vercel)
+This PoC is configured to be deployable on Vercel via the included `vercel.json` file. 
 
-Credit (Udhaar): "Ek sabun Suresh ke khaate mein likh do."
+**⚠️ Important SQLite Warning:** Vercel is a serverless platform. The codebase currently routes the SQLite database to `/tmp/inventory.db` to prevent read-only crash errors. While the voice processing and AI routing will work perfectly in the cloud, the `/tmp` database will reset every time the Vercel server spins down. 
 
-Mixed Cash & Credit: "Ek maggi de do, aur do lux Ramesh ke khaate mein likh do."
-
-Wipe Stock: "Saari maggi bech di."
-
-Inquiry: "Bhai, toothpaste kitna bacha hai dekhna."
-
-☁️ Deployment Notes (Vercel)
-This PoC is configured to be deployable on Vercel via the included vercel.json file.
-
-⚠️ Important SQLite Warning: Vercel is a serverless platform. The codebase currently routes the SQLite database to /tmp/inventory.db to prevent read-only crash errors. While the voice processing and AI routing will work perfectly in the cloud, the /tmp database will reset every time the Vercel server spins down.
+**Next Steps for Production:** To make the inventory permanent in the cloud, swap the SQLite connection in `main.py` to a managed PostgreSQL database like [Neon](https://neon.tech/) or [Supabase](https://supabase.com/).
