@@ -1,0 +1,14 @@
+# Virtual Environments
+.venv/
+env/
+
+# Python Cache (Hidden files Python makes automatically)
+__pycache__/
+*.pyc
+
+# Local Databases (Since SQLite resets on Vercel anyway)
+*.db
+*.sqlite3
+
+# Environment files (Never upload local API keys!)
+.env
