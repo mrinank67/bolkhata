@@ -65,30 +65,38 @@
     <script>
       let mediaRecorder;
       let audioChunks = [];
+      let activeStream; // We need to track the stream to kill it later
 
       const recordBtn = document.getElementById("recordBtn");
       const status = document.getElementById("status");
       const resultDiv = document.getElementById("result");
 
-      // Request microphone access on load
-      navigator.mediaDevices
-        .getUserMedia({ audio: true })
-        .then((stream) => {
-          mediaRecorder = new MediaRecorder(stream);
+      // --- DESKTOP AND MOBILE EVENT LISTENERS ---
+      const startRecording = async (e) => {
+        if (e.cancelable) e.preventDefault();
+
+        try {
+          // 1. Only turn on the mic when the button is actively pressed
+          activeStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+          mediaRecorder = new MediaRecorder(activeStream);
+          audioChunks = [];
 
           mediaRecorder.ondataavailable = (event) => {
             audioChunks.push(event.data);
           };
 
           mediaRecorder.onstop = async () => {
+            // 2. CRITICAL FIX: Kill the mic connection completely to remove the Chrome indicator
+            activeStream.getTracks().forEach((track) => track.stop());
+
             status.innerText = "⏳ Processing...";
             const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
-            audioChunks = []; // Reset for the next time they press the button
 
             const formData = new FormData();
             formData.append("audio", audioBlob, "recording.webm");
 
-            // Auto-detect if we are on a laptop or in the Vercel cloud
             const isLocal =
               window.location.hostname === "localhost" ||
               window.location.hostname === "127.0.0.1";
@@ -106,7 +114,6 @@
 
               if (data.status === "success") {
                 status.innerText = `Heard: "${data.raw_text}"`;
-                // Backend controls emojis and line breaks now!
                 resultDiv.innerText = data.message;
                 resultDiv.style.color = "green";
               } else {
@@ -121,22 +128,15 @@
               resultDiv.style.color = "red";
             }
           };
-        })
-        .catch((err) => {
-          console.error("Microphone access denied:", err);
-          status.innerText =
-            "❌ Microphone access denied. Please allow permissions.";
-        });
 
-      // --- DESKTOP AND MOBILE EVENT LISTENERS ---
-      const startRecording = (e) => {
-        if (e.cancelable) e.preventDefault(); // Stop mobile menus from popping up
-
-        if (mediaRecorder && mediaRecorder.state === "inactive") {
           mediaRecorder.start();
           status.innerText = "🔴 Listening... (Sun raha hoon)";
           resultDiv.innerText = "";
-          recordBtn.style.backgroundColor = "#ff4444"; // Turn red while recording
+          recordBtn.style.backgroundColor = "#ff4444";
+        } catch (err) {
+          console.error("Microphone access denied:", err);
+          status.innerText =
+            "❌ Microphone access denied. Please allow permissions.";
         }
       };
 
@@ -145,21 +145,21 @@
 
         if (mediaRecorder && mediaRecorder.state === "recording") {
           mediaRecorder.stop();
-          recordBtn.style.backgroundColor = "#4CAF50"; // Turn back to green
+          recordBtn.style.backgroundColor = "#4CAF50";
         }
       };
 
       // Desktop Mouse Events
       recordBtn.addEventListener("mousedown", startRecording);
       recordBtn.addEventListener("mouseup", stopRecording);
-      recordBtn.addEventListener("mouseleave", stopRecording); // If they drag the mouse off the button
+      recordBtn.addEventListener("mouseleave", stopRecording);
 
       // Mobile Touch Events
       recordBtn.addEventListener("touchstart", startRecording, {
         passive: false,
       });
       recordBtn.addEventListener("touchend", stopRecording);
-      recordBtn.addEventListener("touchcancel", stopRecording); // If finger slides off the screen
+      recordBtn.addEventListener("touchcancel", stopRecording);
     </script>
   </body>
 </html>
