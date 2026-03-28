@@ -24,8 +24,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Detect if we are on Vercel or Local
+if os.environ.get("VERCEL"):
+    DB_PATH = '/tmp/inventory.db' # Cloud path
+else:
+    DB_PATH = 'inventory.db'      # Local path
+
 def init_db():
-    conn = sqlite3.connect('/tmp/inventory.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     # Existing stock table
     c.execute('''CREATE TABLE IF NOT EXISTS stock (item TEXT PRIMARY KEY, quantity INTEGER)''')
@@ -96,28 +102,20 @@ async def process_voice(audio: UploadFile = File(...)):
                     "content": """
                     You are an AI for a rural Indian shop. Extract a list of "transactions" from the user's speech.
                     
-                    Rules for 'action':
-                    - "decrease": Selling, giving, or reducing stock ("bech diya", "de do", "nikal do").
-                    - "increase": Buying, receiving, or adding stock ("aaya hai", "kharida", "laaye").
-                    - "inquiry": Asking about stock levels ("kitna bacha hai").
+                    Allowed Actions:
+                    1. "decrease": Selling or reducing stock ("bech diya", "de do").
+                    2. "increase": Buying or adding stock ("aaya hai", "kharida").
+                    3. "inquiry": Checking physical stock of an item ("kitna bacha hai").
+                    4. "ledger_inquiry": Checking a customer's account/debt ("khata dikhao", "hisab", "udhaar").
+                    5. "clear_ledger": Settling debt or wiping an account clean ("khata clear kar do", "udhaar chuka diya", "paise de diye").
                     
-                    Rules for 'raw_item' & 'quantity':
-                    - 'raw_item' MUST be transliterated into English characters (e.g., "maggi").
-                    - 'quantity': Use "ALL" if they say "saari/sab", 0 for inquiries, or an integer.
+                    Extraction Rules:
+                    - 'raw_item': Transliterate to English (e.g., "maggi"). If the action is a ledger inquiry or clear ledger, set to "".
+                    - 'quantity': Integer. Use "ALL" if they say "saari/sab". Use 0 for inquiries or clearing ledgers.
+                    - 'customer_name': Extract the name in English (e.g., "ramesh") ONLY if they mention an account, credit, or a specific person. Otherwise, set to "".
+                    - 'hinglish_text': Translate the raw Devanagari input into the Latin alphabet.
                     
-                    NEW RULE: 'customer_name' (Udhaar / Credit)
-                    - If the user explicitly mentions giving an item on credit, in an account, or to a specific person (e.g., "Ramesh ke khaate mein likh do"), extract that person's name. Transliterate to English (e.g., "ramesh").
-                    - CRITICAL ANTI-BLEED RULE: The 'customer_name' ONLY applies to the specific item it is spoken with. Do NOT apply the name to other items in the sentence unless explicitly told to. If an item is a regular cash sale (just "de do"), its 'customer_name' MUST be null.
-                    
-                    Output Format:
-                    You MUST return ONLY valid JSON in this exact structure:
-                    {
-                      "hinglish_text": "translated text here",
-                      "transactions": [
-                        {"action": "decrease", "raw_item": "maggi", "quantity": 1, "customer_name": null},
-                        {"action": "decrease", "raw_item": "soap", "quantity": 2, "customer_name": "ramesh"}
-                      ]
-                    }
+                    You MUST return ONLY valid JSON. Do not include any text outside the JSON block.
                     """
                 },
                 {
@@ -145,16 +143,55 @@ async def process_voice(audio: UploadFile = File(...)):
     results = [] 
 
     for txn in transactions:
-        raw_item = txn.get("raw_item", "").lower()
         action = txn.get("action")
+        customer_name = txn.get("customer_name")
         raw_qty = txn.get("quantity", 1)
-        customer_name = txn.get("customer_name") # Check if it's an Udhaar transaction
+        
+        c = conn.cursor()
+
+        # --- Handle Ledger Inquiries ---
+        if action == "ledger_inquiry":
+            if not customer_name:
+                results.append("❌ Kiska khaata dekhna hai? (Please specify a name).")
+                continue
+                
+            c.execute("SELECT item, SUM(quantity) FROM udhaar WHERE customer_name=? GROUP BY item", (customer_name,))
+            rows = c.fetchall()
+            
+            if not rows:
+                results.append(f"✅ {customer_name.capitalize()} ka khaata clear hai. (No dues)")
+            else:
+                dues = ", ".join([f"{qty} {item}" for item, qty in rows])
+                results.append(f"📒 {customer_name.capitalize()} owes: {dues}.")
+            continue
+
+        # --- NEW: Handle Clearing Ledgers ---
+        if action == "clear_ledger":
+            if not customer_name:
+                results.append("❌ Kiska khaata clear karna hai? (Please specify a name).")
+                continue
+                
+            # Delete all rows belonging to this customer
+            c.execute("DELETE FROM udhaar WHERE customer_name=?", (customer_name,))
+            
+            # Check if we actually deleted anything
+            if c.rowcount > 0:
+                results.append(f"💰 {customer_name.capitalize()} ka udhaar clear ho gaya! (Account settled).")
+            else:
+                results.append(f"ℹ️ {customer_name.capitalize()} ke naam par koi udhaar nahi tha. (No dues found).")
+            continue
+
+        # --- Normal Stock Processing ---
+        raw_item = txn.get("raw_item")
+        if not raw_item:
+            continue
+            
+        raw_item = raw_item.lower()
         
         # Fuzzy Match
         best_match, score = process.extractOne(raw_item, standard_items)
         standard_item = brand_to_item_map[best_match] if score > 70 else raw_item
         
-        c = conn.cursor()
         c.execute("SELECT quantity FROM stock WHERE item=?", (standard_item,))
         row = c.fetchone()
         

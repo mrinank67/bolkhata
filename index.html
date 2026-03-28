@@ -1,14 +1,23 @@
 <!doctype html>
-<html lang="hi">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Voice Bahi-Khata PoC</title>
+    <title>Voice Bahi-Khata</title>
     <style>
       body {
         font-family: Arial, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        margin: 0;
+        background-color: #f4f4f9;
+      }
+      h1 {
+        color: #333;
         text-align: center;
-        padding: 50px;
       }
       button {
         padding: 20px 40px;
@@ -18,103 +27,139 @@
         border: none;
         border-radius: 10px;
         cursor: pointer;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+
+        /* --- MOBILE FIXES --- */
         user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        touch-action: none;
       }
+      /* Make it look like a physical button being pressed */
       button:active {
-        background-color: #45a049;
+        transform: scale(0.96);
       }
       #status {
-        margin-top: 20px;
         font-size: 18px;
         color: #555;
+        margin-bottom: 20px;
+        min-height: 24px;
       }
       #result {
-        margin-top: 20px;
         font-size: 20px;
         font-weight: bold;
-        color: #222;
+        text-align: center;
+        max-width: 90%;
+        line-height: 1.5;
+        white-space: pre-wrap; /* Allows the multi-line receipts from the backend */
       }
     </style>
   </head>
   <body>
-    <h2>🗣️ Voice Inventory (Hindi PoC)</h2>
-    <button id="recordBtn">🎤 Speak (Press & Hold)</button>
-    <p id="status">Ready...</p>
+    <h1>🗣️ Voice Bahi-Khata</h1>
+    <button id="recordBtn">🎙️ Hold to Speak</button>
+    <div id="status">Ready.</div>
     <div id="result"></div>
 
     <script>
+      let mediaRecorder;
+      let audioChunks = [];
+
       const recordBtn = document.getElementById("recordBtn");
       const status = document.getElementById("status");
       const resultDiv = document.getElementById("result");
 
-      let mediaRecorder;
-      let audioChunks = [];
-
+      // Request microphone access on load
       navigator.mediaDevices
         .getUserMedia({ audio: true })
         .then((stream) => {
           mediaRecorder = new MediaRecorder(stream);
 
           mediaRecorder.ondataavailable = (event) => {
-            if (event.data && event.data.size > 0) {
-              audioChunks.push(event.data);
-            }
+            audioChunks.push(event.data);
           };
 
           mediaRecorder.onstop = async () => {
-            status.innerText = "Processing Audio...";
-            resultDiv.innerText = "Sending to AI...";
-
+            status.innerText = "⏳ Processing...";
             const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
-            audioChunks = [];
+            audioChunks = []; // Reset for the next time they press the button
 
             const formData = new FormData();
             formData.append("audio", audioBlob, "recording.webm");
 
+            // Auto-detect if we are on a laptop or in the Vercel cloud
+            const isLocal =
+              window.location.hostname === "localhost" ||
+              window.location.hostname === "127.0.0.1";
+            const backendUrl = isLocal
+              ? "http://localhost:8000/process_voice"
+              : "/process_voice";
+
             try {
-              const response = await fetch("/process_voice", {
+              const response = await fetch(backendUrl, {
                 method: "POST",
                 body: formData,
               });
 
               const data = await response.json();
+
               if (data.status === "success") {
                 status.innerText = `Heard: "${data.raw_text}"`;
+                // Backend controls emojis and line breaks now!
                 resultDiv.innerText = data.message;
                 resultDiv.style.color = "green";
               } else {
-                resultDiv.innerText = `❌ ${data.message}`;
+                status.innerText = "❌ Error";
+                resultDiv.innerText = data.message;
                 resultDiv.style.color = "red";
               }
             } catch (error) {
-              resultDiv.innerText = "⚠️ Error connecting to backend.";
-              console.error(error);
+              console.error("Error:", error);
+              status.innerText = "❌ Connection Failed";
+              resultDiv.innerText = "Could not connect to the server.";
+              resultDiv.style.color = "red";
             }
           };
         })
         .catch((err) => {
-          status.innerText = "Please allow microphone access.";
+          console.error("Microphone access denied:", err);
+          status.innerText =
+            "❌ Microphone access denied. Please allow permissions.";
         });
 
-      recordBtn.addEventListener("mousedown", () => {
+      // --- DESKTOP AND MOBILE EVENT LISTENERS ---
+      const startRecording = (e) => {
+        if (e.cancelable) e.preventDefault(); // Stop mobile menus from popping up
+
         if (mediaRecorder && mediaRecorder.state === "inactive") {
           mediaRecorder.start();
           status.innerText = "🔴 Listening... (Sun raha hoon)";
           resultDiv.innerText = "";
+          recordBtn.style.backgroundColor = "#ff4444"; // Turn red while recording
         }
-      });
+      };
 
-      recordBtn.addEventListener("mouseup", () => {
+      const stopRecording = (e) => {
+        if (e.cancelable) e.preventDefault();
+
         if (mediaRecorder && mediaRecorder.state === "recording") {
           mediaRecorder.stop();
+          recordBtn.style.backgroundColor = "#4CAF50"; // Turn back to green
         }
-      });
+      };
 
-      recordBtn.addEventListener("mouseleave", () => {
-        if (mediaRecorder && mediaRecorder.state === "recording") {
-          mediaRecorder.stop();
-        }
+      // Desktop Mouse Events
+      recordBtn.addEventListener("mousedown", startRecording);
+      recordBtn.addEventListener("mouseup", stopRecording);
+      recordBtn.addEventListener("mouseleave", stopRecording); // If they drag the mouse off the button
+
+      // Mobile Touch Events
+      recordBtn.addEventListener("touchstart", startRecording, {
+        passive: false,
       });
+      recordBtn.addEventListener("touchend", stopRecording);
+      recordBtn.addEventListener("touchcancel", stopRecording); // If finger slides off the screen
     </script>
   </body>
 </html>
