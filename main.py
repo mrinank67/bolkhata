@@ -1,11 +1,13 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-import sqlite3
 import json
 from thefuzz import process
 from groq import Groq
 import os
 from dotenv import load_dotenv
+import firebase_admin
+from firebase_admin import credentials, firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 load_dotenv()
 
@@ -24,34 +26,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Detect if we are on Vercel or Local
-if os.environ.get("VERCEL"):
-    DB_PATH = '/tmp/inventory.db' # Cloud path
-else:
-    DB_PATH = 'inventory.db'      # Local path
+# Initialize Firebase Admin
+def init_firebase():
+    if not firebase_admin._apps:
+        # Check for env variable first (used in Vercel)
+        firebase_json_env = os.getenv("FIREBASE_SERVICE_ACCOUNT")
+        if firebase_json_env:
+            cred_dict = json.loads(firebase_json_env)
+            cred = credentials.Certificate(cred_dict)
+        else:
+            # Fallback to local JSON (for local development)
+            cred_path = "poc-inventory-management-98303-firebase-adminsdk-fbsvc-f8868789db.json"
+            if not os.path.exists(cred_path):
+                raise Exception("Firebase Credentials not found! Add FIREBASE_SERVICE_ACCOUNT env var or the JSON file.")
+            cred = credentials.Certificate(cred_path)
+            
+        firebase_admin.initialize_app(cred)
+    return firestore.client()
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    # Existing stock table
-    c.execute('''CREATE TABLE IF NOT EXISTS stock (item TEXT PRIMARY KEY, quantity INTEGER)''')
+db = init_firebase()
+
+def init_default_stock():
+    # Only seed the default values if they don't exist
+    # This allows future customization since we won't overwrite existing db values.
+    stock_ref = db.collection('stock')
     
-    # Udhaar (Credit) Ledger Table
-    c.execute('''CREATE TABLE IF NOT EXISTS udhaar (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                    customer_name TEXT, 
-                    item TEXT, 
-                    quantity INTEGER,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-                )''')
-                
-    c.execute("INSERT OR IGNORE INTO stock (item, quantity) VALUES ('toothpaste', 50)")
-    c.execute("INSERT OR IGNORE INTO stock (item, quantity) VALUES ('soap', 100)")
-    c.execute("INSERT OR IGNORE INTO stock (item, quantity) VALUES ('noodles', 40)")
-    conn.commit()
-    return conn
+    defaults = {
+        'toothpaste': 50,
+        'soap': 100,
+        'noodles': 40
+    }
+    
+    for item, qty in defaults.items():
+        doc = stock_ref.document(item).get()
+        if not doc.exists:
+            stock_ref.document(item).set({'quantity': qty, 'item': item})
 
-conn = init_db()
+init_default_stock()
 
 brand_to_item_map = {
     "colgate": "toothpaste",
@@ -146,8 +157,6 @@ async def process_voice(audio: UploadFile = File(...)):
         action = txn.get("action")
         customer_name = txn.get("customer_name")
         raw_qty = txn.get("quantity", 1)
-        
-        c = conn.cursor()
 
         # --- Handle Ledger Inquiries ---
         if action == "ledger_inquiry":
@@ -155,13 +164,18 @@ async def process_voice(audio: UploadFile = File(...)):
                 results.append("❌ Kiska khaata dekhna hai? (Please specify a name).")
                 continue
                 
-            c.execute("SELECT item, SUM(quantity) FROM udhaar WHERE customer_name=? GROUP BY item", (customer_name,))
-            rows = c.fetchall()
+            docs = db.collection('udhaar').where(filter=FieldFilter('customer_name', '==', customer_name)).stream()
             
-            if not rows:
+            dues_map = {}
+            for doc in docs:
+                data = doc.to_dict()
+                item_name = data.get('item', 'unknown')
+                dues_map[item_name] = dues_map.get(item_name, 0) + data.get('quantity', 0)
+                
+            if not dues_map:
                 results.append(f"✅ {customer_name.capitalize()} ka khaata clear hai. (No dues)")
             else:
-                dues = ", ".join([f"{qty} {item}" for item, qty in rows])
+                dues = ", ".join([f"{qty} {item}" for item, qty in dues_map.items()])
                 results.append(f"📒 {customer_name.capitalize()} owes: {dues}.")
             continue
 
@@ -171,11 +185,12 @@ async def process_voice(audio: UploadFile = File(...)):
                 results.append("❌ Kiska khaata clear karna hai? (Please specify a name).")
                 continue
                 
-            # Delete all rows belonging to this customer
-            c.execute("DELETE FROM udhaar WHERE customer_name=?", (customer_name,))
+            docs = list(db.collection('udhaar').where(filter=FieldFilter('customer_name', '==', customer_name)).stream())
             
-            # Check if we actually deleted anything
-            if c.rowcount > 0:
+            if docs:
+                # Delete all rows belonging to this customer
+                for doc in docs:
+                    doc.reference.delete()
                 results.append(f"💰 {customer_name.capitalize()} ka udhaar clear ho gaya! (Account settled).")
             else:
                 results.append(f"ℹ️ {customer_name.capitalize()} ke naam par koi udhaar nahi tha. (No dues found).")
@@ -192,14 +207,14 @@ async def process_voice(audio: UploadFile = File(...)):
         best_match, score = process.extractOne(raw_item, standard_items)
         standard_item = brand_to_item_map[best_match] if score > 70 else raw_item
         
-        c.execute("SELECT quantity FROM stock WHERE item=?", (standard_item,))
-        row = c.fetchone()
+        stock_doc_ref = db.collection('stock').document(standard_item)
+        stock_doc = stock_doc_ref.get()
         
-        if not row:
+        if not stock_doc.exists:
             results.append(f"❌ {standard_item} not found in inventory.")
             continue
             
-        current_qty = row[0]
+        current_qty = stock_doc.to_dict().get('quantity', 0)
         
         # Edge Case: Inquiry
         if action == "inquiry":
@@ -222,19 +237,21 @@ async def process_voice(audio: UploadFile = File(...)):
             new_qty = current_qty + qty
             
         # Update Stock DB
-        c.execute("UPDATE stock SET quantity=? WHERE item=?", (new_qty, standard_item))
+        stock_doc_ref.set({'quantity': new_qty}, merge=True)
         
         # NEW: Handle Udhaar Logging
         if action == "decrease" and customer_name:
-            c.execute("INSERT INTO udhaar (customer_name, item, quantity) VALUES (?, ?, ?)", 
-                      (customer_name, standard_item, qty))
+            db.collection('udhaar').add({
+                'customer_name': customer_name,
+                'item': standard_item,
+                'quantity': qty,
+                'timestamp': firestore.SERVER_TIMESTAMP
+            })
             results.append(f"📒 Wrote {qty} {standard_item} in {customer_name.capitalize()}'s account. (Stock: {new_qty})")
         elif action == "decrease":
             results.append(f"✅ Sold {qty} {standard_item}. (Stock: {new_qty})")
         else:
             results.append(f"📦 Added {qty} {standard_item}. (Stock: {new_qty})")
-    
-    conn.commit()
     
     final_message = "\n".join(results)
     if not final_message:

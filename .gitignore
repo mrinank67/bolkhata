@@ -12,3 +12,4 @@ __pycache__/
 
 # Environment files (Never upload local API keys!)
 .env
+poc-inventory-management-98303-firebase-adminsdk-fbsvc-f8868789db.json

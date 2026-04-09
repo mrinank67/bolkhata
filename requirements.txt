@@ -3,3 +3,4 @@ python-multipart
 thefuzz
 groq
 python-dotenv
+firebase-admin
