@@ -2,354 +2,688 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="description" content="BolKhata — Voice-powered inventory and ledger management for shopkeepers." />
+    <meta name="theme-color" content="#0a0a0f" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>BolKhata</title>
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap"
-      rel="stylesheet"
-    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <style>
+      /* ══════════════════════════════════════
+         DESIGN SYSTEM
+         ══════════════════════════════════════ */
       :root {
-        --bg-start: #0f172a;
-        --bg-end: #1e293b;
-        --primary: #3b82f6;
-        --success: #10b981;
-        --danger: #ef4444;
-        --glass-bg: rgba(255, 255, 255, 0.05);
-        --glass-border: rgba(255, 255, 255, 0.1);
-        --text-main: #f8fafc;
-        --text-muted: #94a3b8;
+        --surface-0: #0a0a0f;
+        --surface-1: #12121a;
+        --surface-2: #1a1a26;
+        --surface-3: #242434;
+        --border: rgba(255,255,255,0.06);
+        --border-focus: rgba(99,102,241,0.5);
+        --text-primary: #eeeef0;
+        --text-secondary: #8b8b9e;
+        --text-tertiary: #5a5a6e;
+        --accent: #6366f1;
+        --accent-glow: rgba(99,102,241,0.15);
+        --accent-soft: rgba(99,102,241,0.08);
+        --green: #22c55e;
+        --green-glow: rgba(34,197,94,0.12);
+        --red: #ef4444;
+        --red-glow: rgba(239,68,68,0.12);
+        --amber: #f59e0b;
+        --radius-sm: 10px;
+        --radius-md: 14px;
+        --radius-lg: 20px;
+        --radius-xl: 28px;
+        --shadow-card: 0 1px 2px rgba(0,0,0,0.3), 0 8px 32px rgba(0,0,0,0.25);
+        --shadow-btn: 0 1px 3px rgba(0,0,0,0.4);
+        --transition: 200ms cubic-bezier(0.4, 0, 0.2, 1);
       }
 
-      * {
+      *, *::before, *::after {
         box-sizing: border-box;
-        font-family: "Inter", sans-serif;
+        margin: 0;
+        padding: 0;
+      }
+
+      html {
+        font-size: 16px;
+        -webkit-text-size-adjust: 100%;
       }
 
       body {
-        margin: 0;
+        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        background: var(--surface-0);
+        color: var(--text-primary);
         min-height: 100dvh;
-        background: linear-gradient(135deg, var(--bg-start), var(--bg-end));
-        color: var(--text-main);
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        overflow: hidden;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        overflow-x: hidden;
       }
 
-      h1 {
+      /* Ambient glow behind main card */
+      body::before {
+        content: '';
+        position: fixed;
+        top: -40%;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 600px;
+        height: 600px;
+        background: radial-gradient(circle, rgba(99,102,241,0.06) 0%, transparent 70%);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      .hidden { display: none !important; }
+
+      /* ══════════════════════════════════════
+         CARDS / CONTAINERS
+         ══════════════════════════════════════ */
+      .card {
+        position: relative;
+        z-index: 1;
+        width: 100%;
+        max-width: 420px;
+        margin: 16px;
+        padding: 32px 24px;
+        background: var(--surface-1);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-card);
+      }
+
+      @media (max-width: 480px) {
+        .card {
+          margin: 8px;
+          padding: 28px 20px;
+          border-radius: var(--radius-lg);
+          max-height: 95dvh;
+          overflow-y: auto;
+        }
+      }
+
+      /* ══════════════════════════════════════
+         BRANDING
+         ══════════════════════════════════════ */
+      .brand {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+
+      .brand-icon {
+        width: 36px;
+        height: 36px;
+        background: var(--accent);
+        border-radius: var(--radius-sm);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.1rem;
+        flex-shrink: 0;
+      }
+
+      .brand-name {
+        font-size: 1.6rem;
         font-weight: 800;
-        margin-bottom: 2rem;
+        letter-spacing: -0.03em;
+        color: var(--text-primary);
+      }
+
+      .brand-sub {
         text-align: center;
-        background: linear-gradient(to right, #60a5fa, #a78bfa);
-        -webkit-background-clip: text;
-        background-clip: text;
-        -webkit-text-fill-color: transparent;
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+        margin-bottom: 28px;
+        line-height: 1.5;
       }
 
-      .container {
+      /* ══════════════════════════════════════
+         FORM ELEMENTS
+         ══════════════════════════════════════ */
+      .field-label {
+        display: block;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 8px;
+      }
+
+      .field-group {
+        margin-bottom: 14px;
+      }
+
+      input[type="email"],
+      input[type="password"],
+      input[type="tel"],
+      input[type="text"],
+      input[type="number"] {
         width: 100%;
-        max-width: 400px;
-        padding: 2rem;
-        background: var(--glass-bg);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid var(--glass-border);
-        border-radius: 24px;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-        text-align: center;
-        transition:
-          opacity 0.4s ease,
-          transform 0.4s ease;
-        max-height: 90vh;
-        overflow-y: auto;
-      }
-
-      .hidden {
-        display: none !important;
-      }
-
-      /* Form Elements */
-      input {
-        width: 100%;
-        padding: 1rem;
-        margin-bottom: 1rem;
-        background: rgba(0, 0, 0, 0.2);
-        border: 1px solid var(--glass-border);
-        border-radius: 12px;
-        color: white;
+        padding: 14px 16px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-family: inherit;
         font-size: 1rem;
         outline: none;
-        transition: border-color 0.3s ease;
+        transition: border-color var(--transition), box-shadow var(--transition);
+        -webkit-appearance: none;
       }
 
       input:focus {
-        border-color: var(--primary);
+        border-color: var(--border-focus);
+        box-shadow: 0 0 0 3px var(--accent-glow);
       }
 
-      button.btn-primary {
-        width: 100%;
-        padding: 1rem;
-        background: var(--primary);
-        color: white;
-        border: none;
-        border-radius: 12px;
-        font-size: 1rem;
-        font-weight: 600;
-        cursor: pointer;
-        transition:
-          background 0.3s ease,
-          transform 0.1s ease;
+      input::placeholder {
+        color: var(--text-tertiary);
       }
 
-      button.btn-primary:active {
-        transform: scale(0.98);
-      }
-
-      button.btn-secondary {
-        width: 100%;
-        padding: 0.9rem;
-        background: white;
-        color: #333;
-        border: none;
-        border-radius: 12px;
-        font-size: 1rem;
-        font-weight: 600;
-        cursor: pointer;
-        transition: transform 0.1s ease;
-        display: flex;
+      /* ══════════════════════════════════════
+         BUTTONS
+         ══════════════════════════════════════ */
+      .btn {
+        display: inline-flex;
         align-items: center;
         justify-content: center;
-      }
-      
-      button.btn-secondary:active {
-        transform: scale(0.98);
-      }
-
-      button.btn-text {
+        gap: 8px;
         width: 100%;
-        padding: 0.75rem;
-        background: transparent;
-        color: var(--text-muted);
+        padding: 14px 20px;
         border: none;
-        font-size: 0.9rem;
-        cursor: pointer;
-        transition: color 0.2s ease;
-      }
-
-      button.btn-text:hover {
-        color: white;
-      }
-
-      .error-msg {
-        color: var(--danger);
-        font-size: 0.875rem;
-        margin-bottom: 1rem;
-        min-height: 20px;
-      }
-
-      /* App View Specifics */
-      .app-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        width: 100%;
-        margin-bottom: 2rem;
-      }
-
-      .app-header h2 {
-        margin: 0;
-        font-size: 1.25rem;
+        border-radius: var(--radius-md);
+        font-family: inherit;
+        font-size: 0.95rem;
         font-weight: 600;
-      }
-
-      .logout-btn {
-        background: transparent;
-        border: 1px solid var(--glass-border);
-        color: var(--text-muted);
-        padding: 0.5rem 1rem;
-        border-radius: 8px;
         cursor: pointer;
-        font-size: 0.875rem;
-        transition: all 0.2s ease;
-      }
-
-      .logout-btn:active {
-        background: rgba(255, 255, 255, 0.1);
-      }
-
-      /* Microphone Button */
-      .mic-container {
+        transition: all var(--transition);
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
         position: relative;
-        width: 160px;
-        height: 160px;
-        margin: 2rem auto;
+        overflow: hidden;
+      }
+
+      .btn:active {
+        transform: scale(0.98);
+      }
+
+      .btn-accent {
+        background: var(--accent);
+        color: #fff;
+        box-shadow: var(--shadow-btn), 0 4px 12px rgba(99,102,241,0.25);
+      }
+
+      .btn-accent:hover {
+        box-shadow: var(--shadow-btn), 0 6px 20px rgba(99,102,241,0.35);
+      }
+
+      .btn-outline {
+        background: var(--surface-2);
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+      }
+
+      .btn-outline:hover {
+        background: var(--surface-3);
+      }
+
+      .btn-ghost {
+        background: transparent;
+        color: var(--text-secondary);
+        padding: 10px 12px;
+        font-size: 0.85rem;
+        font-weight: 500;
+      }
+
+      .btn-ghost:hover {
+        color: var(--text-primary);
+      }
+
+      .btn-icon-google {
+        width: 18px;
+        height: 18px;
+      }
+
+      /* ══════════════════════════════════════
+         DIVIDER
+         ══════════════════════════════════════ */
+      .divider {
         display: flex;
-        justify-content: center;
         align-items: center;
+        gap: 12px;
+        margin: 20px 0;
+      }
+
+      .divider::before,
+      .divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: var(--border);
+      }
+
+      .divider span {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      /* ══════════════════════════════════════
+         ERROR MESSAGE
+         ══════════════════════════════════════ */
+      .error-msg {
+        font-size: 0.85rem;
+        color: var(--red);
+        background: var(--red-glow);
+        border: 1px solid rgba(239,68,68,0.15);
+        border-radius: var(--radius-sm);
+        padding: 10px 14px;
+        margin-bottom: 16px;
+        line-height: 1.4;
+      }
+
+      .error-msg:empty {
+        display: none;
+      }
+
+      /* ══════════════════════════════════════
+         PHONE INPUT ROW
+         ══════════════════════════════════════ */
+      .phone-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      .phone-row .country-code {
+        flex: 0 0 64px;
+        text-align: center;
+      }
+
+      .phone-row .phone-input {
+        flex: 1;
+      }
+
+      /* ══════════════════════════════════════
+         APP VIEW — HEADER
+         ══════════════════════════════════════ */
+      .app-topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 28px;
+      }
+
+      .app-topbar .brand {
+        margin-bottom: 0;
+        gap: 8px;
+      }
+
+      .app-topbar .brand-icon {
+        width: 30px;
+        height: 30px;
+        font-size: 0.9rem;
+      }
+
+      .app-topbar .brand-name {
+        font-size: 1.15rem;
+      }
+
+      .btn-logout {
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        color: var(--text-secondary);
+        padding: 8px 14px;
+        border-radius: var(--radius-sm);
+        font-family: inherit;
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all var(--transition);
+      }
+
+      .btn-logout:active {
+        background: var(--surface-3);
+      }
+
+      /* ══════════════════════════════════════
+         MICROPHONE BUTTON
+         ══════════════════════════════════════ */
+      .mic-area {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 16px 0;
+      }
+
+      .mic-wrapper {
+        position: relative;
+        width: 140px;
+        height: 140px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
 
       .mic-btn {
-        width: 120px;
-        height: 120px;
+        width: 100px;
+        height: 100px;
         border-radius: 50%;
-        background: linear-gradient(135deg, #10b981, #059669);
         border: none;
+        background: linear-gradient(145deg, var(--accent), #4f46e5);
         color: white;
-        font-size: 3rem;
+        font-size: 2.4rem;
         display: flex;
         align-items: center;
         justify-content: center;
         cursor: pointer;
-        box-shadow: 0 10px 25px rgba(16, 185, 129, 0.4);
         z-index: 10;
-        transition:
-          transform 0.2s ease,
-          background 0.3s ease,
-          box-shadow 0.3s ease;
-
-        /* Mobile fixes */
+        position: relative;
+        box-shadow:
+          0 4px 15px rgba(99,102,241,0.35),
+          inset 0 1px 0 rgba(255,255,255,0.1);
+        transition: all var(--transition);
         user-select: none;
         -webkit-user-select: none;
         -webkit-touch-callout: none;
         touch-action: none;
+        -webkit-tap-highlight-color: transparent;
       }
 
-      .mic-btn.recording {
-        background: linear-gradient(135deg, var(--danger), #b91c1c);
-        box-shadow: 0 10px 25px rgba(239, 68, 68, 0.4);
+      .mic-btn:active {
         transform: scale(0.95);
       }
 
-      /* Pulse Animation */
-      .pulse-ring {
+      .mic-btn.recording {
+        background: linear-gradient(145deg, var(--red), #dc2626);
+        box-shadow:
+          0 4px 20px rgba(239,68,68,0.45),
+          inset 0 1px 0 rgba(255,255,255,0.1);
+      }
+
+      /* Outer ring */
+      .mic-ring {
         position: absolute;
-        width: 120px;
-        height: 120px;
+        inset: 0;
         border-radius: 50%;
-        background: rgba(239, 68, 68, 0.5);
-        z-index: 1;
-        opacity: 0;
+        border: 2px solid rgba(99,102,241,0.15);
+        pointer-events: none;
+        transition: border-color 0.3s ease;
+      }
+
+      .mic-btn.recording ~ .mic-ring {
+        border-color: rgba(239,68,68,0.2);
+        animation: ring-pulse 1.8s ease-out infinite;
+      }
+
+      @keyframes ring-pulse {
+        0% { transform: scale(1); opacity: 1; }
+        100% { transform: scale(1.5); opacity: 0; }
+      }
+
+      /* Second subtle ring */
+      .mic-ring-2 {
+        position: absolute;
+        inset: -6px;
+        border-radius: 50%;
+        border: 1px solid rgba(99,102,241,0.08);
         pointer-events: none;
       }
 
-      .recording ~ .pulse-ring {
-        animation: pulse 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+      .mic-btn.recording ~ .mic-ring-2 {
+        border-color: rgba(239,68,68,0.1);
+        animation: ring-pulse 1.8s ease-out 0.4s infinite;
       }
 
-      @keyframes pulse {
-        0% {
-          transform: scale(1);
-          opacity: 0.8;
-        }
-        100% {
-          transform: scale(1.6);
-          opacity: 0;
-        }
+      .mic-hint {
+        margin-top: 16px;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        font-weight: 500;
       }
 
-      .status-text {
-        color: var(--text-muted);
-        font-size: 1rem;
-        margin-top: 1rem;
-        min-height: 24px;
+      /* ══════════════════════════════════════
+         RESULT AREA
+         ══════════════════════════════════════ */
+      .result-area {
+        margin-top: 20px;
+      }
+
+      .result-label {
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--text-tertiary);
+        margin-bottom: 8px;
       }
 
       .result-box {
-        margin-top: 1.5rem;
-        padding: 1.5rem;
-        background: rgba(0, 0, 0, 0.2);
-        border-radius: 16px;
-        font-size: 1.1rem;
-        font-weight: 600;
-        line-height: 1.6;
-        min-height: 80px;
+        padding: 16px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        font-size: 0.95rem;
+        font-weight: 500;
+        line-height: 1.7;
+        min-height: 72px;
         white-space: pre-wrap;
+        word-break: break-word;
+        color: var(--text-secondary);
+        transition: all 0.3s ease;
       }
 
-      .text-success {
-        color: var(--success);
+      .result-box.result-success {
+        color: var(--green);
+        background: var(--green-glow);
+        border-color: rgba(34,197,94,0.12);
       }
-      .text-danger {
-        color: #f87171;
+
+      .result-box.result-error {
+        color: var(--red);
+        background: var(--red-glow);
+        border-color: rgba(239,68,68,0.12);
+      }
+
+      .heard-text {
+        font-size: 0.8rem;
+        color: var(--text-tertiary);
+        margin-bottom: 10px;
+        font-style: italic;
+      }
+
+      .heard-text:empty { display: none; }
+
+      /* ══════════════════════════════════════
+         ANIMATIONS
+         ══════════════════════════════════════ */
+      @keyframes fadeUp {
+        from { opacity: 0; transform: translateY(12px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      .card {
+        animation: fadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+
+      /* Spinner for loading states */
+      .btn .spinner {
+        width: 18px;
+        height: 18px;
+        border: 2px solid rgba(255,255,255,0.25);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      /* Processing animation for mic-hint */
+      .processing-dots::after {
+        content: '';
+        animation: dots 1.5s steps(4, end) infinite;
+      }
+
+      @keyframes dots {
+        0% { content: ''; }
+        25% { content: '.'; }
+        50% { content: '..'; }
+        75% { content: '...'; }
+      }
+
+      /* ══════════════════════════════════════
+         BOTTOM LINK ROW
+         ══════════════════════════════════════ */
+      .link-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        margin-top: 4px;
+      }
+
+      .link-row .btn-ghost {
+        padding: 8px 6px;
+      }
+
+      /* ══════════════════════════════════════
+         DESKTOP POLISH
+         ══════════════════════════════════════ */
+      @media (min-width: 481px) {
+        .card {
+          padding: 40px 32px;
+        }
+
+        .mic-btn {
+          width: 110px;
+          height: 110px;
+          font-size: 2.6rem;
+        }
+
+        .mic-wrapper {
+          width: 160px;
+          height: 160px;
+        }
+      }
+
+      /* Remove number input spinners */
+      input[type="number"]::-webkit-inner-spin-button,
+      input[type="number"]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+      input[type="number"] {
+        -moz-appearance: textfield;
       }
     </style>
   </head>
   <body>
-    <!-- LOGIN VIEW -->
-    <div id="login-view" class="container">
-      <h1>BolKhata</h1>
+
+    <!-- ═══════════ LOGIN VIEW ═══════════ -->
+    <div id="login-view" class="card">
+      <div class="brand">
+        <div class="brand-icon">📋</div>
+        <div class="brand-name">BolKhata</div>
+      </div>
+      <p class="brand-sub">Voice-powered inventory & ledger<br />for your shop</p>
+
       <div id="login-error" class="error-msg"></div>
 
-      <!-- MAIN OPTIONS (Phone & Google) -->
-      <div id="auth-main-options">
-        <label style="display:block; text-align:left; margin-bottom:8px; color:var(--text-muted); font-size:0.9rem;">Sign in with Phone</label>
-        <div style="display: flex; gap: 8px; margin-bottom: 1rem;">
-          <input type="text" id="phone-country" value="+91" style="flex: 0 0 60px; text-align: center; margin-bottom: 0;" />
-          <input type="tel" id="phone-number" placeholder="9876543210" style="margin-bottom: 0;" />
+      <!-- PRIMARY: Phone Auth -->
+      <div id="auth-main">
+        <div class="field-group">
+          <label class="field-label">Phone Number</label>
+          <div class="phone-row">
+            <input type="text" id="phone-country" value="+91" class="country-code" />
+            <input type="tel" id="phone-number" placeholder="98765 43210" class="phone-input" />
+          </div>
         </div>
-        <button id="send-sms-btn" class="btn-primary">Send OTP</button>
-        <div id="recaptcha-container" style="margin-top: 10px;"></div>
+        <button id="send-sms-btn" class="btn btn-accent">Send OTP</button>
+        <div id="recaptcha-container"></div>
 
-        <div style="margin: 1.5rem 0; color: var(--text-muted); font-size: 0.9rem; display:flex; align-items:center;">
-            <div style="flex:1; height:1px; background:var(--glass-border);"></div>
-            <div style="margin:0 10px;">OR</div>
-            <div style="flex:1; height:1px; background:var(--glass-border);"></div>
-        </div>
+        <div class="divider"><span>or</span></div>
 
-        <button id="google-login-btn" class="btn-secondary" style="margin-bottom: 1rem;">
-          <img src="https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg" alt="Google" style="width:20px; margin-right:8px;">
+        <button id="google-login-btn" class="btn btn-outline">
+          <svg class="btn-icon-google" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
           Continue with Google
         </button>
 
-        <button id="show-email-btn" class="btn-text">Use Email & Password Instead</button>
+        <div class="link-row">
+          <button id="show-email-btn" class="btn btn-ghost">Use email instead</button>
+        </div>
       </div>
 
-      <!-- OTP VERIFICATION VIEW -->
-      <div id="auth-otp-view" class="hidden">
-        <label style="display:block; text-align:left; margin-bottom:8px; color:var(--text-muted); font-size:0.9rem;">Enter 6-digit OTP</label>
-        <input type="number" id="otp-code" placeholder="123456" />
-        <button id="verify-otp-btn" class="btn-primary" style="margin-bottom: 1rem;">Verify</button>
-        <button id="cancel-otp-btn" class="btn-text">Cancel / Back</button>
+      <!-- OTP VIEW -->
+      <div id="auth-otp" class="hidden">
+        <div class="field-group">
+          <label class="field-label">Verification Code</label>
+          <input type="number" id="otp-code" placeholder="6-digit code" inputmode="numeric" autocomplete="one-time-code" />
+        </div>
+        <button id="verify-otp-btn" class="btn btn-accent" style="margin-bottom:10px;">Verify</button>
+        <button id="cancel-otp-btn" class="btn btn-ghost">← Back</button>
       </div>
 
-      <!-- EMAIL LOGIC VIEW -->
-      <div id="auth-email-view" class="hidden">
-        <h3 id="email-form-title" style="margin-top:0; font-weight:600;">Sign In</h3>
+      <!-- EMAIL VIEW -->
+      <div id="auth-email" class="hidden">
         <form id="login-form">
-          <input type="email" id="email" placeholder="Email address" required />
-          <input type="password" id="password" placeholder="Password" required />
-          <button type="submit" id="login-btn" class="btn-primary" style="margin-bottom:1rem;">Sign In</button>
+          <div class="field-group">
+            <label class="field-label">Email</label>
+            <input type="email" id="email" placeholder="you@email.com" required />
+          </div>
+          <div class="field-group">
+            <label class="field-label">Password</label>
+            <input type="password" id="password" placeholder="••••••••" required />
+          </div>
+          <button type="submit" id="login-btn" class="btn btn-accent">Sign In</button>
         </form>
-        <div style="display:flex; justify-content:space-between; font-size:0.9rem;">
-          <button id="toggle-email-mode-btn" class="btn-text" style="padding:0; width:auto;">Create an account</button>
-          <button id="back-to-main-btn" class="btn-text" style="padding:0; width:auto;">Back</button>
+        <div class="link-row" style="margin-top:12px;">
+          <button id="toggle-email-mode-btn" class="btn btn-ghost">Create account</button>
+          <span style="color:var(--text-tertiary);">·</span>
+          <button id="back-to-main-btn" class="btn btn-ghost">← Back</button>
         </div>
       </div>
     </div>
 
-    <!-- APP VIEW -->
-    <div id="app-view" class="container hidden">
-      <div class="app-header">
-        <h2>BolKhata</h2>
-        <button id="logout-btn" class="logout-btn">Log out</button>
+    <!-- ═══════════ APP VIEW ═══════════ -->
+    <div id="app-view" class="card hidden">
+      <div class="app-topbar">
+        <div class="brand">
+          <div class="brand-icon">📋</div>
+          <div class="brand-name">BolKhata</div>
+        </div>
+        <button id="logout-btn" class="btn-logout">Log out</button>
       </div>
 
-      <div class="mic-container">
-        <button id="recordBtn" class="mic-btn">🎙️</button>
-        <div class="pulse-ring"></div>
+      <div class="mic-area">
+        <div class="mic-wrapper">
+          <button id="recordBtn" class="mic-btn">🎙️</button>
+          <div class="mic-ring"></div>
+          <div class="mic-ring-2"></div>
+        </div>
+        <div id="status" class="mic-hint">Hold to speak</div>
       </div>
 
-      <div id="status" class="status-text">Hold to Speak</div>
-      <div id="result" class="result-box">
-        Your transactions will appear here...
+      <div class="result-area">
+        <div id="heard" class="heard-text"></div>
+        <div class="result-label">Response</div>
+        <div id="result" class="result-box">Tap and hold the mic, then speak naturally — e.g. "Saara stock dikhao" or "10 soap bech diya"</div>
       </div>
     </div>
 
+    <!-- ═══════════ SCRIPTS ═══════════ -->
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-app.js";
       import {
@@ -364,36 +698,35 @@
         signInWithPopup
       } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-auth.js";
 
-      const isLocalEnv = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-      const configUrl = isLocalEnv ? "http://localhost:8000/config" : "/config";
-      
-      const configRes = await fetch(configUrl);
+      // ── Config ──
+      const isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      const API = isLocal ? "http://localhost:8000" : "";
+
+      const configRes = await fetch(`${API}/config`);
       const firebaseConfig = await configRes.json();
 
       const app = initializeApp(firebaseConfig);
       const auth = getAuth(app);
 
-      // DOM Elements
-      const loginView = document.getElementById("login-view");
-      const appView = document.getElementById("app-view");
-      const loginError = document.getElementById("login-error");
-      
-      const authMainOptions = document.getElementById("auth-main-options");
-      const authOtpView = document.getElementById("auth-otp-view");
-      const authEmailView = document.getElementById("auth-email-view");
+      // ── DOM References ──
+      const $ = id => document.getElementById(id);
+      const loginView  = $("login-view");
+      const appView    = $("app-view");
+      const loginError = $("login-error");
+      const authMain   = $("auth-main");
+      const authOtp    = $("auth-otp");
+      const authEmail  = $("auth-email");
 
       let currentToken = null;
 
-      // --- 1. GLOBAL AUTH OBSERVER ---
-      onAuthStateChanged(auth, async (user) => {
+      // ═══════ 1. AUTH STATE ═══════
+      onAuthStateChanged(auth, async user => {
         if (user) {
           currentToken = await user.getIdToken();
-          // Reset UI
-          authMainOptions.classList.remove("hidden");
-          authOtpView.classList.add("hidden");
-          authEmailView.classList.add("hidden");
+          authMain.classList.remove("hidden");
+          authOtp.classList.add("hidden");
+          authEmail.classList.add("hidden");
           loginError.innerText = "";
-
           loginView.classList.add("hidden");
           appView.classList.remove("hidden");
         } else {
@@ -403,235 +736,187 @@
         }
       });
 
-      document.getElementById("logout-btn").addEventListener("click", () => {
-        signOut(auth);
-      });
+      $("logout-btn").addEventListener("click", () => signOut(auth));
 
-      // --- 2. PHONE AUTHENTICATION ---
-      window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        'size': 'invisible',
-        'callback': (response) => {
-          // reCAPTCHA solved
-        }
+      // ═══════ 2. PHONE AUTH ═══════
+      window.recaptchaVerifier = new RecaptchaVerifier(auth, "recaptcha-container", {
+        size: "invisible"
       });
 
       let confirmationResult = null;
 
-      document.getElementById('send-sms-btn').addEventListener('click', async () => {
-          loginError.innerText = "";
-          const country = document.getElementById('phone-country').value;
-          const phone = document.getElementById('phone-number').value.trim();
-          
-          if (phone.length < 10) {
-              loginError.innerText = "Please enter a valid phone number.";
-              return;
-          }
-          
-          const fullPhone = country + phone;
+      $("send-sms-btn").addEventListener("click", async () => {
+        loginError.innerText = "";
+        const phone = $("phone-number").value.trim();
+        if (phone.length < 10) { loginError.innerText = "Enter a valid phone number."; return; }
 
-          try {
-              const btn = document.getElementById('send-sms-btn');
-              btn.innerText = "Sending...";
-              
-              const appVerifier = window.recaptchaVerifier;
-              confirmationResult = await signInWithPhoneNumber(auth, fullPhone, appVerifier);
-              
-              // Transition to OTP view
-              authMainOptions.classList.add('hidden');
-              authOtpView.classList.remove('hidden');
-              btn.innerText = "Send OTP";
-          } catch (err) {
-              loginError.innerText = err.message || "Failed to send SMS. Ensure number is valid.";
-              console.error(err);
-              document.getElementById('send-sms-btn').innerText = "Send OTP";
-              if(window.recaptchaVerifier) window.recaptchaVerifier.render().then(widgetId => grecaptcha.reset(widgetId));
-          }
+        const fullPhone = $("phone-country").value + phone;
+        const btn = $("send-sms-btn");
+        btn.innerHTML = '<div class="spinner"></div>';
+
+        try {
+          confirmationResult = await signInWithPhoneNumber(auth, fullPhone, window.recaptchaVerifier);
+          authMain.classList.add("hidden");
+          authOtp.classList.remove("hidden");
+        } catch (err) {
+          loginError.innerText = err.message || "Failed to send SMS.";
+          if (window.recaptchaVerifier) window.recaptchaVerifier.render().then(id => grecaptcha.reset(id));
+        } finally {
+          btn.innerText = "Send OTP";
+        }
       });
 
-      document.getElementById('verify-otp-btn').addEventListener('click', async () => {
-          const code = document.getElementById('otp-code').value.trim();
-          loginError.innerText = "";
-          const btn = document.getElementById('verify-otp-btn');
-          btn.innerText = "Verifying...";
-          try {
-              await confirmationResult.confirm(code);
-              // Will trigger onAuthStateChanged globally
-          } catch (err) {
-              loginError.innerText = "Invalid OTP code.";
-          } finally {
-              btn.innerText = "Verify";
-          }
+      $("verify-otp-btn").addEventListener("click", async () => {
+        const code = $("otp-code").value.trim();
+        loginError.innerText = "";
+        const btn = $("verify-otp-btn");
+        btn.innerHTML = '<div class="spinner"></div>';
+        try { await confirmationResult.confirm(code); }
+        catch { loginError.innerText = "Invalid OTP code."; }
+        finally { btn.innerText = "Verify"; }
       });
 
-      document.getElementById('cancel-otp-btn').addEventListener('click', () => {
-          authOtpView.classList.add('hidden');
-          authMainOptions.classList.remove('hidden');
-          loginError.innerText = "";
-          document.getElementById('otp-code').value = "";
+      $("cancel-otp-btn").addEventListener("click", () => {
+        authOtp.classList.add("hidden");
+        authMain.classList.remove("hidden");
+        loginError.innerText = "";
+        $("otp-code").value = "";
       });
 
-      // --- 3. GOOGLE AUTHENTICATION ---
-      document.getElementById('google-login-btn').addEventListener('click', async () => {
-          const provider = new GoogleAuthProvider();
-          loginError.innerText = "";
-          try {
-              await signInWithPopup(auth, provider);
-          } catch (err) {
-              loginError.innerText = err.message || "Google sign-in failed.";
-          }
+      // ═══════ 3. GOOGLE AUTH ═══════
+      $("google-login-btn").addEventListener("click", async () => {
+        loginError.innerText = "";
+        try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+        catch (err) { loginError.innerText = err.message || "Google sign-in failed."; }
       });
 
-      // --- 4. EMAIL AUTHENTICATION ---
-      let isEmailSignup = false;
-      document.getElementById('show-email-btn').addEventListener('click', () => {
-          authMainOptions.classList.add('hidden');
-          authEmailView.classList.remove('hidden');
-          loginError.innerText = "";
+      // ═══════ 4. EMAIL AUTH ═══════
+      let isSignup = false;
+
+      $("show-email-btn").addEventListener("click", () => {
+        authMain.classList.add("hidden");
+        authEmail.classList.remove("hidden");
+        loginError.innerText = "";
       });
 
-      document.getElementById('back-to-main-btn').addEventListener('click', () => {
-          authEmailView.classList.add('hidden');
-          authMainOptions.classList.remove('hidden');
-          loginError.innerText = "";
-          document.getElementById('email').value = "";
-          document.getElementById('password').value = "";
+      $("back-to-main-btn").addEventListener("click", () => {
+        authEmail.classList.add("hidden");
+        authMain.classList.remove("hidden");
+        loginError.innerText = "";
+        $("email").value = "";
+        $("password").value = "";
       });
 
-      document.getElementById('toggle-email-mode-btn').addEventListener('click', (e) => {
-          e.preventDefault();
-          isEmailSignup = !isEmailSignup;
-          document.getElementById('email-form-title').innerText = isEmailSignup ? "Create Account" : "Sign In";
-          document.getElementById('login-btn').innerText = isEmailSignup ? "Create automatically & Sign In" : "Sign In";
-          document.getElementById('toggle-email-mode-btn').innerText = isEmailSignup ? "Already have an account?" : "Create an account";
+      $("toggle-email-mode-btn").addEventListener("click", e => {
+        e.preventDefault();
+        isSignup = !isSignup;
+        $("login-btn").innerText = isSignup ? "Create Account" : "Sign In";
+        $("toggle-email-mode-btn").innerText = isSignup ? "Already have an account?" : "Create account";
       });
 
-      document.getElementById('login-form').addEventListener('submit', async (e) => {
-          e.preventDefault();
-          loginError.innerText = "";
-          
-          const email = document.getElementById("email").value;
-          const password = document.getElementById("password").value;
-          const btn = document.getElementById("login-btn");
-          btn.innerText = "Processing...";
-          
-          try {
-              if (isEmailSignup) {
-                  await createUserWithEmailAndPassword(auth, email, password);
-              } else {
-                  await signInWithEmailAndPassword(auth, email, password);
-              }
-          } catch(err) {
-              // Format standard firebase errors beautifully
-              if (err.code === "auth/email-already-in-use") {
-                  loginError.innerText = "Account already exists! Please click 'Already have an account' to sign in.";
-              } else if (err.code === "auth/weak-password") {
-                  loginError.innerText = "Password is too weak. (Min 6 characters)";
-              } else {
-                  loginError.innerText = err.message;
-              }
-          } finally {
-              btn.innerText = isEmailSignup ? "Create automatically & Sign In" : "Sign In";
-          }
+      $("login-form").addEventListener("submit", async e => {
+        e.preventDefault();
+        loginError.innerText = "";
+        const email = $("email").value, password = $("password").value;
+        const btn = $("login-btn");
+        btn.innerHTML = '<div class="spinner"></div>';
+        try {
+          isSignup
+            ? await createUserWithEmailAndPassword(auth, email, password)
+            : await signInWithEmailAndPassword(auth, email, password);
+        } catch (err) {
+          if (err.code === "auth/email-already-in-use") loginError.innerText = "Account exists — sign in instead.";
+          else if (err.code === "auth/weak-password") loginError.innerText = "Password too weak (min 6 characters).";
+          else loginError.innerText = err.message;
+        } finally {
+          btn.innerText = isSignup ? "Create Account" : "Sign In";
+        }
       });
 
+      // ═══════ 5. RECORDING ═══════
+      let mediaRecorder, audioChunks = [], activeStream;
+      const recordBtn = $("recordBtn");
+      const statusEl  = $("status");
+      const heardEl   = $("heard");
+      const resultEl  = $("result");
 
-      // --- RECORDING LOGIC ---
-      let mediaRecorder;
-      let audioChunks = [];
-      let activeStream;
-      const recordBtn = document.getElementById("recordBtn");
-      const status = document.getElementById("status");
-      const resultDiv = document.getElementById("result");
-
-      const startRecording = async (e) => {
+      const startRecording = async e => {
         if (e.cancelable) e.preventDefault();
         if (!currentToken) return;
 
         try {
-          activeStream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-          });
+          activeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
           mediaRecorder = new MediaRecorder(activeStream);
           audioChunks = [];
 
-          mediaRecorder.ondataavailable = (event) =>
-            audioChunks.push(event.data);
+          mediaRecorder.ondataavailable = ev => audioChunks.push(ev.data);
 
           mediaRecorder.onstop = async () => {
-            activeStream.getTracks().forEach((track) => track.stop());
-
-            // Re-fetch token just in case it expired during long session
+            activeStream.getTracks().forEach(t => t.stop());
             currentToken = await auth.currentUser.getIdToken();
 
-            status.innerText = "⏳ Processing...";
-            const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
-            const formData = new FormData();
-            formData.append("audio", audioBlob, "recording.webm");
+            statusEl.innerText = "Processing";
+            statusEl.classList.add("processing-dots");
 
-            const isLocal =
-              window.location.hostname === "localhost" ||
-              window.location.hostname === "127.0.0.1";
-            const backendUrl = isLocal
-              ? "http://localhost:8000/process_voice"
-              : "/process_voice";
+            const blob = new Blob(audioChunks, { type: "audio/webm" });
+            const form = new FormData();
+            form.append("audio", blob, "recording.webm");
 
             try {
-              const response = await fetch(backendUrl, {
+              const res = await fetch(`${API}/process_voice`, {
                 method: "POST",
-                headers: {
-                  Authorization: `Bearer ${currentToken}`,
-                },
-                body: formData,
+                headers: { Authorization: `Bearer ${currentToken}` },
+                body: form
               });
 
-              if (response.status === 401) {
-                signOut(auth);
-                return;
-              }
-
-              const data = await response.json();
+              if (res.status === 401) { signOut(auth); return; }
+              const data = await res.json();
 
               if (data.status === "success") {
-                status.innerText = `Heard: "${data.raw_text}"`;
-                resultDiv.innerText = data.message;
-                resultDiv.className = "result-box text-success";
+                heardEl.innerText = `Heard: "${data.raw_text}"`;
+                resultEl.innerText = data.message;
+                resultEl.className = "result-box result-success";
+                statusEl.innerText = "Done ✓";
               } else {
-                status.innerText = "❌ Error";
-                resultDiv.innerText = data.message || "Unknown error occurred.";
-                resultDiv.className = "result-box text-danger";
+                heardEl.innerText = "";
+                resultEl.innerText = data.message || "Something went wrong.";
+                resultEl.className = "result-box result-error";
+                statusEl.innerText = "Error";
               }
-            } catch (error) {
-              status.innerText = "❌ Connection Failed";
-              resultDiv.innerText = "Could not connect to the server.";
-              resultDiv.className = "result-box text-danger";
+            } catch {
+              heardEl.innerText = "";
+              resultEl.innerText = "Could not connect to the server.";
+              resultEl.className = "result-box result-error";
+              statusEl.innerText = "Offline";
+            } finally {
+              statusEl.classList.remove("processing-dots");
             }
           };
 
           mediaRecorder.start();
-          status.innerText = "🔴 Listening... (Sun raha hoon)";
-          resultDiv.innerText = "";
+          statusEl.innerText = "Listening…";
+          statusEl.classList.remove("processing-dots");
+          heardEl.innerText = "";
+          resultEl.innerText = "";
+          resultEl.className = "result-box";
           recordBtn.classList.add("recording");
-        } catch (err) {
-          status.innerText = "❌ Microphone access denied.";
+        } catch {
+          statusEl.innerText = "Microphone access denied.";
         }
       };
 
-      const stopRecording = (e) => {
+      const stopRecording = e => {
         if (e.cancelable) e.preventDefault();
-        if (mediaRecorder && mediaRecorder.state === "recording") {
+        if (mediaRecorder?.state === "recording") {
           mediaRecorder.stop();
           recordBtn.classList.remove("recording");
         }
       };
 
-      // Event Listeners for Recording Button
       recordBtn.addEventListener("mousedown", startRecording);
       recordBtn.addEventListener("mouseup", stopRecording);
       recordBtn.addEventListener("mouseleave", stopRecording);
-
-      recordBtn.addEventListener("touchstart", startRecording, {
-        passive: false,
-      });
+      recordBtn.addEventListener("touchstart", startRecording, { passive: false });
       recordBtn.addEventListener("touchend", stopRecording);
       recordBtn.addEventListener("touchcancel", stopRecording);
     </script>
