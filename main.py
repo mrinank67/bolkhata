@@ -124,13 +124,14 @@ async def process_voice(audio: UploadFile = File(...), authorization: str = Head
                     Allowed Actions:
                     1. "decrease": Selling or reducing stock ("bech diya", "de do").
                     2. "increase": Buying or adding stock ("aaya hai", "kharida").
-                    3. "inquiry": Checking physical stock of an item ("kitna bacha hai").
-                    4. "ledger_inquiry": Checking a customer's account/debt ("khata dikhao", "hisab", "udhaar").
-                    5. "clear_ledger": Settling debt or wiping an account clean ("khata clear kar do", "udhaar chuka diya", "paise de diye").
+                    3. "inquiry": Checking physical stock of a SPECIFIC item ("kitna bacha hai", "soap kitna hai").
+                    4. "full_inventory": Checking the ENTIRE inventory / all stock at once ("saara stock dikhao", "poora inventory", "sab kuch dikhao", "kya kya hai dukaan mein").
+                    5. "ledger_inquiry": Checking a customer's account/debt ("khata dikhao", "hisab", "udhaar").
+                    6. "clear_ledger": Settling debt or wiping an account clean ("khata clear kar do", "udhaar chuka diya", "paise de diye").
                     
                     Extraction Rules:
-                    - 'raw_item': Transliterate to English (e.g., "maggi"). If the action is a ledger inquiry or clear ledger, set to "".
-                    - 'quantity': Integer. Use "ALL" if they say "saari/sab". Use 0 for inquiries or clearing ledgers.
+                    - 'raw_item': Transliterate to English (e.g., "maggi"). If the action is full_inventory, ledger inquiry, or clear ledger, set to "".
+                    - 'quantity': Integer. Use "ALL" if they say "saari/sab". Use 0 for inquiries, full_inventory, or clearing ledgers.
                     - 'customer_name': Extract the name in English (e.g., "ramesh") ONLY if they mention an account, credit, or a specific person. Otherwise, set to "".
                     - 'hinglish_text': Translate the raw Devanagari input into the Latin alphabet.
                     
@@ -165,6 +166,20 @@ async def process_voice(audio: UploadFile = File(...), authorization: str = Head
         action = txn.get("action")
         customer_name = txn.get("customer_name")
         raw_qty = txn.get("quantity", 1)
+
+        # --- Handle Full Inventory ---
+        if action == "full_inventory":
+            all_docs = user_stock_ref.stream()
+            inventory_lines = []
+            for doc in all_docs:
+                data = doc.to_dict()
+                inventory_lines.append(f"  • {doc.id.capitalize()}: {data.get('quantity', 0)}")
+            
+            if inventory_lines:
+                results.append("📦 Full Inventory:\n" + "\n".join(inventory_lines))
+            else:
+                results.append("📦 Inventory is empty. No items added yet.")
+            continue
 
         # --- Handle Ledger Inquiries ---
         if action == "ledger_inquiry":
