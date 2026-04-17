@@ -1,6 +1,7 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 import json
+import time
 from thefuzz import process
 from groq import Groq
 import os
@@ -72,22 +73,26 @@ async def get_config():
     }
 
 @app.post("/process_voice")
-async def process_voice(audio: UploadFile = File(...), authorization: str = Header(None)):
+async def process_voice(background_tasks: BackgroundTasks, audio: UploadFile = File(...), authorization: str = Header(None)):
+    start_total = time.time()
     
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Unauthorized")
         
     token = authorization.split("Bearer ")[1]
     try:
+        t0 = time.time()
         decoded_token = auth.verify_id_token(token)
         uid = decoded_token['uid']
-    except Exception as e:  # noqa: F841
+        print(f"⏱️ Token Verify: {time.time()-t0:.2f}s")
+    except Exception as e:
         raise HTTPException(status_code=401, detail="Invalid Authentication Token")
 
     user_stock_ref = db.collection('users').document(uid).collection('stock')
     user_udhaar_ref = db.collection('users').document(uid).collection('udhaar')
 
     # --- STEP 1: Speech-to-Text via Groq (Whisper) ---
+    t1 = time.time()
     try:
         audio_bytes = await audio.read()
         
@@ -103,6 +108,7 @@ async def process_voice(audio: UploadFile = File(...), authorization: str = Head
           temperature=0.0
         )
         hindi_text = transcription.text
+        print(f"⏱️ STT (Groq Whisper): {time.time()-t1:.2f}s")
         print(f"Heard: {hindi_text}") 
         
     except Exception as e:
@@ -113,6 +119,7 @@ async def process_voice(audio: UploadFile = File(...), authorization: str = Head
         return {"status": "error", "message": "Could not hear anything clearly."}
     
 # --- STEP 2: Intent Extraction via Groq (Llama 3) ---
+    t2 = time.time()
     try:
         chat_completion = groq_client.chat.completions.create(
             messages=[
@@ -128,10 +135,11 @@ async def process_voice(audio: UploadFile = File(...), authorization: str = Head
                     4. "full_inventory": Checking the ENTIRE inventory / all stock at once ("saara stock dikhao", "poora inventory", "sab kuch dikhao", "kya kya hai dukaan mein").
                     5. "ledger_inquiry": Checking a customer's account/debt ("khata dikhao", "hisab", "udhaar").
                     6. "clear_ledger": Settling debt or wiping an account clean ("khata clear kar do", "udhaar chuka diya", "paise de diye").
+                    7. "clear_inventory": Deleting ALL stock completely ("saara stock delete kar do", "inventory clear karo", "sab hata do").
                     
                     Extraction Rules:
-                    - 'raw_item': Transliterate to English (e.g., "maggi"). If the action is full_inventory, ledger inquiry, or clear ledger, set to "".
-                    - 'quantity': Integer. Use "ALL" if they say "saari/sab". Use 0 for inquiries, full_inventory, or clearing ledgers.
+                    - 'raw_item': Transliterate to English (e.g., "maggi"). If the action is full_inventory, clear_inventory, ledger inquiry, or clear ledger, set to "".
+                    - 'quantity': Integer. Use "ALL" if they say "saari/sab". Use 0 for inquiries, full_inventory, clear_inventory, or clearing ledgers.
                     - 'customer_name': Extract the name in English (e.g., "ramesh") ONLY if they mention an account, credit, or a specific person. Otherwise, set to "".
                     - 'hinglish_text': Translate the raw Devanagari input into the Latin alphabet.
                     
@@ -143,13 +151,14 @@ async def process_voice(audio: UploadFile = File(...), authorization: str = Head
                     "content": f"Text to process: '{hindi_text}'"
                 }
             ],
-            model="llama-3.3-70b-versatile",
+            model="llama-3.1-8b-instant",
             response_format={"type": "json_object"},
             temperature=0.0
         )
         
         json_str = chat_completion.choices[0].message.content
         intent = json.loads(json_str)
+        print(f"⏱️ LLM (Groq Llama3): {time.time()-t2:.2f}s")
         print(f"Understood Intent: {intent}")
         
     except Exception as e:
@@ -157,6 +166,7 @@ async def process_voice(audio: UploadFile = File(...), authorization: str = Head
         raise HTTPException(status_code=500, detail="Failed to understand the intent.")
 
     # --- STEP 3: Standardization & Database Loop ---
+    t3 = time.time()
     # Handle LLM returning either a flat object or a transactions array
     transactions = intent.get("transactions", [])
     if not transactions and "action" in intent:
@@ -200,6 +210,23 @@ async def process_voice(audio: UploadFile = File(...), authorization: str = Head
                 idx += 1
             if not group["rows"]:
                 group["empty_message"] = "Inventory is empty. No items added yet."
+            continue
+
+        # --- Handle Clear Entire Inventory ---
+        if action == "clear_inventory":
+            group = get_group("clear_inventory", "Inventory Cleared", "🗑️",
+                              ["Action", "Status"])
+            all_docs = list(user_stock_ref.stream())
+            
+            if all_docs:
+                for doc in all_docs:
+                    doc.reference.delete()
+                group["rows"].append({
+                    "Action": "Delete all items",
+                    "Status": "✅ Cleared"
+                })
+            else:
+                group["empty_message"] = "Inventory is already empty."
             continue
 
         # --- Handle Ledger Inquiries ---
@@ -344,6 +371,20 @@ async def process_voice(audio: UploadFile = File(...), authorization: str = Head
     if not result_list and not errors:
         errors.append("Couldn't understand that. Please try speaking again clearly.")
 
+    # Save to history in background (non-blocking)
+    if result_list or errors:
+        def write_history():
+            user_history_ref = db.collection('users').document(uid).collection('history')
+            user_history_ref.add({
+                'results': result_list,
+                'errors': errors,
+                'timestamp': firestore.SERVER_TIMESTAMP
+            })
+        background_tasks.add_task(write_history)
+
+    print(f"⏱️ Firestore DB Ops: {time.time()-t3:.2f}s")
+    print(f"⏱️ TOTAL VOICE PROCESS: {time.time()-start_total:.2f}s")
+
     return {
         "status": "success",
         "results": result_list,
@@ -351,3 +392,44 @@ async def process_voice(audio: UploadFile = File(...), authorization: str = Head
         "raw_text": hinglish_text,
         "understood_intent": intent
     }
+
+
+# Helper to verify token and extract uid
+def verify_token(authorization: str):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    token = authorization.split("Bearer ")[1]
+    try:
+        decoded = auth.verify_id_token(token)
+        return decoded['uid']
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid Authentication Token")
+
+
+@app.get("/history")
+async def get_history(authorization: str = Header(None)):
+    uid = verify_token(authorization)
+    history_ref = db.collection('users').document(uid).collection('history')
+    docs = history_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(50).stream()
+
+    entries = []
+    for doc in docs:
+        data = doc.to_dict()
+        ts = data.get('timestamp')
+        entries.append({
+            "id": doc.id,
+            "results": data.get('results', []),
+            "errors": data.get('errors', []),
+            "timestamp": ts.isoformat() if ts else None
+        })
+    return {"history": entries}
+
+
+@app.delete("/history")
+async def clear_history(authorization: str = Header(None)):
+    uid = verify_token(authorization)
+    history_ref = db.collection('users').document(uid).collection('history')
+    docs = history_ref.stream()
+    for doc in docs:
+        doc.reference.delete()
+    return {"status": "cleared"}
