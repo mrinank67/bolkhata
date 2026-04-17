@@ -97,7 +97,7 @@ async def process_voice(
         decoded_token = auth.verify_id_token(token)
         uid = decoded_token["uid"]
         print(f"⏱️ Token Verify: {time.time() - t0:.2f}s")
-    except Exception as e:
+    except Exception as e:  # noqa: F841
         raise HTTPException(status_code=401, detail="Invalid Authentication Token")
 
     user_stock_ref = db.collection("users").document(uid).collection("stock")
