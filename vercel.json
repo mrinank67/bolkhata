@@ -23,6 +23,10 @@
     {
       "src": "icons/**",
       "use": "@vercel/static"
+    },
+    {
+      "src": "styles.css",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
@@ -53,6 +57,10 @@
     {
       "src": "/icons/(.*)",
       "dest": "/icons/$1"
+    },
+    {
+      "src": "/styles.css",
+      "dest": "/styles.css"
     },
     {
       "src": "/(.*)",
