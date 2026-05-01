@@ -142,18 +142,21 @@ async def process_voice(
                     You are an AI for a rural Indian shop. Extract a list of "transactions" from the user's speech.
                     
                     Allowed Actions:
-                    1. "decrease": Selling or reducing stock ("bech diya", "de do").
+                    1. "decrease": Selling or reducing stock ("bech diya", "de do"). If a customer name is mentioned without asking for credit, it is a general order.
                     2. "increase": Buying or adding stock ("aaya hai", "kharida").
                     3. "inquiry": Checking physical stock of a SPECIFIC item ("kitna bacha hai", "soap kitna hai").
                     4. "full_inventory": Checking the ENTIRE inventory / all stock at once ("saara stock dikhao", "poora inventory", "sab kuch dikhao", "kya kya hai dukaan mein").
                     5. "ledger_inquiry": Checking a customer's account/debt ("khata dikhao", "hisab", "udhaar").
                     6. "clear_ledger": Settling debt or wiping an account clean ("khata clear kar do", "udhaar chuka diya", "paise de diye").
                     7. "clear_inventory": Deleting ALL stock completely ("saara stock delete kar do", "inventory clear karo", "sab hata do").
+                    8. "order_inquiry": Checking past orders/sales for a specific person ("ramesh delhi ke order dikhao").
+                    9. "credit_sale": Selling on credit ("khaate mein likh do", "udhaar diya").
                     
                     Extraction Rules:
-                    - 'raw_item': Transliterate to English (e.g., "maggi"). If the action is full_inventory, clear_inventory, ledger inquiry, or clear ledger, set to "".
-                    - 'quantity': Integer. Use "ALL" if they say "saari/sab". Use 0 for inquiries, full_inventory, clear_inventory, or clearing ledgers.
-                    - 'customer_name': Extract the name in English (e.g., "ramesh") ONLY if they mention an account, credit, or a specific person. Otherwise, set to "".
+                    - 'raw_item': Transliterate to English (e.g., "maggi"). STRIP OUT any numbers or unit words like 'piece', 'packet', 'kilo'. The item name should ONLY be the product name. If the action is full_inventory, clear_inventory, ledger_inquiry, clear_ledger, or order_inquiry, set to "".
+                    - 'quantity': Integer. Must parse Hindi numbers (e.g., 'aath' -> 8, 'bara' -> 12) into integers. Use "ALL" if they say "saari/sab". Use 0 for inquiries, full_inventory, clear_inventory, clearing ledgers, or order inquiries.
+                    - 'customer_name': Extract the name in English (e.g., "ramesh") ONLY if they mention an account, credit, order history, or a specific person buying. Otherwise, set to "".
+                    - 'customer_modifier': Extract any differentiating factor or location mentioned with the name (e.g., "delhi", "nehru apartment wale"). If none, set to "".
                     - 'hinglish_text': Translate the raw Devanagari input into the Latin alphabet.
                     
                     You MUST return ONLY valid JSON. Do not include any text outside the JSON block.
@@ -202,7 +205,36 @@ async def process_voice(
     for txn in transactions:
         action = txn.get("action")
         customer_name = txn.get("customer_name")
+        customer_modifier = txn.get("customer_modifier", "")
         raw_qty = txn.get("quantity", 1)
+
+        # --- Handle Order Inquiries ---
+        if action == "order_inquiry":
+            if not customer_name:
+                errors.append("Kiske orders dekhne hain? (Please specify a name).")
+                continue
+            
+            group_key = f"order_inquiry_{customer_name}_{customer_modifier}"
+            title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
+            group = get_group(group_key, f"{title_name}'s Orders", "🛍️", ["Item", "Qty", "Context"])
+
+            user_orders_ref = db.collection("users").document(uid).collection("orders")
+            docs = user_orders_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).stream()
+            
+            orders_found = False
+            for doc in docs:
+                data = doc.to_dict()
+                if customer_modifier and customer_modifier.lower() != data.get("customer_modifier", "").lower():
+                    continue
+                orders_found = True
+                item_name = data.get("item", "unknown")
+                qty = data.get("quantity", 0)
+                ctx = data.get("customer_modifier", "")
+                group["rows"].append({"Item": item_name.capitalize(), "Qty": qty, "Context": ctx if ctx else "-"})
+            
+            if not orders_found:
+                group["empty_message"] = f"No orders found for {title_name}."
+            continue
 
         # --- Handle Full Inventory ---
         if action == "full_inventory":
@@ -248,10 +280,11 @@ async def process_voice(
                 errors.append("Kiska khaata dekhna hai? (Please specify a name).")
                 continue
 
-            group_key = f"ledger_inquiry_{customer_name}"
+            group_key = f"ledger_inquiry_{customer_name}_{customer_modifier}"
+            title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
             group = get_group(
                 group_key,
-                f"{customer_name.capitalize()}'s Ledger",
+                f"{title_name}'s Ledger",
                 "📒",
                 ["Item", "Quantity Owed"],
             )
@@ -262,6 +295,8 @@ async def process_voice(
             dues_map = {}
             for doc in docs:
                 data = doc.to_dict()
+                if customer_modifier and customer_modifier.lower() != data.get("customer_modifier", "").lower():
+                    continue
                 item_name = data.get("item", "unknown")
                 dues_map[item_name] = dues_map.get(item_name, 0) + data.get(
                     "quantity", 0
@@ -269,7 +304,7 @@ async def process_voice(
 
             if not dues_map:
                 group["empty_message"] = (
-                    f"{customer_name.capitalize()} ka khaata clear hai. No dues!"
+                    f"{title_name} ka khaata clear hai. No dues!"
                 )
             else:
                 for item, qty in dues_map.items():
@@ -284,7 +319,8 @@ async def process_voice(
                 errors.append("Kiska khaata clear karna hai? (Please specify a name).")
                 continue
 
-            group_key = f"clear_ledger_{customer_name}"
+            group_key = f"clear_ledger_{customer_name}_{customer_modifier}"
+            title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
             group = get_group(group_key, "Ledger Cleared", "💰", ["Customer", "Status"])
 
             docs = list(
@@ -293,16 +329,23 @@ async def process_voice(
                 ).stream()
             )
 
-            if docs:
-                for doc in docs:
+            docs_to_delete = []
+            for doc in docs:
+                data = doc.to_dict()
+                if customer_modifier and customer_modifier.lower() != data.get("customer_modifier", "").lower():
+                    continue
+                docs_to_delete.append(doc)
+
+            if docs_to_delete:
+                for doc in docs_to_delete:
                     doc.reference.delete()
                 group["rows"].append(
-                    {"Customer": customer_name.capitalize(), "Status": "✅ Settled"}
+                    {"Customer": title_name, "Status": "✅ Settled"}
                 )
             else:
                 group["rows"].append(
                     {
-                        "Customer": customer_name.capitalize(),
+                        "Customer": title_name,
                         "Status": "ℹ️ No dues found",
                     }
                 )
@@ -349,7 +392,7 @@ async def process_voice(
                 qty = 1
 
         # Calculate new stock
-        if action == "decrease":
+        if action in ["decrease", "credit_sale"]:
             new_qty = max(0, current_qty - qty)
         else:
             new_qty = current_qty + qty
@@ -357,8 +400,10 @@ async def process_voice(
         # Update Stock DB
         stock_doc_ref.set({"quantity": new_qty, "item": standard_item}, merge=True)
 
+        title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize() if customer_name else ""
+
         # Build result row
-        if action == "decrease" and customer_name:
+        if action == "credit_sale" and customer_name:
             group = get_group(
                 "udhaar_sale",
                 "Credit Sale (Udhaar)",
@@ -368,6 +413,33 @@ async def process_voice(
             user_udhaar_ref.add(
                 {
                     "customer_name": customer_name,
+                    "customer_modifier": customer_modifier,
+                    "item": standard_item,
+                    "quantity": qty,
+                    "timestamp": firestore.SERVER_TIMESTAMP,
+                }
+            )
+            group["rows"].append(
+                {
+                    "Item": standard_item.capitalize(),
+                    "Qty": qty,
+                    "Previous": current_qty,
+                    "Current": new_qty,
+                    "Customer": title_name,
+                }
+            )
+        elif action == "decrease" and customer_name:
+            group = get_group(
+                "order_sale",
+                "Customer Order",
+                "🛍️",
+                ["Item", "Qty", "Previous", "Current", "Customer", "Context"]
+            )
+            user_orders_ref = db.collection("users").document(uid).collection("orders")
+            user_orders_ref.add(
+                {
+                    "customer_name": customer_name,
+                    "customer_modifier": customer_modifier,
                     "item": standard_item,
                     "quantity": qty,
                     "timestamp": firestore.SERVER_TIMESTAMP,
@@ -380,9 +452,10 @@ async def process_voice(
                     "Previous": current_qty,
                     "Current": new_qty,
                     "Customer": customer_name.capitalize(),
+                    "Context": customer_modifier if customer_modifier else "-"
                 }
             )
-        elif action == "decrease":
+        elif action in ["decrease", "credit_sale"]:
             group = get_group(
                 "decrease", "Stock Sold", "🛒", ["Item", "Sold", "Previous", "Current"]
             )
