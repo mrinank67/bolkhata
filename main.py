@@ -163,13 +163,13 @@ async def process_voice(
                     Recent Context: {recent_context_msg}
                     
                     Map intents using this schema:
-                    - 'target': "stock" (inventory/sales) OR "ledger" (udhaar/accounts/orders).
-                    - 'operation': "add" (restock shop inventory), "subtract" (sell/give). NOTE: "khate me add karo" means selling on credit, so use "subtract"!), "read" (check/inquiry), OR "clear" (settle/delete).
-                    - 'item': English product name ONLY (strip units like 'packet', 'kilo'). Use "ALL" for full inventory. "" if not applicable.
+                    - 'target': "stock" (for ANY item sales or restocks, even if udhaar or order) OR "ledger" (ONLY for checking/clearing accounts or order history).
+                    - 'operation': MUST be from the shop's perspective. "add" (restock shop inventory ONLY), "subtract" (sell/give. NOTE: "order me likho" or "khate me add karo" BOTH mean giving items to a customer, so MUST use "subtract"), "read" (check/inquiry), OR "clear" (settle/delete).
+                    - 'item': MUST be transliterated/translated to English letters (e.g. "sabun" or "soap", NEVER Devanagari like "साबुन"). Strip units like 'packet', 'kilo'. Use "ALL" for full inventory. "" if not applicable.
                     - 'qty': Integer (Parse Hindi numbers). Use 0 for read/clear operations.
                     - 'customer_name': English name of the person (e.g. "ramesh"). Apply to all items in the utterance. Use Context if implied. "" if cash sale.
                     - 'customer_modifier': Any location or descriptor (e.g. "delhi wale"). "" if none.
-                    - 'is_credit': boolean (true ONLY if "udhaar", "khata", or a specific account is implied).
+                    - 'is_credit': boolean (true ONLY if "udhaar" or "khata" is explicitly mentioned. MUST be FALSE if they say "order").
                     
                     Return ONLY valid JSON matching this exact structure:
                     {{
