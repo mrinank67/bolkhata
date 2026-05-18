@@ -159,28 +159,26 @@ async def process_voice(
                 {
                     "role": "system",
                     "content": f"""
-                    You are an AI for a rural Indian shop. Extract a list of "transactions" from the user's speech.{recent_context_msg}
+                    You are an AI for an Indian Kirana shop. Map the user's speech into strict JSON transactions.
+                    Recent Context: {recent_context_msg}
                     
-                    Allowed Actions:
-                    1. "decrease": Selling or reducing stock ("bech diya", "de do"). If a customer name is mentioned without asking for credit, it is a general order.
-                    2. "increase": Buying or adding stock ("aaya hai", "kharida").
-                    3. "inquiry": Checking physical stock of a SPECIFIC item ("kitna bacha hai", "soap kitna hai").
-                    4. "full_inventory": Checking the ENTIRE inventory / all stock at once ("saara stock dikhao", "poora inventory", "sab kuch dikhao", "kya kya hai dukaan mein").
-                    5. "ledger_inquiry": Checking a customer's account/debt ("khata dikhao", "hisab", "udhaar").
-                    6. "clear_ledger": Settling debt or wiping an account clean ("khata clear kar do", "udhaar chuka diya", "paise de diye").
-                    7. "clear_inventory": Deleting ALL stock completely ("saara stock delete kar do", "inventory clear karo", "sab hata do").
-                    8. "order_inquiry": Checking past orders/sales for a specific person ("ramesh delhi ke order dikhao").
-                    9. "credit_sale": Selling on credit ("khaate mein likh do", "udhaar diya").
+                    Map intents using this schema:
+                    - 'target': "stock" (inventory/sales) OR "ledger" (udhaar/accounts/orders).
+                    - 'operation': "add" (restock), "subtract" (sell), "read" (check/inquiry), OR "clear" (settle/delete).
+                    - 'item': English product name ONLY (strip units like 'packet', 'kilo'). Use "ALL" for full inventory. "" if not applicable.
+                    - 'qty': Integer (Parse Hindi numbers). Use 0 for read/clear operations.
+                    - 'customer_name': English name of the person (e.g. "ramesh"). Apply to all items in the utterance. Use Context if implied. "" if cash sale.
+                    - 'customer_modifier': Any location or descriptor (e.g. "delhi wale"). "" if none.
+                    - 'is_credit': boolean (true ONLY if "udhaar", "khata", or a specific account is implied).
                     
-                    Extraction Rules:
-                    - 'raw_item': Transliterate to English (e.g., "maggi"). STRIP OUT any numbers or unit words like 'piece', 'packet', 'kilo'. The item name should ONLY be the product name. If the action is full_inventory, clear_inventory, ledger_inquiry, clear_ledger, or order_inquiry, set to "".
-                    - 'quantity': Integer. Must parse Hindi numbers (e.g., 'aath' -> 8, 'bara' -> 12) into integers. Use "ALL" if they say "saari/sab". Use 0 for inquiries, full_inventory, clear_inventory, clearing ledgers, or order inquiries.
-                    - 'customer_name': Extract the name in English (e.g., "ramesh"). If a name is mentioned once in the utterance, apply it to ALL subsequent items in that utterance. If they use words like 'aur' without a name, use the RECENT CONTEXT name if available. Otherwise, set to "".
-                    - 'customer_modifier': Extract any differentiating factor or location mentioned with the name (e.g., "delhi", "nehru apartment wale"). If none, set to "".
-                    - 'hinglish_text': Translate the raw Devanagari input into the Latin alphabet.
-                    
-                    You MUST return ONLY valid JSON. Do not include any text outside the JSON block.
-                    """,
+                    Return ONLY valid JSON matching this exact structure:
+                    {{
+                      "hinglish_text": "do maggi ramesh delhi ke khate me",
+                      "transactions": [
+                        {{"target": "stock", "operation": "subtract", "item": "maggi", "qty": 2, "customer_name": "ramesh", "customer_modifier": "delhi", "is_credit": true}}
+                      ]
+                    }}
+                    """
                 },
                 {"role": "user", "content": f"Text to process: '{hindi_text}'"},
             ],
@@ -227,13 +225,16 @@ async def process_voice(
         return result_groups[action_key]
 
     for txn in transactions:
-        action = txn.get("action")
-        customer_name = txn.get("customer_name")
-        customer_modifier = txn.get("customer_modifier", "")
-        raw_qty = txn.get("quantity", 1)
+        target = txn.get("target")
+        operation = txn.get("operation")
+        raw_item = txn.get("item", "")
+        raw_qty = txn.get("qty", 1)
+        customer_name = txn.get("customer_name", "").lower()
+        customer_modifier = txn.get("customer_modifier", "").lower()
+        is_credit = txn.get("is_credit", False)
 
         # --- Handle Order Inquiries ---
-        if action == "order_inquiry":
+        if target == "ledger" and operation == "read" and not is_credit:
             if not customer_name:
                 errors.append("Kiske orders dekhne hain? (Please specify a name).")
                 continue
@@ -261,7 +262,7 @@ async def process_voice(
             continue
 
         # --- Handle Full Inventory ---
-        if action == "full_inventory":
+        if target == "stock" and operation == "read" and raw_item == "ALL":
             group = get_group(
                 "full_inventory", "Full Inventory", "📦", ["#", "Item", "Stock"]
             )
@@ -282,7 +283,7 @@ async def process_voice(
             continue
 
         # --- Handle Clear Entire Inventory (requires confirmation) ---
-        if action == "clear_inventory":
+        if target == "stock" and operation == "clear" and raw_item == "ALL":
             all_docs = list(user_stock_ref.stream())
 
             if all_docs:
@@ -303,7 +304,7 @@ async def process_voice(
             continue
 
         # --- Handle Ledger Inquiries ---
-        if action == "ledger_inquiry":
+        if target == "ledger" and operation == "read" and is_credit:
             if not customer_name:
                 errors.append("Kiska khaata dekhna hai? (Please specify a name).")
                 continue
@@ -342,7 +343,7 @@ async def process_voice(
             continue
 
         # --- Handle Clearing Ledgers ---
-        if action == "clear_ledger":
+        if target == "ledger" and operation == "clear":
             if not customer_name:
                 errors.append("Kiska khaata clear karna hai? (Please specify a name).")
                 continue
@@ -380,8 +381,7 @@ async def process_voice(
             continue
 
         # --- Normal Stock Processing ---
-        raw_item = txn.get("raw_item")
-        if not raw_item:
+        if not raw_item or raw_item == "ALL":
             continue
 
         raw_item = raw_item.lower()
@@ -400,7 +400,7 @@ async def process_voice(
         stock_doc = stock_doc_ref.get()
 
         if not stock_doc.exists:
-            if action == "increase":
+            if operation == "add":
                 current_qty = 0
             else:
                 errors.append(f"{standard_item} not found in inventory.")
@@ -409,7 +409,7 @@ async def process_voice(
             current_qty = stock_doc.to_dict().get("quantity", 0)
 
         # Inquiry
-        if action == "inquiry":
+        if target == "stock" and operation == "read":
             group = get_group("inquiry", "Stock Check", "🔍", ["Item", "Current Stock"])
             group["rows"].append(
                 {"Item": standard_item.capitalize(), "Current Stock": current_qty}
@@ -417,7 +417,7 @@ async def process_voice(
             continue
 
         # Quantity
-        if raw_qty == "ALL" and action == "decrease":
+        if raw_qty == "ALL" and operation == "subtract":
             qty = current_qty
         else:
             try:
@@ -426,10 +426,11 @@ async def process_voice(
                 qty = 1
 
         # Calculate new stock
-        if action in ["decrease", "credit_sale"]:
+        if operation == "subtract":
             new_qty = max(0, current_qty - qty)
         else:
             new_qty = current_qty + qty
+            
         # Update Stock DB
         update_data = {
             "quantity": new_qty, 
@@ -443,7 +444,7 @@ async def process_voice(
         title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize() if customer_name else ""
 
         # Build result row
-        if action == "credit_sale" and customer_name:
+        if operation == "subtract" and is_credit and customer_name:
             group = get_group(
                 "udhaar_sale",
                 "Credit Sale (Udhaar)",
@@ -486,7 +487,7 @@ async def process_voice(
                     "Customer": title_name,
                 }
             )
-        elif action == "decrease" and customer_name:
+        elif operation == "subtract" and customer_name:
             group = get_group(
                 "order_sale",
                 "Customer Order",
@@ -530,7 +531,7 @@ async def process_voice(
                     "Context": customer_modifier if customer_modifier else "-"
                 }
             )
-        elif action in ["decrease", "credit_sale"]:
+        elif operation == "subtract":
             group = get_group(
                 "decrease", "Stock Sold", "🛒", ["Item", "Sold", "Previous", "Current"]
             )
