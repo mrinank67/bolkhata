@@ -136,6 +136,7 @@ async def process_voice(
         data = {
             'model': 'saaras:v3',
             'language_code': 'unknown',
+            'mode': 'translate',
             'with_diarization': 'false'
         }
         headers = {
