@@ -38,8 +38,21 @@ let currentToken = null;
 let currentUid = null;
 
 // ═══════ 1. AUTH STATE ═══════
+const ALLOWED_PREVIEW_USERS = [
+  "mrinankrajsingh67@gmail.com",
+  "+919876543210",
+  "jade24mac@gmail.com"
+];
+
 onAuthStateChanged(auth, async user => {
   if (user) {
+    const identifier = user.email || user.phoneNumber || "";
+    if (!ALLOWED_PREVIEW_USERS.includes(identifier)) {
+      await signOut(auth);
+      loginError.innerText = "Access Denied: You do not have permission to view this preview version.";
+      return;
+    }
+
     currentToken = await user.getIdToken();
     currentUid = user.uid;
     authMain.classList.remove("hidden");
