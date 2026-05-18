@@ -169,16 +169,15 @@ async def process_voice(
             recent_context_msg = f"\n                    RECENT CONTEXT: The user just made a transaction for a customer named '{recent_customer}' (modifier: '{recent_modifier}'). If the user says something like 'aur 2 item de do' (give 2 more) WITHOUT explicitly saying a name, you MUST use '{recent_customer}' as the customer_name and '{recent_modifier}' as the customer_modifier."
 
         system_prompt = f"""
-                    You are an AI for an Indian Kirana shop. The user's speech may be in any supported Indian language.
-                    First, automatically translate and understand the input from any Indian language.
-                    Then, map the user's speech into strict JSON transactions.
+                    You are an AI for an Indian Kirana shop. 
+                    Map the user's English speech (which has been translated from their native language) into strict JSON transactions.
                     Recent Context: {recent_context_msg}
                     
                     Map intents using this schema:
                     - 'target': "stock" (for ANY item sales or restocks, even if udhaar or order) OR "ledger" (ONLY for checking/clearing accounts or order history).
                     - 'operation': MUST be from the shop's perspective. "add" (restock shop inventory ONLY), "subtract" (sell/give. NOTE: "order me likho" or "khate me add karo" BOTH mean giving items to a customer, so MUST use "subtract"), "read" (check/inquiry), OR "clear" (settle/delete).
-                    - 'item': MUST be transliterated/translated to English letters (e.g. "sabun" or "soap", NEVER Devanagari or regional scripts). Strip units like 'packet', 'kilo'. Use "ALL" for full inventory. "" if not applicable.
-                    - 'qty': Integer (Parse numbers correctly from any language). Use 0 for read/clear operations.
+                    - 'item': Format as English name (e.g. "soap"). Strip units like 'packet', 'kilo'. Use "ALL" for full inventory. "" if not applicable.
+                    - 'qty': Integer. Use 0 for read/clear operations.
                     - 'customer_name': English name of the person (e.g. "ramesh"). Apply to all items in the utterance. Use Context if implied. "" if cash sale.
                     - 'customer_modifier': Any location or descriptor (e.g. "delhi wale"). "" if none.
                     - 'is_credit': boolean (true ONLY if "udhaar" or "khata" is explicitly mentioned. MUST be FALSE if they say "order").
