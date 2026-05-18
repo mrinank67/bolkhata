@@ -206,8 +206,15 @@ async def process_voice(
         response.raise_for_status()
 
         result = response.json()
-        json_str = result['choices'][0]['message']['content']
         
+        # Safely extract content, handling potential None values
+        message = result.get('choices', [{}])[0].get('message', {})
+        json_str = message.get('content')
+        
+        if not json_str:
+            print(f"❌ SARVAM EMPTY RESPONSE: {result}")
+            raise Exception("Received empty content from Sarvam LLM.")
+            
         # Clean up possible markdown code blocks from the response
         json_str = json_str.strip()
         if json_str.startswith("```json"):
