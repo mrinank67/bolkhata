@@ -241,7 +241,7 @@ async def process_voice(
             
             group_key = f"order_inquiry_{customer_name}_{customer_modifier}"
             title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
-            group = get_group(group_key, f"{title_name}'s Orders", "🛍️", ["Item", "Qty", "Context"])
+            group = get_group(group_key, f"{title_name}'s Orders", "🛍️", ["Item", "Qty"])
 
             user_orders_ref = db.collection("users").document(uid).collection("orders")
             docs = user_orders_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).stream()
@@ -254,8 +254,7 @@ async def process_voice(
                 orders_found = True
                 item_name = data.get("item", "unknown")
                 qty = data.get("quantity", 0)
-                ctx = data.get("customer_modifier", "")
-                group["rows"].append({"Item": item_name.capitalize(), "Qty": qty, "Context": ctx if ctx else "-"})
+                group["rows"].append({"Item": item_name.capitalize(), "Qty": qty})
             
             if not orders_found:
                 group["empty_message"] = f"No orders found for {title_name}."
@@ -492,7 +491,7 @@ async def process_voice(
                 "order_sale",
                 "Customer Order",
                 "🛍️",
-                ["Item", "Qty", "Previous", "Current", "Customer", "Context"]
+                ["Item", "Qty", "Previous", "Current", "Customer"]
             )
             
             docs = user_orders_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).where(filter=FieldFilter("item", "==", standard_item)).stream()
@@ -527,8 +526,7 @@ async def process_voice(
                     "Qty": final_qty,
                     "Previous": current_qty,
                     "Current": new_qty,
-                    "Customer": customer_name.capitalize(),
-                    "Context": customer_modifier if customer_modifier else "-"
+                    "Customer": title_name
                 }
             )
         elif operation == "subtract":
