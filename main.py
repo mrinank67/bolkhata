@@ -39,8 +39,9 @@ def init_firebase():
             # Fallback to local JSON (for local development)
             cred_path = "poc-inventory-management-98303-0fc65b9f53ce.json"
             if not os.path.exists(cred_path):
+                env_keys = ", ".join(list(os.environ.keys()))
                 raise Exception(
-                    "Firebase Credentials not found! Add FIREBASE_SERVICE_ACCOUNT env var or the JSON file."
+                    f"Firebase Credentials not found! Add FIREBASE_SERVICE_ACCOUNT env var. Available env keys: {env_keys}"
                 )
             cred = credentials.Certificate(cred_path)
 
