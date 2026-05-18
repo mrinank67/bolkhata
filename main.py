@@ -3,8 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import json
 import time
 from thefuzz import process
-from groq import Groq
 import os
+import requests
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
@@ -13,10 +13,8 @@ import datetime
 
 load_dotenv()
 
-# Setup Groq
-
-api_key = os.getenv("GROQ_API_KEY")
-groq_client = Groq(api_key=api_key)
+# Setup Sarvam
+sarvam_api_key = os.getenv("SARVAM_API_KEY")
 
 app = FastAPI()
 
@@ -117,7 +115,7 @@ async def process_voice(
     except Exception as e:
         print("Error fetching recent context:", e)
 
-    # --- STEP 1: Speech-to-Text via Groq (Whisper) ---
+    # --- STEP 1: Speech-to-Text via Sarvam AI ---
     t1 = time.time()
     try:
         audio_bytes = await audio.read()
@@ -128,37 +126,45 @@ async def process_voice(
                 "message": "Audio too short. Please hold the button while speaking.",
             }
 
-        transcription = groq_client.audio.transcriptions.create(
-            file=(audio.filename, audio_bytes, audio.content_type),
-            model="whisper-large-v3",
-            prompt="The user is speaking Hindi or Hinglish regarding shop inventory.",
-            response_format="json",
-            language="hi",
-            temperature=0.0,
-        )
-        hindi_text = transcription.text
-        print(f"⏱️ STT (Groq Whisper): {time.time() - t1:.2f}s")
+        url = "https://api.sarvam.ai/speech-to-text"
+        files = {
+            'file': (audio.filename, audio_bytes, audio.content_type)
+        }
+        data = {
+            'model': 'saaras:v3',
+            'language_code': 'hi-IN',
+            'with_diarization': 'false'
+        }
+        headers = {
+            'api-subscription-key': sarvam_api_key
+        }
+
+        response = requests.post(url, headers=headers, data=data, files=files)
+        response.raise_for_status()
+        
+        result = response.json()
+        hindi_text = result.get('transcript', result.get('text', ''))
+        
+        print(f"⏱️ STT (Sarvam): {time.time() - t1:.2f}s")
         print(f"Heard: {hindi_text}")
 
     except Exception as e:
-        print(f"❌ GROQ STT ERROR: {str(e)}")
+        print(f"❌ SARVAM STT ERROR: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Response: {e.response.text}")
         raise HTTPException(status_code=500, detail=f"STT Error: {str(e)}")
 
     if not hindi_text.strip():
         return {"status": "error", "message": "Could not hear anything clearly."}
 
-    # --- STEP 2: Intent Extraction via Groq (Llama 3) ---
+    # --- STEP 2: Intent Extraction via Sarvam AI LLM ---
     t2 = time.time()
     try:
         recent_context_msg = ""
         if recent_customer:
             recent_context_msg = f"\n                    RECENT CONTEXT: The user just made a transaction for a customer named '{recent_customer}' (modifier: '{recent_modifier}'). If the user says something like 'aur 2 item de do' (give 2 more) WITHOUT explicitly saying a name, you MUST use '{recent_customer}' as the customer_name and '{recent_modifier}' as the customer_modifier."
 
-        chat_completion = groq_client.chat.completions.create(
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"""
+        system_prompt = f"""
                     You are an AI for an Indian Kirana shop. Map the user's speech into strict JSON transactions.
                     Recent Context: {recent_context_msg}
                     
@@ -179,21 +185,43 @@ async def process_voice(
                       ]
                     }}
                     """
-                },
-                {"role": "user", "content": f"Text to process: '{hindi_text}'"},
-            ],
-            model="llama-3.1-8b-instant",
-            response_format={"type": "json_object"},
-            temperature=0.0,
-        )
 
-        json_str = chat_completion.choices[0].message.content
+        url = "https://api.sarvam.ai/v1/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {sarvam_api_key}"
+        }
+        data = {
+            "model": "sarvam-30b",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Text to process: '{hindi_text}'"}
+            ],
+            "temperature": 0.0
+        }
+
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status()
+
+        result = response.json()
+        json_str = result['choices'][0]['message']['content']
+        
+        # Clean up possible markdown code blocks from the response
+        json_str = json_str.strip()
+        if json_str.startswith("```json"):
+            json_str = json_str[7:]
+        if json_str.endswith("```"):
+            json_str = json_str[:-3]
+        json_str = json_str.strip()
+
         intent = json.loads(json_str)
-        print(f"⏱️ LLM (Groq Llama3): {time.time() - t2:.2f}s")
+        print(f"⏱️ LLM (Sarvam): {time.time() - t2:.2f}s")
         print(f"Understood Intent: {intent}")
 
     except Exception as e:
-        print(f"❌ GROQ LLM ERROR: {str(e)}")
+        print(f"❌ SARVAM LLM ERROR: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Response: {e.response.text}")
         raise HTTPException(status_code=500, detail="Failed to understand the intent.")
 
     # --- STEP 3: Standardization & Database Loop ---
