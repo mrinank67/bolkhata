@@ -1,7 +1,8 @@
 # BolKhata — Smart Voice Inventory & Ledger [EXPERIMENTAL]
 
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white)
-![Sarvam](https://img.shields.io/badge/Sarvam_AI-LLM_&_STT-FF4500)
+![Sarvam](https://img.shields.io/badge/Sarvam_AI-STT-FF4500)
+![Groq](https://img.shields.io/badge/Groq-LLM-purple)
 ![Vercel](https://img.shields.io/badge/Vercel-000?style=flat&logo=vercel&logoColor=white)
 ![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=flat&logo=firebase&logoColor=black)
 
@@ -13,7 +14,7 @@ BolKhata prioritizes extreme low latency, ensuring the AI can process Hindi/Hing
 
 - **Zero-Latency Voice Capture:** Press-and-hold walkie-talkie UI with spacebar desktop support — designed for noisy shop environments.
 - **All-India Language Support:** Powered by Sarvam AI (`saaras:v3`) to automatically detect, translate, and transcribe any of the 22 supported Indian languages natively.
-- **Intelligent Intent Extraction:** Sarvam AI (`sarvam-30b`) instantly translates and maps voice intents to strict JSON, extracting contextual customer modifiers (e.g., "Delhi wale Ramesh" vs "Park wale Ramesh"), and understanding complex multi-item orders in a single breath.
+- **Intelligent Intent Extraction:** Groq Llama 3 (`llama-3.1-8b-instant`) takes the translated English text and flawlessly maps voice intents to strict JSON, extracting contextual customer modifiers (e.g., "Delhi wale Ramesh" vs "Park wale Ramesh"), and understanding complex multi-item orders in a single breath.
 - **Dynamic Fuzzy Matching:** No hardcoded aliases! The system instantly fetches your live inventory and fuzzy-matches spoken slang or errors to your exact stored items, automatically adapting as you add new stock.
 - **Customer Order & Udhaar Tracking:** Seamlessly separates general orders (*"Ramesh Delhi ko bech diya"*) from credit ledgers (*"Ramesh Delhi ke khate me likh do"*). Query specific customer histories using their exact differentiating context.
 - **Multi-Tenant Security:** Firebase Auth (Phone/OTP, Google, Email) ensures every shopkeeper's inventory and history is strictly siloed and private.
