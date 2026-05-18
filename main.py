@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
 from google.cloud.firestore_v1.base_query import FieldFilter
+import datetime
 
 load_dotenv()
 
@@ -86,6 +87,35 @@ async def process_voice(
 
     user_stock_ref = db.collection("users").document(uid).collection("stock")
     user_udhaar_ref = db.collection("users").document(uid).collection("udhaar")
+    user_orders_ref = db.collection("users").document(uid).collection("orders")
+
+    # Fetch recent customer context from the last 5 minutes
+    recent_customer = ""
+    recent_modifier = ""
+    try:
+        last_orders = list(user_orders_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream())
+        last_order_time = last_orders[0].to_dict().get("timestamp") if last_orders else None
+        
+        last_udhaars = list(user_udhaar_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream())
+        last_udhaar_time = last_udhaars[0].to_dict().get("timestamp") if last_udhaars else None
+
+        latest_doc = None
+        if last_order_time and last_udhaar_time:
+            latest_doc = last_orders[0] if last_order_time > last_udhaar_time else last_udhaars[0]
+        elif last_order_time:
+            latest_doc = last_orders[0]
+        elif last_udhaar_time:
+            latest_doc = last_udhaars[0]
+            
+        if latest_doc:
+            data = latest_doc.to_dict()
+            ts = data.get("timestamp")
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if ts and (now - ts).total_seconds() < 300: # 5 minutes
+                recent_customer = data.get("customer_name", "")
+                recent_modifier = data.get("customer_modifier", "")
+    except Exception as e:
+        print("Error fetching recent context:", e)
 
     # --- STEP 1: Speech-to-Text via Groq (Whisper) ---
     t1 = time.time()
@@ -120,12 +150,16 @@ async def process_voice(
     # --- STEP 2: Intent Extraction via Groq (Llama 3) ---
     t2 = time.time()
     try:
+        recent_context_msg = ""
+        if recent_customer:
+            recent_context_msg = f"\n                    RECENT CONTEXT: The user just made a transaction for a customer named '{recent_customer}' (modifier: '{recent_modifier}'). If the user says something like 'aur 2 item de do' (give 2 more) WITHOUT explicitly saying a name, you MUST use '{recent_customer}' as the customer_name and '{recent_modifier}' as the customer_modifier."
+
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {
                     "role": "system",
-                    "content": """
-                    You are an AI for a rural Indian shop. Extract a list of "transactions" from the user's speech.
+                    "content": f"""
+                    You are an AI for a rural Indian shop. Extract a list of "transactions" from the user's speech.{recent_context_msg}
                     
                     Allowed Actions:
                     1. "decrease": Selling or reducing stock ("bech diya", "de do"). If a customer name is mentioned without asking for credit, it is a general order.
@@ -141,7 +175,7 @@ async def process_voice(
                     Extraction Rules:
                     - 'raw_item': Transliterate to English (e.g., "maggi"). STRIP OUT any numbers or unit words like 'piece', 'packet', 'kilo'. The item name should ONLY be the product name. If the action is full_inventory, clear_inventory, ledger_inquiry, clear_ledger, or order_inquiry, set to "".
                     - 'quantity': Integer. Must parse Hindi numbers (e.g., 'aath' -> 8, 'bara' -> 12) into integers. Use "ALL" if they say "saari/sab". Use 0 for inquiries, full_inventory, clear_inventory, clearing ledgers, or order inquiries.
-                    - 'customer_name': Extract the name in English (e.g., "ramesh") ONLY if they mention an account, credit, order history, or a specific person buying. Otherwise, set to "".
+                    - 'customer_name': Extract the name in English (e.g., "ramesh"). If a name is mentioned once in the utterance, apply it to ALL subsequent items in that utterance. If they use words like 'aur' without a name, use the RECENT CONTEXT name if available. Otherwise, set to "".
                     - 'customer_modifier': Extract any differentiating factor or location mentioned with the name (e.g., "delhi", "nehru apartment wale"). If none, set to "".
                     - 'hinglish_text': Translate the raw Devanagari input into the Latin alphabet.
                     
@@ -416,19 +450,37 @@ async def process_voice(
                 "📒",
                 ["Item", "Qty", "Previous", "Current", "Customer"],
             )
-            user_udhaar_ref.add(
-                {
-                    "customer_name": customer_name,
-                    "customer_modifier": customer_modifier,
-                    "item": standard_item,
-                    "quantity": qty,
-                    "timestamp": firestore.SERVER_TIMESTAMP,
-                }
-            )
+            
+            docs = user_udhaar_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).where(filter=FieldFilter("item", "==", standard_item)).stream()
+            existing_doc = None
+            for doc in docs:
+                if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
+                    existing_doc = doc
+                    break
+                    
+            if existing_doc:
+                existing_qty = existing_doc.to_dict().get("quantity", 0)
+                final_qty = existing_qty + qty
+                existing_doc.reference.update({
+                    "quantity": final_qty,
+                    "timestamp": firestore.SERVER_TIMESTAMP
+                })
+            else:
+                user_udhaar_ref.add(
+                    {
+                        "customer_name": customer_name,
+                        "customer_modifier": customer_modifier,
+                        "item": standard_item,
+                        "quantity": qty,
+                        "timestamp": firestore.SERVER_TIMESTAMP,
+                    }
+                )
+                final_qty = qty
+                
             group["rows"].append(
                 {
                     "Item": standard_item.capitalize(),
-                    "Qty": qty,
+                    "Qty": final_qty,
                     "Previous": current_qty,
                     "Current": new_qty,
                     "Customer": title_name,
@@ -441,20 +493,37 @@ async def process_voice(
                 "🛍️",
                 ["Item", "Qty", "Previous", "Current", "Customer", "Context"]
             )
-            user_orders_ref = db.collection("users").document(uid).collection("orders")
-            user_orders_ref.add(
-                {
-                    "customer_name": customer_name,
-                    "customer_modifier": customer_modifier,
-                    "item": standard_item,
-                    "quantity": qty,
-                    "timestamp": firestore.SERVER_TIMESTAMP,
-                }
-            )
+            
+            docs = user_orders_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).where(filter=FieldFilter("item", "==", standard_item)).stream()
+            existing_doc = None
+            for doc in docs:
+                if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
+                    existing_doc = doc
+                    break
+                    
+            if existing_doc:
+                existing_qty = existing_doc.to_dict().get("quantity", 0)
+                final_qty = existing_qty + qty
+                existing_doc.reference.update({
+                    "quantity": final_qty,
+                    "timestamp": firestore.SERVER_TIMESTAMP
+                })
+            else:
+                user_orders_ref.add(
+                    {
+                        "customer_name": customer_name,
+                        "customer_modifier": customer_modifier,
+                        "item": standard_item,
+                        "quantity": qty,
+                        "timestamp": firestore.SERVER_TIMESTAMP,
+                    }
+                )
+                final_qty = qty
+                
             group["rows"].append(
                 {
                     "Item": standard_item.capitalize(),
-                    "Qty": qty,
+                    "Qty": final_qty,
                     "Previous": current_qty,
                     "Current": new_qty,
                     "Customer": customer_name.capitalize(),
