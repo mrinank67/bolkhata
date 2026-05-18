@@ -2,5 +2,6 @@ fastapi
 python-multipart
 thefuzz
 requests
+groq
 python-dotenv
 firebase-admin

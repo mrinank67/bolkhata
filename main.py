@@ -5,6 +5,7 @@ import time
 from thefuzz import process
 import os
 import requests
+from groq import Groq
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
@@ -13,7 +14,9 @@ import datetime
 
 load_dotenv()
 
-# Setup Sarvam
+# Setup Groq & Sarvam
+api_key = os.getenv("GROQ_API_KEY")
+groq_client = Groq(api_key=api_key)
 sarvam_api_key = os.getenv("SARVAM_API_KEY")
 
 app = FastAPI()
@@ -179,7 +182,7 @@ async def process_voice(
                     - 'customer_modifier': Any location or descriptor (e.g. "delhi wale"). "" if none.
                     - 'is_credit': boolean (true ONLY if "udhaar" or "khata" is explicitly mentioned. MUST be FALSE if they say "order").
                     
-                    Return ONLY valid JSON matching this exact structure:
+                    IMPORTANT: Return ONLY valid JSON matching this exact structure. DO NOT include trailing commas, and DO NOT include any conversational text or markdown formatting. Output raw JSON only:
                     {{
                       "hinglish_text": "do maggi ramesh delhi ke khate me",
                       "transactions": [
@@ -188,49 +191,23 @@ async def process_voice(
                     }}
                     """
 
-        url = "https://api.sarvam.ai/v1/chat/completions"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {sarvam_api_key}"
-        }
-        data = {
-            "model": "sarvam-30b",
-            "messages": [
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Text to process: '{hindi_text}'"}
+                {"role": "user", "content": f"Text to process: '{hindi_text}'"},
             ],
-            "temperature": 0.0
-        }
+            model="llama-3.1-8b-instant",
+            response_format={"type": "json_object"},
+            temperature=0.0,
+        )
 
-        response = requests.post(url, headers=headers, json=data)
-        response.raise_for_status()
-
-        result = response.json()
-        
-        # Safely extract content, handling potential None values
-        message = result.get('choices', [{}])[0].get('message', {})
-        json_str = message.get('content')
-        
-        if not json_str:
-            print(f"❌ SARVAM EMPTY RESPONSE: {result}")
-            raise Exception("Received empty content from Sarvam LLM.")
-            
-        # Clean up possible markdown code blocks from the response
-        json_str = json_str.strip()
-        if json_str.startswith("```json"):
-            json_str = json_str[7:]
-        if json_str.endswith("```"):
-            json_str = json_str[:-3]
-        json_str = json_str.strip()
-
+        json_str = chat_completion.choices[0].message.content
         intent = json.loads(json_str)
-        print(f"⏱️ LLM (Sarvam): {time.time() - t2:.2f}s")
+        print(f"⏱️ LLM (Groq Llama3): {time.time() - t2:.2f}s")
         print(f"Understood Intent: {intent}")
 
     except Exception as e:
-        print(f"❌ SARVAM LLM ERROR: {str(e)}")
-        if hasattr(e, 'response') and e.response is not None:
-            print(f"Response: {e.response.text}")
+        print(f"❌ GROQ LLM ERROR: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to understand the intent.")
 
     # --- STEP 3: Standardization & Database Loop ---

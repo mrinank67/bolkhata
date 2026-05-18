@@ -45,7 +45,7 @@ BolKhata prioritizes extreme low latency, ensuring the AI can process Hindi/Hing
 | **Backend** | FastAPI (Python) on Vercel serverless |
 | **Database & Auth** | Firebase Firestore & Firebase Authentication |
 | **Speech-to-Text** | Sarvam AI — `saaras:v3` |
-| **Intent Extraction** | Sarvam AI — `sarvam-30b` |
+| **Intent Extraction** | Groq — `llama-3.1-8b-instant` |
 | **Fuzzy Matching** | `thefuzz` (Dynamic live-inventory matching) |
 | **PWA** | Service Worker + Web App Manifest |
 
