@@ -1,8 +1,7 @@
-# BolKhata — Smart Voice Inventory & Ledger
+# BolKhata — Smart Voice Inventory & Ledger [EXPERIMENTAL]
 
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white)
-![Groq](https://img.shields.io/badge/Groq-LLM-purple)
-![Whisper](https://img.shields.io/badge/Whisper-STT-412991?logo=openai&logoColor=white)
+![Sarvam](https://img.shields.io/badge/Sarvam_AI-LLM_&_STT-FF4500)
 ![Vercel](https://img.shields.io/badge/Vercel-000?style=flat&logo=vercel&logoColor=white)
 ![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=flat&logo=firebase&logoColor=black)
 
@@ -13,8 +12,8 @@ BolKhata prioritizes extreme low latency, ensuring the AI can process Hindi/Hing
 ## Key Features
 
 - **Zero-Latency Voice Capture:** Press-and-hold walkie-talkie UI with spacebar desktop support — designed for noisy shop environments.
-- **Dialect & Hinglish Support:** Powered by Groq Whisper-Large-V3 to accurately transcribe heavily accented Hindi/Hinglish speech without hallucinating.
-- **Intelligent Intent Extraction:** Llama 3 (`llama-3.1-8b-instant`) instantly translates Devanagari to English, extracts contextual customer modifiers (e.g., "Delhi wale Ramesh" vs "Park wale Ramesh"), and understands complex multi-item orders in a single breath.
+- **All-India Language Support:** Powered by Sarvam AI (`saaras:v3`) to automatically detect, translate, and transcribe any of the 22 supported Indian languages natively.
+- **Intelligent Intent Extraction:** Sarvam AI (`sarvam-30b`) instantly translates and maps voice intents to strict JSON, extracting contextual customer modifiers (e.g., "Delhi wale Ramesh" vs "Park wale Ramesh"), and understanding complex multi-item orders in a single breath.
 - **Dynamic Fuzzy Matching:** No hardcoded aliases! The system instantly fetches your live inventory and fuzzy-matches spoken slang or errors to your exact stored items, automatically adapting as you add new stock.
 - **Customer Order & Udhaar Tracking:** Seamlessly separates general orders (*"Ramesh Delhi ko bech diya"*) from credit ledgers (*"Ramesh Delhi ke khate me likh do"*). Query specific customer histories using their exact differentiating context.
 - **Multi-Tenant Security:** Firebase Auth (Phone/OTP, Google, Email) ensures every shopkeeper's inventory and history is strictly siloed and private.
@@ -45,8 +44,8 @@ BolKhata prioritizes extreme low latency, ensuring the AI can process Hindi/Hing
 | **Frontend** | Vanilla HTML, CSS, JS (modular architecture) |
 | **Backend** | FastAPI (Python) on Vercel serverless |
 | **Database & Auth** | Firebase Firestore & Firebase Authentication |
-| **Speech-to-Text** | Groq — `whisper-large-v3` |
-| **Intent Extraction** | Groq — `llama-3.1-8b-instant` |
+| **Speech-to-Text** | Sarvam AI — `saaras:v3` |
+| **Intent Extraction** | Sarvam AI — `sarvam-30b` |
 | **Fuzzy Matching** | `thefuzz` (Dynamic live-inventory matching) |
 | **PWA** | Service Worker + Web App Manifest |
 
