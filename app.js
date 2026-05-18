@@ -38,22 +38,23 @@ let currentToken = null;
 let currentUid = null;
 
 // ═══════ 1. AUTH STATE ═══════
-const ALLOWED_PREVIEW_USERS = [
-  "mrinankrajsingh67@gmail.com",
-  "+919876543210",
-  "jade24mac@gmail.com"
-];
-
 onAuthStateChanged(auth, async user => {
   if (user) {
-    const identifier = user.email || user.phoneNumber || "";
-    if (!ALLOWED_PREVIEW_USERS.includes(identifier)) {
+    const token = await user.getIdToken();
+    try {
+      const res = await fetch(`${API}/verify_access`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        throw new Error("Access Denied");
+      }
+    } catch (e) {
       await signOut(auth);
       loginError.innerText = "Access Denied: You do not have permission to view this preview version.";
       return;
     }
 
-    currentToken = await user.getIdToken();
+    currentToken = token;
     currentUid = user.uid;
     authMain.classList.remove("hidden");
     authOtp.classList.add("hidden");
