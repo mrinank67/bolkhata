@@ -399,7 +399,7 @@ window.addEventListener("keyup", e => {
 });
 
 // ═══════ 6. TABLE RENDERER ═══════
-const numericColumns = new Set(["#", "Stock", "Qty", "Sold", "Added", "Previous", "Current", "Current Stock", "Quantity Owed"]);
+const numericColumns = new Set(["#", "Stock", "Qty", "Sold", "Added", "Previous", "Current", "Current Stock", "Quantity Owed", "Amount", "Stock Now"]);
 
 function buildResultHTML(results, errors, { isHistory = false } = {}) {
   let html = '';
