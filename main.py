@@ -165,21 +165,35 @@ async def process_voice(
                     Recent Context: {recent_context_msg}
                     
                     Map intents using this schema:
-                    - 'target': "stock" (for ANY item sales or restocks, even if udhaar or order) OR "ledger" (ONLY for checking/clearing accounts or order history).
-                    - 'operation': MUST be from the shop's perspective. "add" (restock shop inventory ONLY), "subtract" (sell/give. NOTE: "order me likho" or "khate me add karo" BOTH mean giving items to a customer, so MUST use "subtract"), "read" (check/inquiry), OR "clear" (settle/delete).
+                    - 'target': "stock" (for ANY item sales, restocks, or supplier purchases) OR "ledger" (ONLY for checking/clearing accounts or order history).
+                    - 'operation': MUST be from the shop's perspective. "add" (restock shop inventory, receive from supplier), "subtract" (sell/give. NOTE: "order me likho" or "khate me add karo" BOTH mean giving items to a customer, so MUST use "subtract"), "read" (check/inquiry), OR "clear" (settle/delete).
                     - 'item': MUST be transliterated/translated to English letters (e.g. "sabun" or "soap", NEVER Devanagari like "साबुन"). Strip units like 'packet', 'kilo'. Use "ALL" for full inventory. "" if not applicable.
                     - 'qty': Integer (Parse Hindi numbers). Use 0 for read/clear operations.
-                    - 'customer_name': English name of the person (e.g. "ramesh"). Apply to all items in the utterance. Use Context if implied. "" if cash sale.
+                    - 'unit': The unit of measurement (e.g. "packet", "kilo", "bars", "pieces", "box"). "" if not mentioned.
+                    - 'amount': Number — the total price in Rupees if mentioned (e.g. "500 rupay ka" -> 500, "1200 mein" -> 1200). 0 if no price mentioned.
+                    - 'customer_name': English name of the customer/person buying (e.g. "ramesh"). Apply to all items in the utterance. Use Context if implied. "" if cash sale.
                     - 'customer_modifier': Any location or descriptor (e.g. "delhi wale"). "" if none.
+                    - 'supplier_name': English name of the supplier/vendor from whom items are being PURCHASED/RECEIVED (e.g. "asha wholesale", "sharma distributor"). ONLY use when the shop is BUYING or RECEIVING stock. "" if not a supplier purchase.
                     - 'is_credit': boolean (true ONLY if "udhaar" or "khata" is explicitly mentioned. MUST be FALSE if they say "order").
+                    
+                    SUPPLIER DETECTION RULES:
+                    - If user says "X se Y aaya/liya/mangwaya" (received/bought from X), X is the supplier_name and operation is "add".
+                    - Keywords for supplier: "se aaya", "se liya", "se mangwaya", "supplier", "wholesale", "distributor".
+                    - supplier_name should NEVER be the same as customer_name. Suppliers GIVE stock TO the shop. Customers GET stock FROM the shop.
                     
                     Return ONLY valid JSON matching this exact structure:
                     {{
-                      "hinglish_text": "do maggi ramesh delhi ke khate me",
+                      "hinglish_text": "Asha wholesale se 120 clutcher aaya 7800 ka",
                       "transactions": [
-                        {{"target": "stock", "operation": "subtract", "item": "maggi", "qty": 2, "customer_name": "ramesh", "customer_modifier": "delhi", "is_credit": true}}
+                        {{"target": "stock", "operation": "add", "item": "clutcher", "qty": 120, "unit": "", "amount": 7800, "customer_name": "", "customer_modifier": "", "supplier_name": "asha wholesale", "is_credit": false}}
                       ]
                     }}
+                    
+                    More examples:
+                    - "do maggi ramesh delhi ke khate me" -> subtract, item=maggi, qty=2, customer_name=ramesh, customer_modifier=delhi, is_credit=true
+                    - "ramesh ko 12 packet maggi diya 480 rupay udhaar" -> subtract, item=maggi, qty=12, unit=packet, amount=480, customer_name=ramesh, is_credit=true
+                    - "khan beauty supply se 36 curly extension aur 24 darjan kacher aaya 6250 mein" -> TWO transactions, both operation=add, supplier_name=khan beauty supply
+                    - "meera traders se 40 darjan farande aaye aur 200 hair pins, total 4400" -> TWO transactions, operation=add, supplier_name=meera traders
                     """
                 },
                 {"role": "user", "content": f"Text to process: '{hindi_text}'"},
@@ -234,6 +248,9 @@ async def process_voice(
         customer_name = txn.get("customer_name", "").lower()
         customer_modifier = txn.get("customer_modifier", "").lower()
         is_credit = txn.get("is_credit", False)
+        supplier_name = txn.get("supplier_name", "").strip()
+        txn_amount = txn.get("amount", 0)
+        txn_unit = txn.get("unit", "")
 
         # --- Handle Order Inquiries ---
         if target == "ledger" and operation == "read" and not is_credit:
@@ -463,20 +480,31 @@ async def process_voice(
             if existing_doc:
                 existing_qty = existing_doc.to_dict().get("quantity", 0)
                 final_qty = existing_qty + qty
-                existing_doc.reference.update({
+                update_fields = {
                     "quantity": final_qty,
                     "timestamp": firestore.SERVER_TIMESTAMP
-                })
+                }
+                if txn_amount:
+                    existing_amount = existing_doc.to_dict().get("amount", 0)
+                    update_fields["amount"] = existing_amount + txn_amount
+                if txn_unit:
+                    update_fields["unit"] = txn_unit
+                existing_doc.reference.update(update_fields)
             else:
-                user_udhaar_ref.add(
-                    {
-                        "customer_name": customer_name,
-                        "customer_modifier": customer_modifier,
-                        "item": standard_item,
-                        "quantity": qty,
-                        "timestamp": firestore.SERVER_TIMESTAMP,
-                    }
-                )
+                udhaar_data = {
+                    "customer_name": customer_name,
+                    "customer_modifier": customer_modifier,
+                    "item": standard_item,
+                    "quantity": qty,
+                    "amount": txn_amount or 0,
+                    "unit": txn_unit or "",
+                    "whatsapp_number": "",
+                    "reminder_schedule": "",
+                    "reminder_sent": False,
+                    "due_note": "",
+                    "timestamp": firestore.SERVER_TIMESTAMP,
+                }
+                user_udhaar_ref.add(udhaar_data)
                 final_qty = qty
                 
             group["rows"].append(
@@ -544,20 +572,48 @@ async def process_voice(
                 }
             )
         else:
-            group = get_group(
-                "increase",
-                "Stock Added",
-                "📦",
-                ["Item", "Added", "Previous", "Current"],
-            )
-            group["rows"].append(
-                {
-                    "Item": standard_item.capitalize(),
-                    "Added": qty,
-                    "Previous": current_qty,
-                    "Current": new_qty,
-                }
-            )
+            # Stock add — with or without supplier
+            if supplier_name:
+                group = get_group(
+                    "supplier_purchase",
+                    "Supplier Purchase",
+                    "🏪",
+                    ["Item", "Added", "Amount", "Supplier", "Stock Now"],
+                )
+                # Also record in suppliers_purchases collection
+                purchases_ref = db.collection("users").document(uid).collection("suppliers_purchases")
+                purchases_ref.add({
+                    "supplier_name": supplier_name,
+                    "item_name": standard_item,
+                    "quantity": qty,
+                    "amount": txn_amount or 0,
+                    "proof_image_url": "",
+                    "timestamp": firestore.SERVER_TIMESTAMP,
+                })
+                group["rows"].append(
+                    {
+                        "Item": standard_item.capitalize(),
+                        "Added": qty,
+                        "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
+                        "Supplier": supplier_name.title(),
+                        "Stock Now": new_qty,
+                    }
+                )
+            else:
+                group = get_group(
+                    "increase",
+                    "Stock Added",
+                    "📦",
+                    ["Item", "Added", "Previous", "Current"],
+                )
+                group["rows"].append(
+                    {
+                        "Item": standard_item.capitalize(),
+                        "Added": qty,
+                        "Previous": current_qty,
+                        "Current": new_qty,
+                    }
+                )
 
     result_list = list(result_groups.values())
 
