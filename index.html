@@ -128,6 +128,14 @@
             <span class="nav-icon">📜</span>
             <span class="nav-label">History</span>
           </button>
+          <button class="nav-item" data-page="suppliers">
+            <span class="nav-icon">🏪</span>
+            <span class="nav-label">Suppliers</span>
+          </button>
+          <button class="nav-item" data-page="ledger">
+            <span class="nav-icon">📒</span>
+            <span class="nav-label">Ledger</span>
+          </button>
         </nav>
         <div class="drawer-footer">
           <div id="drawer-user-info" class="drawer-user-info">
@@ -217,6 +225,143 @@
         </div>
         <div class="history-page-footer">
           <button id="clear-history-btn" class="btn btn-ghost" style="color:var(--red); font-size:0.8rem;">Clear History</button>
+        </div>
+      </div>
+
+      <!-- PAGE: Suppliers -->
+      <div id="page-suppliers" class="page-container hidden">
+        <div class="suppliers-header">
+          <h2 class="suppliers-title">Suppliers</h2>
+          <span class="page-badge supplier-badge">SUPPLIER</span>
+        </div>
+
+        <div class="summary-cards">
+          <div class="summary-card summary-card-blue">
+            <div class="summary-card-label">This Month</div>
+            <div id="supplier-month-total" class="summary-card-value">₹0</div>
+          </div>
+          <div class="summary-card summary-card-amber">
+            <div class="summary-card-label">Items Added</div>
+            <div id="supplier-month-items" class="summary-card-value">0</div>
+          </div>
+        </div>
+
+        <div class="sort-row">
+          <select id="supplier-sort" class="inventory-sort-select">
+            <option value="name-asc">Name (A-Z)</option>
+            <option value="name-desc">Name (Z-A)</option>
+            <option value="amount-desc">Amount (High-Low)</option>
+            <option value="recent">Most Recent</option>
+          </select>
+          <button id="supplier-refresh-btn" class="dashboard-refresh-btn" aria-label="Refresh"><span class="refresh-icon">↻</span></button>
+        </div>
+
+        <div class="section-divider-label">SUPPLIER PURCHASE HISTORY</div>
+
+        <div id="supplier-list" class="supplier-list">
+          <div class="inventory-empty">Loading suppliers…</div>
+        </div>
+
+        <div class="purchase-form-section">
+          <div class="section-divider-label">ADD PURCHASE TO INVENTORY</div>
+          <div class="purchase-form">
+            <div class="field-group">
+              <label class="field-label">Supplier Name</label>
+              <input type="text" id="purchase-supplier" placeholder="e.g. Sharma Distributor" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">Item Name</label>
+              <input type="text" id="purchase-item" placeholder="e.g. Clutcher" />
+            </div>
+            <div class="form-row">
+              <div class="field-group field-half">
+                <label class="field-label">Quantity</label>
+                <input type="number" id="purchase-qty" placeholder="12" min="1" />
+              </div>
+              <div class="field-group field-half">
+                <label class="field-label">Amount</label>
+                <input type="number" id="purchase-amount" placeholder="1200" min="0" />
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label-muted">Proof of purchase: upload bill image</label>
+              <div class="file-upload-placeholder">
+                <input type="file" id="purchase-proof" accept="image/*" disabled />
+                <span class="file-upload-note">Upload coming soon</span>
+              </div>
+            </div>
+            <button id="add-purchase-btn" class="btn btn-purchase">Add purchase</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE: Customer Ledger -->
+      <div id="page-ledger" class="page-container hidden">
+        <div class="ledger-header">
+          <h2 class="ledger-title">Customer Ledger</h2>
+          <span class="page-badge ledger-badge">LEDGER</span>
+        </div>
+
+        <div class="summary-cards">
+          <div class="summary-card summary-card-blue">
+            <div class="summary-card-label">Total due</div>
+            <div id="ledger-total-due" class="summary-card-value">₹0</div>
+          </div>
+          <div class="summary-card summary-card-green">
+            <div class="summary-card-label">Customers</div>
+            <div id="ledger-customer-count" class="summary-card-value">0</div>
+          </div>
+        </div>
+
+        <div class="sort-row">
+          <input type="text" id="ledger-search" class="ledger-search-input" placeholder="Search customer" />
+          <select id="ledger-sort" class="inventory-sort-select sort-compact">
+            <option value="recent">Sort: Recent</option>
+            <option value="name-asc">Name (A-Z)</option>
+            <option value="amount-desc">Amount (High)</option>
+          </select>
+          <button id="ledger-add-btn" class="add-entry-btn" aria-label="Add entry">+</button>
+        </div>
+
+        <div id="ledger-customer-list" class="ledger-customer-list">
+          <div class="inventory-empty">Loading ledger…</div>
+        </div>
+
+        <!-- Add Entry Modal -->
+        <div id="ledger-add-modal" class="modal-overlay">
+          <div class="modal-card" style="text-align:left;">
+            <h3 class="modal-title">Add Ledger Entry</h3>
+            <div class="field-group">
+              <label class="field-label">Customer Name</label>
+              <input type="text" id="ledger-entry-customer" placeholder="e.g. Ramesh Kirana" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">Modifier (optional)</label>
+              <input type="text" id="ledger-entry-modifier" placeholder="e.g. Delhi wale" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">Item</label>
+              <input type="text" id="ledger-entry-item" placeholder="e.g. Maggi" />
+            </div>
+            <div class="form-row">
+              <div class="field-group field-half">
+                <label class="field-label">Quantity</label>
+                <input type="number" id="ledger-entry-qty" placeholder="12" min="1" />
+              </div>
+              <div class="field-group field-half">
+                <label class="field-label">Amount (₹)</label>
+                <input type="number" id="ledger-entry-amount" placeholder="480" min="0" />
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label">Unit (optional)</label>
+              <input type="text" id="ledger-entry-unit" placeholder="e.g. packets" />
+            </div>
+            <div class="modal-actions" style="margin-top:16px;">
+              <button id="ledger-modal-cancel" class="btn btn-outline">Cancel</button>
+              <button id="ledger-modal-save" class="btn btn-accent">Add Entry</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

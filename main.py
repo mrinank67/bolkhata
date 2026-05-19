@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional
 import json
 import time
 from thefuzz import process
@@ -676,3 +678,294 @@ async def clear_history(authorization: str = Header(None)):
     for doc in docs:
         doc.reference.delete()
     return {"status": "cleared"}
+
+
+# ═══════ PYDANTIC MODELS ═══════
+
+class PurchaseRequest(BaseModel):
+    supplier_name: str
+    item_name: str
+    quantity: int
+    amount: float
+    proof_image_url: Optional[str] = ""
+
+
+class LedgerEntryRequest(BaseModel):
+    customer_name: str
+    customer_modifier: Optional[str] = ""
+    item: str
+    quantity: int
+    unit: Optional[str] = ""
+    amount: Optional[float] = 0
+    whatsapp_number: Optional[str] = ""
+    reminder_schedule: Optional[str] = ""
+    due_note: Optional[str] = ""
+
+
+class LedgerEntryUpdate(BaseModel):
+    customer_name: Optional[str] = None
+    customer_modifier: Optional[str] = None
+    item: Optional[str] = None
+    quantity: Optional[int] = None
+    unit: Optional[str] = None
+    amount: Optional[float] = None
+    whatsapp_number: Optional[str] = None
+    reminder_schedule: Optional[str] = None
+    due_note: Optional[str] = None
+
+
+class WhatsAppReminderRequest(BaseModel):
+    customer_name: str
+    customer_modifier: Optional[str] = ""
+    whatsapp_number: str
+    reminder_schedule: str
+
+
+# ═══════ SUPPLIERS ENDPOINTS ═══════
+
+@app.get("/suppliers")
+async def get_suppliers(authorization: str = Header(None)):
+    uid = verify_token(authorization)
+    purchases_ref = db.collection("users").document(uid).collection("suppliers_purchases")
+    docs = purchases_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
+
+    purchases = []
+    supplier_totals = {}
+    now = datetime.datetime.now(datetime.timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_total = 0
+    month_items = 0
+
+    for doc in docs:
+        data = doc.to_dict()
+        ts_obj = data.get("timestamp")
+        try:
+            ts = ts_obj.timestamp() * 1000 if ts_obj else 0
+        except AttributeError:
+            ts = 0
+
+        amount = data.get("amount", 0)
+        entry = {
+            "id": doc.id,
+            "supplier_name": data.get("supplier_name", ""),
+            "item_name": data.get("item_name", ""),
+            "quantity": data.get("quantity", 0),
+            "amount": amount,
+            "proof_image_url": data.get("proof_image_url", ""),
+            "timestamp": ts,
+        }
+        purchases.append(entry)
+
+        # Aggregate by supplier
+        sname = data.get("supplier_name", "Unknown")
+        if sname not in supplier_totals:
+            supplier_totals[sname] = {"total": 0, "items": []}
+        supplier_totals[sname]["total"] += amount
+        supplier_totals[sname]["items"].append(data.get("item_name", ""))
+
+        # Monthly stats
+        if ts_obj and ts_obj >= month_start:
+            month_total += amount
+            month_items += 1
+
+    return {
+        "purchases": purchases,
+        "month_total": month_total,
+        "month_items": month_items,
+        "supplier_totals": supplier_totals,
+    }
+
+
+@app.post("/suppliers/purchase")
+async def add_supplier_purchase(req: PurchaseRequest, authorization: str = Header(None)):
+    uid = verify_token(authorization)
+
+    if not req.supplier_name.strip() or not req.item_name.strip():
+        raise HTTPException(status_code=400, detail="Supplier name and item name are required.")
+    if req.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Quantity must be greater than 0.")
+
+    purchases_ref = db.collection("users").document(uid).collection("suppliers_purchases")
+    purchase_data = {
+        "supplier_name": req.supplier_name.strip(),
+        "item_name": req.item_name.strip().lower(),
+        "quantity": req.quantity,
+        "amount": req.amount,
+        "proof_image_url": req.proof_image_url or "",
+        "timestamp": firestore.SERVER_TIMESTAMP,
+    }
+    purchases_ref.add(purchase_data)
+
+    # Auto-update stock inventory
+    stock_ref = db.collection("users").document(uid).collection("stock")
+    item_key = req.item_name.strip().lower()
+    stock_doc_ref = stock_ref.document(item_key)
+    stock_doc = stock_doc_ref.get()
+
+    if stock_doc.exists:
+        current_qty = stock_doc.to_dict().get("quantity", 0)
+        stock_doc_ref.update({
+            "quantity": current_qty + req.quantity,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        })
+    else:
+        stock_doc_ref.set({
+            "item": item_key,
+            "quantity": req.quantity,
+            "created_at": firestore.SERVER_TIMESTAMP,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        })
+
+    return {
+        "status": "success",
+        "message": f"Added {req.quantity}x {req.item_name} from {req.supplier_name}. Stock updated.",
+    }
+
+
+# ═══════ CUSTOMER LEDGER ENDPOINTS (uses udhaar collection) ═══════
+
+@app.get("/ledger/customers")
+async def get_ledger_customers(authorization: str = Header(None)):
+    uid = verify_token(authorization)
+    udhaar_ref = db.collection("users").document(uid).collection("udhaar")
+    docs = udhaar_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
+
+    customers = {}
+    total_due = 0
+
+    for doc in docs:
+        data = doc.to_dict()
+        cname = data.get("customer_name", "unknown")
+        cmod = data.get("customer_modifier", "")
+        key = f"{cname}|{cmod}"
+
+        amount = data.get("amount", 0)
+        qty = data.get("quantity", 0)
+
+        ts_obj = data.get("timestamp")
+        try:
+            ts = ts_obj.isoformat() if ts_obj else None
+        except AttributeError:
+            ts = None
+
+        if key not in customers:
+            customers[key] = {
+                "customer_name": cname,
+                "customer_modifier": cmod,
+                "total_due": 0,
+                "whatsapp_number": data.get("whatsapp_number", ""),
+                "reminder_schedule": data.get("reminder_schedule", ""),
+                "reminder_sent": data.get("reminder_sent", False),
+                "due_note": data.get("due_note", ""),
+                "last_entry": ts,
+                "items": [],
+            }
+
+        entry_data = {
+            "id": doc.id,
+            "item": data.get("item", ""),
+            "quantity": qty,
+            "unit": data.get("unit", ""),
+            "amount": amount,
+            "timestamp": ts,
+        }
+        customers[key]["items"].append(entry_data)
+        customers[key]["total_due"] += amount
+
+        # Update whatsapp/reminder if this entry has it
+        if data.get("whatsapp_number"):
+            customers[key]["whatsapp_number"] = data.get("whatsapp_number", "")
+        if data.get("reminder_schedule"):
+            customers[key]["reminder_schedule"] = data.get("reminder_schedule", "")
+
+        total_due += amount
+
+    customer_list = list(customers.values())
+
+    return {
+        "customers": customer_list,
+        "total_due": total_due,
+        "customer_count": len(customer_list),
+    }
+
+
+@app.post("/ledger/entry")
+async def add_ledger_entry(req: LedgerEntryRequest, authorization: str = Header(None)):
+    uid = verify_token(authorization)
+
+    if not req.customer_name.strip() or not req.item.strip():
+        raise HTTPException(status_code=400, detail="Customer name and item are required.")
+
+    udhaar_ref = db.collection("users").document(uid).collection("udhaar")
+    entry_data = {
+        "customer_name": req.customer_name.strip().lower(),
+        "customer_modifier": req.customer_modifier.strip().lower() if req.customer_modifier else "",
+        "item": req.item.strip().lower(),
+        "quantity": req.quantity,
+        "unit": req.unit or "",
+        "amount": req.amount or 0,
+        "whatsapp_number": req.whatsapp_number or "",
+        "reminder_schedule": req.reminder_schedule or "",
+        "reminder_sent": False,
+        "due_note": req.due_note or "",
+        "timestamp": firestore.SERVER_TIMESTAMP,
+    }
+    udhaar_ref.add(entry_data)
+
+    return {
+        "status": "success",
+        "message": f"Added {req.item} x{req.quantity} to {req.customer_name}'s ledger.",
+    }
+
+
+@app.put("/ledger/entry/{entry_id}")
+async def update_ledger_entry(entry_id: str, req: LedgerEntryUpdate, authorization: str = Header(None)):
+    uid = verify_token(authorization)
+    udhaar_ref = db.collection("users").document(uid).collection("udhaar")
+    doc_ref = udhaar_ref.document(entry_id)
+    doc = doc_ref.get()
+
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Entry not found.")
+
+    update_data = {}
+    for field, value in req.dict(exclude_unset=True).items():
+        if value is not None:
+            update_data[field] = value
+
+    if update_data:
+        update_data["timestamp"] = firestore.SERVER_TIMESTAMP
+        doc_ref.update(update_data)
+
+    return {"status": "success", "message": "Entry updated."}
+
+
+@app.post("/ledger/whatsapp-reminder")
+async def schedule_whatsapp_reminder(req: WhatsAppReminderRequest, authorization: str = Header(None)):
+    uid = verify_token(authorization)
+
+    # Save reminder schedule to all entries for this customer
+    udhaar_ref = db.collection("users").document(uid).collection("udhaar")
+    docs = udhaar_ref.where(
+        filter=FieldFilter("customer_name", "==", req.customer_name.lower())
+    ).stream()
+
+    updated = 0
+    for doc in docs:
+        data = doc.to_dict()
+        if req.customer_modifier and data.get("customer_modifier", "").lower() != req.customer_modifier.lower():
+            continue
+        doc.reference.update({
+            "whatsapp_number": req.whatsapp_number,
+            "reminder_schedule": req.reminder_schedule,
+            "reminder_sent": False,
+        })
+        updated += 1
+
+    # Placeholder — no actual WhatsApp API integration
+    return {
+        "status": "success",
+        "message": f"WhatsApp reminder scheduled for {req.customer_name}. (Placeholder — integration pending)",
+        "updated_entries": updated,
+    }
+

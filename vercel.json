@@ -51,6 +51,30 @@
       "dest": "/main.py"
     },
     {
+      "src": "/suppliers",
+      "dest": "/main.py"
+    },
+    {
+      "src": "/suppliers/purchase",
+      "dest": "/main.py"
+    },
+    {
+      "src": "/ledger/customers",
+      "dest": "/main.py"
+    },
+    {
+      "src": "/ledger/entry",
+      "dest": "/main.py"
+    },
+    {
+      "src": "/ledger/entry/(.*)",
+      "dest": "/main.py"
+    },
+    {
+      "src": "/ledger/whatsapp-reminder",
+      "dest": "/main.py"
+    },
+    {
       "src": "/app.js",
       "dest": "/app.js"
     },
