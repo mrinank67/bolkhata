@@ -16,10 +16,12 @@ BolKhata prioritizes extreme low latency, ensuring the AI can process Hindi/Hing
 - **All-India Language Support:** Powered by Sarvam AI (`saaras:v3`) to automatically detect, translate, and transcribe any of the 22 supported Indian languages natively.
 - **Intelligent Intent Extraction:** Groq Llama 3 (`llama-3.1-8b-instant`) takes the translated English text and flawlessly maps voice intents to strict JSON, extracting contextual customer modifiers (e.g., "Delhi wale Ramesh" vs "Park wale Ramesh"), and understanding complex multi-item orders in a single breath.
 - **Dynamic Fuzzy Matching:** No hardcoded aliases! The system instantly fetches your live inventory and fuzzy-matches spoken slang or errors to your exact stored items, automatically adapting as you add new stock.
-- **Customer Order & Udhaar Tracking:** Seamlessly separates general orders (*"Ramesh Delhi ko bech diya"*) from credit ledgers (*"Ramesh Delhi ke khate me likh do"*). Query specific customer histories using their exact differentiating context.
+- **Interactive Customer Ledger (Udhaar):** A robust credit tracking panel unified with our udhaar records. Features manual entries, editing/updating, expandable customer cards with total due balances, detailed itemization (units, amounts, due dates), and a custom WhatsApp payment reminder scheduler (placeholder).
+- **Suppliers & Purchase Syncing:** Dedicated screen to log wholesale stock purchases from suppliers. Supports tracking unit sizes, purchase prices, dates, and an invoice/proof of purchase image upload (placeholder). Recording supplier purchases automatically increments and updates active inventory stock levels.
+- **Enhanced Voice Modifiers:** Upgraded LLM prompts capable of detecting supplier purchase intents, supplier names, specific units (e.g., packets, kg, pieces), and absolute transactional amounts directly from Hinglish utterances.
 - **Multi-Tenant Security:** Firebase Auth (Phone/OTP, Google, Email) ensures every shopkeeper's inventory and history is strictly siloed and private.
-- **Multi-Page App & Navigation Drawer:** Left-sliding navigation drawer with dedicated pages for Voice Commands, a Live Inventory Dashboard, and Transaction History.
-- **Live Inventory Dashboard:** Visual, responsive grid tiles displaying real-time stock levels, automatically color-coded for low or out-of-stock items, fetched from a new dedicated backend endpoint.
+- **Multi-Page App & Navigation Drawer:** Left-sliding navigation drawer with dedicated pages for Voice Commands, Live Inventory, Transaction History, Suppliers, and Customer Ledger.
+- **Live Inventory Dashboard:** Visual, responsive grid tiles displaying real-time stock levels, automatically color-coded for low or out-of-stock items, fetched from a dedicated backend endpoint.
 - **Smart History:** Cleanly formatted tables for every transaction, keeping track of the last 50 transactions for easy auditing.
 - **Progressive Web App:** Installable on mobile and desktop with offline shell caching, home screen icon, and standalone app mode — no app store required.
 
@@ -31,6 +33,8 @@ BolKhata prioritizes extreme low latency, ensuring the AI can process Hindi/Hing
 | **Contextual Sale** | *"Nehru apartment wale Sharma ji ko 2 maggi bech di."* |
 | **Restock** | *"Paanch naye lux aaye hain."* |
 | **Credit (Udhaar)** | *"Ek sabun Suresh ke khaate mein likh do."* |
+| **Credit with Details** | *"Ramesh Delhi ke khate me 2 packet maggi 50 rupey ki likh do."* |
+| **Supplier Purchase** | *"Parle distributor se 10 packet Parle-G 120 rupey me khareede."* |
 | **Mixed Cash & Credit** | *"Ek maggi de do, aur do lux Ramesh ke khaate mein likh do."* |
 | **Check Stock** | *"Bhai, toothpaste kitna bacha hai dekhna."* |
 | **Order History Inquiry** | *"Nehru apartment wale Sharma ji ke orders dikhao."* |
@@ -42,9 +46,9 @@ BolKhata prioritizes extreme low latency, ensuring the AI can process Hindi/Hing
 
 | Layer | Technology |
 | ------- | ---------- |
-| **Frontend** | Vanilla HTML, CSS, JS (modular architecture) |
+| **Frontend** | Vanilla HTML, CSS, JS (modular SPA, responsive layout) |
 | **Backend** | FastAPI (Python) on Vercel serverless |
-| **Database & Auth** | Firebase Firestore & Firebase Authentication |
+| **Database & Auth** | Firebase Firestore & Firebase Authentication (`udhaar` and `suppliers_purchases` subcollections) |
 | **Speech-to-Text** | Sarvam AI — `saaras:v3` |
 | **Intent Extraction** | Groq — `llama-3.1-8b-instant` |
 | **Fuzzy Matching** | `thefuzz` (Dynamic live-inventory matching) |
