@@ -1072,7 +1072,38 @@ $('ledger-modal-save').addEventListener('click', async () => {
   }
 });
 
-// ═══════ 14. PWA SERVICE WORKER ═══════
+// ═══════ 14. PWA SERVICE WORKER — AUTO-UPDATE ═══════
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/sw.js").catch(() => {});
+  let refreshing = false;
+
+  // When a new SW takes control, reload to get fresh assets
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!refreshing) {
+      refreshing = true;
+      window.location.reload();
+    }
+  });
+
+  navigator.serviceWorker.register("/sw.js").then(reg => {
+    // Check for updates every 60 seconds while the app is open
+    setInterval(() => reg.update(), 60 * 1000);
+
+    // If a new SW is waiting (e.g. user had the tab open during deploy),
+    // tell it to skip waiting so controllerchange fires
+    if (reg.waiting) {
+      reg.waiting.postMessage({ type: "SKIP_WAITING" });
+    }
+
+    reg.addEventListener("updatefound", () => {
+      const newWorker = reg.installing;
+      if (newWorker) {
+        newWorker.addEventListener("statechange", () => {
+          if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+            // New version available — activate it immediately
+            newWorker.postMessage({ type: "SKIP_WAITING" });
+          }
+        });
+      }
+    });
+  }).catch(() => {});
 }
