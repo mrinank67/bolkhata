@@ -1,73 +1,117 @@
-# BolKhata — Smart Voice Inventory & Ledger [EXPERIMENTAL]
+# BolKhata — Smart Voice-First Inventory & Ledger
 
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white)
-![Sarvam](https://img.shields.io/badge/Sarvam_AI-STT-FF4500)
-![Groq](https://img.shields.io/badge/Groq-LLM-purple)
-![Vercel](https://img.shields.io/badge/Vercel-000?style=flat&logo=vercel&logoColor=white)
+![Sarvam AI](https://img.shields.io/badge/Sarvam_AI-saaras:v3-orange?style=flat)
+![Groq](https://img.shields.io/badge/Groq-Llama_3.1-purple?style=flat)
 ![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=flat&logo=firebase&logoColor=black)
+![PWA](https://img.shields.io/badge/PWA-Ready-blue?style=flat&logo=progressive-web-apps&logoColor=white)
+![Vercel](https://img.shields.io/badge/Vercel-Hosted-black?style=flat&logo=vercel&logoColor=white)
 
-A lightning-fast, voice-first inventory management system designed to replace traditional pen-and-paper ledgers (*bahi-khatas*) for shopkeepers and small businesses.
+BolKhata is a lightning-fast, voice-first inventory management and customer ledger system designed to replace traditional pen-and-paper ledgers (bahi-khatas) for kirana shopkeepers and small business owners. 
 
-BolKhata prioritizes extreme low latency, ensuring the AI can process Hindi/Hinglish voice commands, display structured transaction receipts, and securely update the cloud database — just as fast as a shopkeeper can write it down.
+By leveraging extreme low-latency processing, BolKhata allows shopkeepers to speak naturally in Hindi, Hinglish, or English to record sales, manage inventory, track wholesale supplier purchases, and sync customer credit accounts—all within a fraction of a second.
 
-## Key Features
+---
 
-- **Zero-Latency Voice Capture:** Press-and-hold walkie-talkie UI with spacebar desktop support — designed for noisy shop environments.
-- **All-India Language Support:** Powered by Sarvam AI (`saaras:v3`) to automatically detect, translate, and transcribe any of the 22 supported Indian languages natively.
-- **Intelligent Intent Extraction:** Groq Llama 3 (`llama-3.1-8b-instant`) takes the translated English text and flawlessly maps voice intents to strict JSON, extracting contextual customer modifiers (e.g., "Delhi wale Ramesh" vs "Park wale Ramesh"), and understanding complex multi-item orders in a single breath.
-- **Dynamic Fuzzy Matching:** No hardcoded aliases! The system instantly fetches your live inventory and fuzzy-matches spoken slang or errors to your exact stored items, automatically adapting as you add new stock.
-- **Interactive Customer Ledger (Udhaar):** A robust credit tracking panel unified with our udhaar records. Features manual entries, editing/updating, expandable customer cards with total due balances, detailed itemization (units, amounts, due dates), and a custom WhatsApp payment reminder scheduler (placeholder).
-- **Suppliers & Purchase Syncing:** Dedicated screen to log wholesale stock purchases from suppliers. Supports tracking unit sizes, purchase prices, dates, and an invoice/proof of purchase image upload (placeholder). Recording supplier purchases automatically increments and updates active inventory stock levels.
-- **Enhanced Voice Modifiers:** Upgraded LLM prompts capable of detecting supplier purchase intents, supplier names, specific units (e.g., packets, kg, pieces), and absolute transactional amounts directly from Hinglish utterances.
-- **Multi-Tenant Security:** Firebase Auth (Phone/OTP, Google, Email) ensures every shopkeeper's inventory and history is strictly siloed and private.
-- **Multi-Page App & Navigation Drawer:** Left-sliding navigation drawer with dedicated pages for Voice Commands, Live Inventory, Transaction History, Suppliers, and Customer Ledger.
-- **Live Inventory Dashboard:** Visual, responsive grid tiles displaying real-time stock levels, automatically color-coded for low or out-of-stock items, fetched from a dedicated backend endpoint.
-- **Smart History:** Cleanly formatted tables for every transaction, keeping track of the last 50 transactions for easy auditing.
-- **Progressive Web App:** Installable on mobile and desktop with offline shell caching, home screen icon, and standalone app mode — no app store required.
+## Core Features
+
+### 1. Voice-First Kirana Operations
+* **Zero-Latency Push-to-Talk:** A responsive walkie-talkie UI optimized for mobile devices and noisy shop environments. Desktop users can press and hold the Spacebar to speak.
+* **Sarvam AI Transcription & Translation:** Translates and transcribes Hindi, Hinglish, and other regional languages natively via Sarvam AI's saaras:v3 Speech-to-Text engine.
+* **Groq Llama 3 Intent Parsing:** Extracts item names, quantities, unit types, transactional amounts, customer/supplier names, and credit modifiers from spoken sentences.
+* **Contextual Auto-Fill:** Automatically remembers the current active customer context for 5 minutes. If a shopkeeper says "do packet aur de do" right after making a sale, the app automatically credits the correct customer.
+
+### 2. Real-Time Smart Inventory
+* **Fuzzy Match Engine:** Uses dynamic fuzzy matching (thefuzz) to automatically resolve spoken slang, variations, or typos (e.g., "magi" -> "Maggi") to standard stored item IDs.
+* **Visual Stock Grid:** A responsive dashboard displaying inventory tiles color-coded by stock level (Red for out-of-stock, Orange for low stock, Green for healthy stock).
+* **Manual Overrides:** Edit, rename, or delete items and adjust stock quantities directly from the visual dashboard.
+
+### 3. Customer Credit Ledger (Udhaar Panel)
+* **Debt Itemization:** Drill down into specific customer cards to see item-by-item credit logs, unit sizes, unit prices, due dates, and custom notes.
+* **Manual Balance Adjustments:** Add, edit, or settle manual credit entries in seconds.
+* **WhatsApp Payment Reminders:** A scheduler that formats custom debt breakdown messages and copies/shares them directly to the customer's WhatsApp (simulated integration).
+
+### 4. Supplier & Wholesale Purchasing
+* **Automatic Restocking:** Logging supplier purchases (e.g., "Asha Wholesale se 10 packet Surf Excel mangwaya") automatically increments stock counts in your live inventory.
+* **Supplier Directory:** Manage and save primary wholesale vendors, mobile numbers, and GST details in a clean directory.
+* **Invoice Uploads:** Keep digital receipts of wholesale purchases for easier auditing (simulated image upload placeholder).
+
+### 5. Multi-Tenant Security & Reliability
+* **Firebase Authentication:** Multi-factor authentication (Phone/OTP, Google, Email) keeps every shopkeeper’s shop ledger strictly private and isolated.
+* **API Cooldown & Global Rate Limiting:** State-of-the-art backend rate limiting prevents API overuse and unexpected billing on Sarvam and Groq services.
+
+---
 
 ## Example Voice Commands
 
-| Intent | Example |
-| -------- | --------- |
-| **Standard Sale** | *"Do colgate aur ek maggi de do."* |
-| **Contextual Sale** | *"Nehru apartment wale Sharma ji ko 2 maggi bech di."* |
-| **Restock** | *"Paanch naye lux aaye hain."* |
-| **Credit (Udhaar)** | *"Ek sabun Suresh ke khaate mein likh do."* |
-| **Credit with Details** | *"Ramesh Delhi ke khate me 2 packet maggi 50 rupey ki likh do."* |
-| **Supplier Purchase** | *"Parle distributor se 10 packet Parle-G 120 rupey me khareede."* |
-| **Mixed Cash & Credit** | *"Ek maggi de do, aur do lux Ramesh ke khaate mein likh do."* |
-| **Check Stock** | *"Bhai, toothpaste kitna bacha hai dekhna."* |
-| **Order History Inquiry** | *"Nehru apartment wale Sharma ji ke orders dikhao."* |
-| **Full Ledger** | *"Saara stock dikhao."* |
-| **Settle Credit** | *"Ramesh ka khata clear kar do."* |
-| **Wipe Inventory** | *"Saara stock delete kar do."* |
+Speak naturally in Hindi or Hinglish, and BolKhata will instantly map the correct transaction:
 
-## Tech Stack
+| Transaction Type | Example Spoken Hindi Command | Extracted Intent |
+| :--- | :--- | :--- |
+| **Standard Cash Sale** | *"Do Colgate aur ek Maggi de do."* | Sells 2 Colgate & 1 Maggi (Decreases stock) |
+| **Credit Sale (Udhaar)** | *"Suresh ke khate me ek Lux sabun likh do."* | Credits 1 Lux to Suresh (Decreases stock, logs to ledger) |
+| **Contextual Sale** | *"Ramesh Delhi wale ke khate me 50 rupey ki 2 Maggi likho."* | Accounts for local modifiers (Delhi wale Ramesh) & custom pricing |
+| **Supplier Purchase** | *"Parle distributor se 10 packet Parle-G 120 rupey me liya."* | Increases Parle-G stock by 10, logs ₹120 purchase from Parle |
+| **Checking Stock** | *"Toothpaste kitna bacha hai dekhna?"* | Performs instant fuzzy search and prints current stock |
+| **Order History Inquiry** | *"Nehru apartment wale Sharma ji ke orders dikhao."* | Filters and lists all orders for that specific customer |
+| **Settle Credit** | *"Ramesh ka khata clear kar do."* | Wipes all credit dues for Ramesh |
+| **Clear Inventory** | *"Saara stock delete kar do."* | Requires physical button verification before clearing stock |
 
-| Layer | Technology |
-| ------- | ---------- |
-| **Frontend** | Vanilla HTML, CSS, JS (modular SPA, responsive layout) |
-| **Backend** | FastAPI (Python) on Vercel serverless |
-| **Database & Auth** | Firebase Firestore & Firebase Authentication (`udhaar` and `suppliers_purchases` subcollections) |
-| **Speech-to-Text** | Sarvam AI — `saaras:v3` |
-| **Intent Extraction** | Groq — `llama-3.1-8b-instant` |
-| **Fuzzy Matching** | `thefuzz` (Dynamic live-inventory matching) |
-| **PWA** | Service Worker + Web App Manifest |
+---
 
-## PWA Installation
+## Tech Stack & Architecture
 
-You can install BolKhata directly to your home screen for an app-like experience:
+```mermaid
+graph TD
+    A[HTML/CSS/JS PWA Frontend] -- Secure Firebase Token --> B(FastAPI Backend)
+    B -- 1. Audio Upload --> C[Sarvam AI STT saaras:v3]
+    C -- 2. English Translated Text --> B
+    B -- 3. Prompt & Translation --> D[Groq Llama 3.1 LLM]
+    D -- 4. Strict JSON Intent --> B
+    B -- 5. Fuzzy Match / DB Update --> E[(Firebase Firestore)]
+```
 
-- **Android Chrome:** Tap the "Add to Home Screen" banner at the bottom, or open the browser menu (⋮) and select "Add to Home screen".
-- **iOS Safari:** Tap the Share button at the bottom of the screen, scroll down, and select "Add to Home Screen".
-- **Desktop (Chrome/Edge):** Click the install icon (monitor with a downward arrow) in the right side of the address bar.
+* **Frontend:** Modular Single Page App (SPA) built using native HTML5, CSS3, and JavaScript. 
+* **PWA Engine:** Service Worker (sw.js) and Web App Manifest (manifest.json) for offline asset caching, standalone launcher capability, and responsive layout scaling.
+* **Backend:** FastAPI (Python) optimized for extremely low routing overhead.
+* **Database & Auth:** Google Firebase (Firestore Database, Firebase Authentication).
+* **Language Engines:** Sarvam AI (Speech-to-Text & Native Translation), Groq Cloud (Llama 3.1 LLM for structure extraction).
 
-## Security
+---
 
-- API endpoints are protected by Firebase ID Token verification.
-- The Firebase service account JSON is excluded from Git via `.gitignore`.
-- The reCAPTCHA badge is hidden via CSS but remains functional for phone auth.
+## API Endpoints Reference
+
+BolKhata uses a clean REST API structure. All transactional and write-based endpoints require a `Bearer <Firebase_ID_Token>` in the authorization header.
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/config` | `GET` | Fetches client Firebase keys dynamically |
+| `/verify_access` | `GET` | Validates active logged-in user tokens |
+| `/process_voice` | `POST` | Primary entry point. Processes audio binary data and commits intents to Firestore |
+| `/inventory` | `GET` | Lists all active stock active names, quantities, and prices |
+| `/inventory/{item_id}` | `PUT` | Renames an item or updates its price/stock levels in-place |
+| `/inventory/{item_id}`| `DELETE` | Removes a single item from the active database |
+| `/confirm_clear_inventory`| `POST` | Deletes the entire stock collection (requires UI verification) |
+| `/suppliers` | `GET` | Lists wholesale purchase history and compiles monthly totals |
+| `/suppliers/purchase` | `POST` | Logs a wholesale transaction, automatically updating related item stock |
+| `/suppliers/list` | `GET` | Retrieves saved wholesale vendors |
+| `/suppliers/add` | `POST` | Registers a new wholesale vendor in the directory |
+| `/ledger/customers` | `GET` | Compiles a list of active udhaar accounts, dues, and itemizations |
+| `/ledger/entry` | `POST` | Manually writes credit/udhaar entries directly |
+| `/ledger/entry/{id}`| `PUT` | Edits due notes, phone numbers, or quantities of ledger items |
+| `/history` | `GET` | Pulls the last 50 speech transaction logs and parsing errors |
+
+---
+
+## Security & Rate Limiting
+
+* **Siloed Databases:** All subcollections (stock, udhaar, history, suppliers, suppliers_purchases) are uniquely locked under their authenticated Firebase uid path, preventing cross-shop data leaks.
+* **Rate Limits Imposed:**
+  * **User Cooldown:** 1 request per 3 seconds per user to prevent audio button spamming.
+  * **Sarvam STT Global Limits:** Monitored on Firestore to prevent billing overcharges.
+  * **Groq RPM/RPD Limits:** Monitored to gracefully handle Groq Cloud rate-limit policies and return a user-friendly wait message ("Thoda ruko!").
+
+---
 
 ## License
-
 This project is licensed under the MIT License.
