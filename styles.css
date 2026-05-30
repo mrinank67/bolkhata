@@ -1405,12 +1405,20 @@ input::placeholder {
   gap: 8px;
   transition: all var(--transition);
   animation: fadeUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
 }
 
 .inventory-tile:hover {
   border-color: var(--border-focus);
   transform: translateY(-2px);
   box-shadow: 0 4px 20px rgba(99,102,241,0.1);
+}
+
+.inventory-tile:active {
+  transform: scale(0.97);
+  box-shadow: none;
 }
 
 .inventory-tile-name {
@@ -1439,6 +1447,29 @@ input::placeholder {
   color: var(--red);
 }
 
+.inventory-tile-price {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  margin-top: -4px;
+}
+
+.inventory-tile-edit-hint {
+  font-size: 0.6rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  text-align: center;
+  margin-top: auto;
+}
+
+.inventory-tile:hover .inventory-tile-edit-hint {
+  opacity: 1;
+}
+
 .inventory-empty {
   grid-column: 1 / -1;
   text-align: center;
@@ -1456,6 +1487,7 @@ input::placeholder {
   padding-top: 4px;
   font-weight: 500;
 }
+
 
 /* ══════════════════════════════════════
    SHARED — SUMMARY CARDS

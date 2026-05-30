@@ -213,6 +213,34 @@
         <div id="inventory-grid" class="inventory-grid">
           <div class="inventory-empty">Loading inventory…</div>
         </div>
+
+        <!-- Edit Inventory Item Modal -->
+        <div id="inventory-edit-modal" class="modal-overlay">
+          <div class="modal-card" style="text-align:left;">
+            <h3 class="modal-title">Edit Item</h3>
+            <input type="hidden" id="inventory-edit-original-id" />
+            <div class="field-group">
+              <label class="field-label">Item Name</label>
+              <input type="text" id="inventory-edit-name" placeholder="e.g. Soap" />
+            </div>
+            <div class="form-row">
+              <div class="field-group field-half">
+                <label class="field-label">Quantity</label>
+                <input type="number" id="inventory-edit-qty" placeholder="0" min="0" inputmode="numeric" />
+              </div>
+              <div class="field-group field-half">
+                <label class="field-label">Price (₹)</label>
+                <input type="number" id="inventory-edit-price" placeholder="0" min="0" inputmode="decimal" />
+              </div>
+            </div>
+            <div class="modal-actions" style="margin-top:16px;">
+              <button id="inventory-edit-delete" class="btn btn-danger">🗑️ Delete</button>
+              <div style="flex:1;"></div>
+              <button id="inventory-edit-cancel" class="btn btn-outline">Cancel</button>
+              <button id="inventory-edit-save" class="btn btn-accent">Save</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- PAGE: History -->
