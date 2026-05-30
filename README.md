@@ -61,16 +61,6 @@ Speak naturally in Hindi or Hinglish, and BolKhata will instantly map the correc
 
 ## Tech Stack & Architecture
 
-```mermaid
-graph TD
-    A[HTML/CSS/JS PWA Frontend] -- Secure Firebase Token --> B(FastAPI Backend)
-    B -- 1. Audio Upload --> C[Sarvam AI STT saaras:v3]
-    C -- 2. English Translated Text --> B
-    B -- 3. Prompt & Translation --> D[Groq Llama 3.1 LLM]
-    D -- 4. Strict JSON Intent --> B
-    B -- 5. Fuzzy Match / DB Update --> E[(Firebase Firestore)]
-```
-
 * **Frontend:** Modular Single Page App (SPA) built using native HTML5, CSS3, and JavaScript. 
 * **PWA Engine:** Service Worker (sw.js) and Web App Manifest (manifest.json) for offline asset caching, standalone launcher capability, and responsive layout scaling.
 * **Backend:** FastAPI (Python) optimized for extremely low routing overhead.
