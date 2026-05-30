@@ -918,6 +918,12 @@ class WhatsAppReminderRequest(BaseModel):
     reminder_schedule: str
 
 
+class SupplierCreateRequest(BaseModel):
+    name: str
+    mobile: Optional[str] = ""
+    gst_number: Optional[str] = ""
+
+
 # ═══════ SUPPLIERS ENDPOINTS ═══════
 
 @app.get("/suppliers")
@@ -1016,6 +1022,95 @@ async def add_supplier_purchase(req: PurchaseRequest, authorization: str = Heade
     return {
         "status": "success",
         "message": f"Added {req.quantity}x {req.item_name} from {req.supplier_name}. Stock updated.",
+    }
+
+
+# ═══════ SUPPLIER DIRECTORY ENDPOINTS ═══════
+
+@app.get("/suppliers/list")
+async def list_saved_suppliers(authorization: str = Header(None)):
+    """List all saved suppliers in the user's directory."""
+    uid = verify_token(authorization)
+    suppliers_ref = db.collection("users").document(uid).collection("suppliers")
+    docs = suppliers_ref.order_by("created_at", direction=firestore.Query.DESCENDING).stream()
+
+    suppliers = []
+    for doc in docs:
+        data = doc.to_dict()
+        ts_obj = data.get("created_at")
+        try:
+            ts = ts_obj.timestamp() * 1000 if ts_obj else 0
+        except AttributeError:
+            ts = 0
+        suppliers.append({
+            "id": doc.id,
+            "name": data.get("name", ""),
+            "mobile": data.get("mobile", ""),
+            "gst_number": data.get("gst_number", ""),
+            "created_at": ts,
+        })
+    return {"suppliers": suppliers}
+
+
+@app.post("/suppliers/add")
+async def add_supplier(req: SupplierCreateRequest, authorization: str = Header(None)):
+    """Add a new supplier to the user's directory."""
+    uid = verify_token(authorization)
+
+    if not req.name.strip():
+        raise HTTPException(status_code=400, detail="Supplier name is required.")
+
+    suppliers_ref = db.collection("users").document(uid).collection("suppliers")
+
+    # Check for duplicate name
+    existing = suppliers_ref.where(
+        filter=FieldFilter("name_lower", "==", req.name.strip().lower())
+    ).limit(1).stream()
+    if any(True for _ in existing):
+        raise HTTPException(status_code=400, detail=f"Supplier '{req.name.strip()}' already exists.")
+
+    supplier_data = {
+        "name": req.name.strip(),
+        "name_lower": req.name.strip().lower(),
+        "mobile": req.mobile.strip() if req.mobile else "",
+        "gst_number": req.gst_number.strip() if req.gst_number else "",
+        "created_at": firestore.SERVER_TIMESTAMP,
+    }
+    doc_ref = suppliers_ref.add(supplier_data)
+
+    return {
+        "status": "success",
+        "message": f"Supplier '{req.name.strip()}' added.",
+        "id": doc_ref[1].id,
+    }
+
+
+@app.delete("/suppliers/{supplier_id}")
+async def delete_supplier(supplier_id: str, authorization: str = Header(None)):
+    """Delete a supplier from the user's directory."""
+    uid = verify_token(authorization)
+    doc_ref = db.collection("users").document(uid).collection("suppliers").document(supplier_id)
+    doc = doc_ref.get()
+
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Supplier not found.")
+
+    supplier_name = doc.to_dict().get("name", "")
+    doc_ref.delete()
+
+    # Also delete all purchases from this supplier
+    purchases_ref = db.collection("users").document(uid).collection("suppliers_purchases")
+    purchase_docs = purchases_ref.where(
+        filter=FieldFilter("supplier_name", "==", supplier_name)
+    ).stream()
+    deleted_count = 0
+    for pdoc in purchase_docs:
+        pdoc.reference.delete()
+        deleted_count += 1
+
+    return {
+        "status": "success",
+        "message": f"Supplier '{supplier_name}' and {deleted_count} purchase(s) deleted.",
     }
 
 

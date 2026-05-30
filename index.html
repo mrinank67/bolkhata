@@ -246,54 +246,107 @@
           </div>
         </div>
 
-        <div class="sort-row">
-          <select id="supplier-sort" class="inventory-sort-select">
-            <option value="name-asc">Name (A-Z)</option>
-            <option value="name-desc">Name (Z-A)</option>
-            <option value="amount-desc">Amount (High-Low)</option>
-            <option value="recent">Most Recent</option>
-          </select>
-          <button id="supplier-refresh-btn" class="dashboard-refresh-btn" aria-label="Refresh"><span class="refresh-icon">↻</span></button>
+        <!-- Tab Bar -->
+        <div class="supplier-tabs">
+          <button class="supplier-tab active" data-tab="directory">🏪 Suppliers</button>
+          <button class="supplier-tab" data-tab="purchases">📋 Purchases</button>
         </div>
 
-        <div class="section-divider-label">SUPPLIER PURCHASE HISTORY</div>
-
-        <div id="supplier-list" class="supplier-list">
-          <div class="inventory-empty">Loading suppliers…</div>
+        <!-- Tab: Supplier Directory -->
+        <div id="supplier-tab-directory" class="supplier-tab-content">
+          <div class="sort-row">
+            <span class="section-inline-label">Your Suppliers</span>
+            <button id="supplier-add-btn" class="add-entry-btn" aria-label="Add supplier">+</button>
+          </div>
+          <div id="supplier-directory-list" class="supplier-list">
+            <div class="inventory-empty">Loading suppliers…</div>
+          </div>
         </div>
 
-        <div class="purchase-form-section">
-          <div class="section-divider-label">ADD PURCHASE TO INVENTORY</div>
-          <div class="purchase-form">
+        <!-- Tab: Purchase History -->
+        <div id="supplier-tab-purchases" class="supplier-tab-content hidden">
+          <div class="sort-row">
+            <select id="supplier-sort" class="inventory-sort-select">
+              <option value="recent">Most Recent</option>
+              <option value="name-asc">Name (A-Z)</option>
+              <option value="name-desc">Name (Z-A)</option>
+              <option value="amount-desc">Amount (High-Low)</option>
+            </select>
+            <button id="supplier-refresh-btn" class="dashboard-refresh-btn" aria-label="Refresh"><span class="refresh-icon">↻</span></button>
+          </div>
+          <div id="supplier-list" class="supplier-list">
+            <div class="inventory-empty">Loading purchases…</div>
+          </div>
+        </div>
+
+        <!-- Add Supplier Modal -->
+        <div id="supplier-add-modal" class="modal-overlay">
+          <div class="modal-card" style="text-align:left;">
+            <h3 class="modal-title">Add Supplier</h3>
             <div class="field-group">
-              <label class="field-label">Supplier Name</label>
-              <input type="text" id="purchase-supplier" placeholder="e.g. Sharma Distributor" />
+              <label class="field-label">Supplier Name *</label>
+              <input type="text" id="supplier-modal-name" placeholder="e.g. Raj Traders" />
             </div>
             <div class="field-group">
-              <label class="field-label">Item Name</label>
-              <input type="text" id="purchase-item" placeholder="e.g. Clutcher" />
+              <label class="field-label">Mobile Number</label>
+              <div class="phone-row">
+                <input type="text" value="+91" class="country-code" disabled />
+                <input type="tel" id="supplier-modal-mobile" placeholder="9876543210" class="phone-input" inputmode="numeric" maxlength="10" oninput="this.value = this.value.replace(/[^0-9]/g, '')" />
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label">GST Number <span class="field-optional">(Optional)</span></label>
+              <input type="text" id="supplier-modal-gst" placeholder="e.g. 22AAAAA0000A1Z5" />
+            </div>
+            <div class="modal-actions" style="margin-top:16px;">
+              <button id="supplier-modal-cancel" class="btn btn-outline">Cancel</button>
+              <button id="supplier-modal-save" class="btn btn-accent">Add Supplier</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Add Purchase Modal -->
+        <div id="supplier-purchase-modal" class="modal-overlay">
+          <div class="modal-card" style="text-align:left;">
+            <h3 class="modal-title">Add Purchase</h3>
+            <div class="field-group">
+              <label class="field-label">Supplier</label>
+              <input type="text" id="purchase-modal-supplier" placeholder="e.g. Raj Traders" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">Item Name *</label>
+              <input type="text" id="purchase-modal-item" placeholder="e.g. Clutcher" />
             </div>
             <div class="form-row">
               <div class="field-group field-half">
-                <label class="field-label">Quantity</label>
-                <input type="number" id="purchase-qty" placeholder="12" min="1" />
+                <label class="field-label">Quantity *</label>
+                <input type="number" id="purchase-modal-qty" placeholder="12" min="1" inputmode="numeric" />
               </div>
               <div class="field-group field-half">
-                <label class="field-label">Amount</label>
-                <input type="number" id="purchase-amount" placeholder="1200" min="0" />
+                <label class="field-label">Amount (₹)</label>
+                <input type="number" id="purchase-modal-amount" placeholder="1200" min="0" inputmode="numeric" />
               </div>
             </div>
-            <div class="field-group">
-              <label class="field-label-muted">Proof of purchase: upload bill image</label>
-              <div class="file-upload-placeholder">
-                <input type="file" id="purchase-proof" accept="image/*" disabled />
-                <span class="file-upload-note">Upload coming soon</span>
-              </div>
+            <div class="modal-actions" style="margin-top:16px;">
+              <button id="purchase-modal-cancel" class="btn btn-outline">Cancel</button>
+              <button id="purchase-modal-save" class="btn btn-accent">Add Purchase</button>
             </div>
-            <button id="add-purchase-btn" class="btn btn-purchase">Add purchase</button>
+          </div>
+        </div>
+
+        <!-- Delete Supplier Confirmation Modal -->
+        <div id="supplier-delete-modal" class="modal-overlay">
+          <div class="modal-card">
+            <h3 class="modal-title">Delete Supplier</h3>
+            <p class="modal-message" id="supplier-delete-message">Are you sure you want to delete this supplier?</p>
+            <div class="modal-actions">
+              <button id="supplier-delete-cancel" class="btn btn-outline">Cancel</button>
+              <button id="supplier-delete-confirm" class="btn btn-danger">Delete</button>
+            </div>
           </div>
         </div>
       </div>
+
 
       <!-- PAGE: Customer Ledger -->
       <div id="page-ledger" class="page-container hidden">

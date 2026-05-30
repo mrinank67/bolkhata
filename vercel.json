@@ -86,6 +86,18 @@
       "dest": "/main.py"
     },
     {
+      "src": "/suppliers/list",
+      "dest": "/main.py"
+    },
+    {
+      "src": "/suppliers/add",
+      "dest": "/main.py"
+    },
+    {
+      "src": "/suppliers/(.*)",
+      "dest": "/main.py"
+    },
+    {
       "src": "/ledger/customers",
       "dest": "/main.py"
     },
