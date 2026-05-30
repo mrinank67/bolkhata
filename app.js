@@ -303,6 +303,7 @@ const resultEl  = $("result");
 const startRecording = async e => {
   if (e.cancelable) e.preventDefault();
   if (!currentToken) return;
+  if (recordBtn.disabled) return; // Cooldown active
 
   try {
     activeStream = await navigator.mediaDevices.getUserMedia({ 
@@ -336,6 +337,20 @@ const startRecording = async e => {
         });
 
         if (res.status === 401) { signOut(auth); return; }
+
+        // Handle rate limiting (429)
+        if (res.status === 429) {
+          const errData = await res.json();
+          const retryAfter = errData.retry_after || 3;
+          const message = errData.message || `Server busy. Retry in ${Math.ceil(retryAfter)}s.`;
+          showToast(`⏳ ${message}`, Math.max(retryAfter * 1000, 3000));
+          statusEl.innerText = "Rate Limited";
+          resultEl.innerHTML = `<div class="error-item">⏳ ${message}</div>`;
+          // Disable record button for the retry duration
+          applyRecordCooldown(Math.ceil(retryAfter));
+          return;
+        }
+
         const data = await res.json();
 
         if (data.status === "success") {
@@ -352,6 +367,8 @@ const startRecording = async e => {
         statusEl.innerText = "Offline";
       } finally {
         statusEl.classList.remove("processing-dots");
+        // Brief client-side cooldown after every request (matches server cooldown)
+        applyRecordCooldown(2);
       }
     };
 
@@ -364,6 +381,19 @@ const startRecording = async e => {
     statusEl.innerText = "Microphone access denied.";
   }
 };
+
+// ── Record Button Cooldown ──
+let recordCooldownTimer = null;
+function applyRecordCooldown(seconds) {
+  recordBtn.disabled = true;
+  recordBtn.classList.add("cooldown");
+  clearTimeout(recordCooldownTimer);
+  recordCooldownTimer = setTimeout(() => {
+    recordBtn.disabled = false;
+    recordBtn.classList.remove("cooldown");
+  }, seconds * 1000);
+}
+
 
 const stopRecording = e => {
   if (e.cancelable) e.preventDefault();

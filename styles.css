@@ -719,6 +719,16 @@ input::placeholder {
   font-weight: 500;
 }
 
+/* Cooldown state — briefly disabled after request */
+.mic-btn.cooldown {
+  opacity: 0.5;
+  pointer-events: none;
+  background: linear-gradient(145deg, #4b5563, #374151);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  cursor: not-allowed;
+  transition: all 0.3s ease;
+}
+
 /* ══════════════════════════════════════
    RESULT AREA
    ══════════════════════════════════════ */

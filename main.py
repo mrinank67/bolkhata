@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header, BackgroundTasks
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -13,6 +14,15 @@ import firebase_admin
 from firebase_admin import credentials, firestore, auth
 from google.cloud.firestore_v1.base_query import FieldFilter
 import datetime
+
+from rate_limiter import (
+    check_user_cooldown,
+    check_global_rate_limit,
+    record_rate_limit_hit,
+    GROQ_RPM,
+    GROQ_RPD,
+    SARVAM_RPM,
+)
 
 load_dotenv()
 
@@ -78,6 +88,61 @@ async def process_voice(
 
     uid = verify_token(authorization)
 
+    # ── Rate Limit Checks (before any external API calls) ──
+    # 1. Per-user cooldown
+    allowed, retry_after = check_user_cooldown(db, uid)
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "status": "rate_limited",
+                "message": f"Thoda ruko! Try again in {retry_after:.0f}s.",
+                "retry_after": retry_after,
+            },
+            headers={"Retry-After": str(int(retry_after) + 1)},
+        )
+
+    # 2. Global Sarvam STT rate limit
+    allowed, retry_after = check_global_rate_limit(db, SARVAM_RPM)
+    if not allowed:
+        print(f"⚠️ Sarvam STT rate limit hit — retry_after={retry_after}s")
+        return JSONResponse(
+            status_code=429,
+            content={
+                "status": "rate_limited",
+                "message": f"Server busy. Please try again in {retry_after:.0f} seconds.",
+                "retry_after": retry_after,
+            },
+            headers={"Retry-After": str(int(retry_after) + 1)},
+        )
+
+    # 3. Global Groq LLM rate limits (RPM + daily)
+    allowed, retry_after = check_global_rate_limit(db, GROQ_RPM)
+    if not allowed:
+        print(f"⚠️ Groq RPM rate limit hit — retry_after={retry_after}s")
+        return JSONResponse(
+            status_code=429,
+            content={
+                "status": "rate_limited",
+                "message": f"Server busy. Please try again in {retry_after:.0f} seconds.",
+                "retry_after": retry_after,
+            },
+            headers={"Retry-After": str(int(retry_after) + 1)},
+        )
+
+    allowed, retry_after = check_global_rate_limit(db, GROQ_RPD)
+    if not allowed:
+        print(f"⚠️ Groq daily rate limit hit — retry_after={retry_after}s")
+        return JSONResponse(
+            status_code=429,
+            content={
+                "status": "rate_limited",
+                "message": "Daily limit reached. Please try again tomorrow.",
+                "retry_after": retry_after,
+            },
+            headers={"Retry-After": str(int(retry_after) + 1)},
+        )
+
     user_stock_ref = db.collection("users").document(uid).collection("stock")
     user_udhaar_ref = db.collection("users").document(uid).collection("udhaar")
     user_orders_ref = db.collection("users").document(uid).collection("orders")
@@ -136,6 +201,28 @@ async def process_voice(
         }
 
         response = requests.post(url, headers=headers, data=data, files=files)
+
+        # Retry once on 429 from Sarvam
+        if response.status_code == 429:
+            record_rate_limit_hit(db, SARVAM_RPM)
+            print("⚠️ Sarvam 429 — retrying after 2s...")
+            time.sleep(2)
+            # Re-read audio bytes for retry (file pointer already consumed)
+            files_retry = {
+                'file': (audio.filename, audio_bytes, audio.content_type)
+            }
+            response = requests.post(url, headers=headers, data=data, files=files_retry)
+            if response.status_code == 429:
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "status": "rate_limited",
+                        "message": "Voice service is busy. Please try again in a few seconds.",
+                        "retry_after": 5,
+                    },
+                    headers={"Retry-After": "5"},
+                )
+
         response.raise_for_status()
         
         result = response.json()
@@ -197,15 +284,34 @@ async def process_voice(
                     - "meera traders se 40 darjan farande aaye aur 200 hair pins, total 4400" -> TWO transactions, operation=add, supplier_name=meera traders
                     """
 
-        chat_completion = groq_client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Text to process: '{hindi_text}'"},
-            ],
-            model="llama-3.1-8b-instant",
-            response_format={"type": "json_object"},
-            temperature=0.0,
-        )
+        try:
+            chat_completion = groq_client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Text to process: '{hindi_text}'"},
+                ],
+                model="llama-3.1-8b-instant",
+                response_format={"type": "json_object"},
+                temperature=0.0,
+            )
+        except Exception as groq_err:
+            # Retry once on Groq 429 (rate limit from their side)
+            err_status = getattr(groq_err, 'status_code', None)
+            if err_status == 429:
+                record_rate_limit_hit(db, GROQ_RPM)
+                print("⚠️ Groq 429 — retrying after 3s...")
+                time.sleep(3)
+                chat_completion = groq_client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"Text to process: '{hindi_text}'"},
+                    ],
+                    model="llama-3.1-8b-instant",
+                    response_format={"type": "json_object"},
+                    temperature=0.0,
+                )
+            else:
+                raise groq_err
 
         json_str = chat_completion.choices[0].message.content
         intent = json.loads(json_str)
@@ -214,6 +320,18 @@ async def process_voice(
 
     except Exception as e:
         print(f"❌ GROQ LLM ERROR: {str(e)}")
+        # If it's still a 429 after retry, return proper 429 to client
+        err_status = getattr(e, 'status_code', None)
+        if err_status == 429:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "status": "rate_limited",
+                    "message": "AI service is busy. Please try again in a few seconds.",
+                    "retry_after": 5,
+                },
+                headers={"Retry-After": "5"},
+            )
         raise HTTPException(status_code=500, detail="Failed to understand the intent.")
 
     # --- STEP 3: Standardization & Database Loop ---
