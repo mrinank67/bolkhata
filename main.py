@@ -780,28 +780,12 @@ def verify_token(authorization: str):
         t0 = time.time()
         decoded = auth.verify_id_token(token)
         print(f"⏱️ Token Verify: {time.time() - t0:.2f}s")
-        allowed_users_env = os.getenv("ALLOWED_PREVIEW_USERS", "")
-        # If the environment variable isn't set (e.g. in Production), allow everyone
-        if allowed_users_env:
-            ALLOWED_PREVIEW_USERS = [u.strip() for u in allowed_users_env.split(",") if u.strip()]
-            
-            email = decoded.get("email", "")
-            phone = decoded.get("phone_number", "")
-            
-            if email not in ALLOWED_PREVIEW_USERS and phone not in ALLOWED_PREVIEW_USERS:
-                raise HTTPException(status_code=403, detail="Access Denied to Preview Branch")
-            
         return decoded["uid"]
     except Exception as e:
         if isinstance(e, HTTPException):
             raise e
         raise HTTPException(status_code=401, detail="Invalid Authentication Token")
 
-
-@app.get("/verify_access")
-async def verify_access(authorization: str = Header(None)):
-    verify_token(authorization)
-    return {"status": "success", "allowed": True}
 
 # Confirmed clear inventory endpoint
 @app.post("/confirm_clear_inventory")

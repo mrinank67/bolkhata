@@ -41,18 +41,6 @@ let currentUid = null;
 onAuthStateChanged(auth, async user => {
   if (user) {
     const token = await user.getIdToken();
-    try {
-      const res = await fetch(`${API}/verify_access`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!res.ok) {
-        throw new Error("Access Denied");
-      }
-    } catch (e) {
-      await signOut(auth);
-      loginError.innerText = "Access Denied: You do not have permission to view this preview version.";
-      return;
-    }
 
     currentToken = token;
     currentUid = user.uid;

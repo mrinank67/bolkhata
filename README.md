@@ -81,7 +81,6 @@ BolKhata uses a clean REST API structure. All transactional and write-based endp
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
 | `/config` | `GET` | Fetches client Firebase keys dynamically |
-| `/verify_access` | `GET` | Validates active logged-in user tokens |
 | `/process_voice` | `POST` | Primary entry point. Processes audio binary data and commits intents to Firestore |
 | `/inventory` | `GET` | Lists all active stock active names, quantities, and prices |
 | `/inventory/{item_id}` | `PUT` | Renames an item or updates its price/stock levels in-place |
