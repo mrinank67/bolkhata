@@ -765,7 +765,28 @@ $("inventory-edit-delete").addEventListener("click", async () => {
   const originalId = $("inventory-edit-original-id").value;
   const btn = $("inventory-edit-delete");
 
-  if (!confirm(`Delete "${originalId}" from inventory? This cannot be undone.`)) return;
+  // Show custom confirmation modal
+  $("inventory-delete-message").textContent = `Delete "${originalId}" from inventory? This cannot be undone.`;
+  $("inventory-delete-modal").classList.add("open");
+
+  const confirmed = await new Promise(resolve => {
+    const confirmBtn = $("inventory-delete-confirm");
+    const cancelBtn = $("inventory-delete-cancel");
+
+    const cleanup = () => {
+      confirmBtn.removeEventListener("click", onConfirm);
+      cancelBtn.removeEventListener("click", onCancel);
+      $("inventory-delete-modal").classList.remove("open");
+    };
+
+    const onConfirm = () => { cleanup(); resolve(true); };
+    const onCancel = () => { cleanup(); resolve(false); };
+
+    confirmBtn.addEventListener("click", onConfirm);
+    cancelBtn.addEventListener("click", onCancel);
+  });
+
+  if (!confirmed) return;
 
   btn.innerHTML = '<div class="spinner"></div>';
   btn.disabled = true;
