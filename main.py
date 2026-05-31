@@ -1095,7 +1095,13 @@ async def list_saved_suppliers(authorization: str = Header(None)):
     """List all saved suppliers in the user's directory."""
     uid = verify_token(authorization)
     suppliers_ref = db.collection("users").document(uid).collection("suppliers")
-    docs = suppliers_ref.order_by("created_at", direction=firestore.Query.DESCENDING).stream()
+    t0 = time.time()
+    try:
+        docs = list(suppliers_ref.order_by("created_at", direction=firestore.Query.DESCENDING).stream())
+    except Exception as e:
+        print(f"⚠️ Suppliers order_by failed ({e}), falling back to unordered query")
+        docs = list(suppliers_ref.stream())
+    print(f"⏱️ Suppliers List Query: {time.time() - t0:.2f}s")
 
     suppliers = []
     for doc in docs:
