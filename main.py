@@ -151,10 +151,14 @@ async def process_voice(
     recent_customer = ""
     recent_modifier = ""
     try:
-        last_orders = list(user_orders_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream())
+        all_orders = list(user_orders_ref.stream())
+        all_orders.sort(key=lambda d: d.to_dict().get("timestamp") or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc), reverse=True)
+        last_orders = all_orders[:1]
         last_order_time = last_orders[0].to_dict().get("timestamp") if last_orders else None
         
-        last_udhaars = list(user_udhaar_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream())
+        all_udhaars = list(user_udhaar_ref.stream())
+        all_udhaars.sort(key=lambda d: d.to_dict().get("timestamp") or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc), reverse=True)
+        last_udhaars = all_udhaars[:1]
         last_udhaar_time = last_udhaars[0].to_dict().get("timestamp") if last_udhaars else None
 
         latest_doc = None
@@ -908,11 +912,9 @@ async def delete_inventory_item(item_id: str, authorization: str = Header(None))
 async def get_history(authorization: str = Header(None)):
     uid = verify_token(authorization)
     history_ref = db.collection("users").document(uid).collection("history")
-    docs = (
-        history_ref.order_by("timestamp", direction=firestore.Query.DESCENDING)
-        .limit(50)
-        .stream()
-    )
+    all_docs = list(history_ref.stream())
+    all_docs.sort(key=lambda d: d.to_dict().get("timestamp") or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc), reverse=True)
+    docs = all_docs[:50]
 
     entries = []
     for doc in docs:
@@ -993,7 +995,9 @@ class SupplierCreateRequest(BaseModel):
 async def get_suppliers(authorization: str = Header(None)):
     uid = verify_token(authorization)
     purchases_ref = db.collection("users").document(uid).collection("suppliers_purchases")
-    docs = purchases_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
+    all_docs = list(purchases_ref.stream())
+    all_docs.sort(key=lambda d: d.to_dict().get("timestamp") or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc), reverse=True)
+    docs = all_docs
 
     purchases = []
     supplier_totals = {}
@@ -1096,11 +1100,8 @@ async def list_saved_suppliers(authorization: str = Header(None)):
     uid = verify_token(authorization)
     suppliers_ref = db.collection("users").document(uid).collection("suppliers")
     t0 = time.time()
-    try:
-        docs = list(suppliers_ref.order_by("created_at", direction=firestore.Query.DESCENDING).stream())
-    except Exception as e:
-        print(f"⚠️ Suppliers order_by failed ({e}), falling back to unordered query")
-        docs = list(suppliers_ref.stream())
+    docs = list(suppliers_ref.stream())
+    docs.sort(key=lambda d: d.to_dict().get("created_at") or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc), reverse=True)
     print(f"⏱️ Suppliers List Query: {time.time() - t0:.2f}s")
 
     suppliers = []
@@ -1189,7 +1190,9 @@ async def delete_supplier(supplier_id: str, authorization: str = Header(None)):
 async def get_ledger_customers(authorization: str = Header(None)):
     uid = verify_token(authorization)
     udhaar_ref = db.collection("users").document(uid).collection("udhaar")
-    docs = udhaar_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
+    all_docs = list(udhaar_ref.stream())
+    all_docs.sort(key=lambda d: d.to_dict().get("timestamp") or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc), reverse=True)
+    docs = all_docs
 
     customers = {}
     total_due = 0
