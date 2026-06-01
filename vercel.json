@@ -13,6 +13,10 @@
       "use": "@vercel/static"
     },
     {
+      "src": "js/**",
+      "use": "@vercel/static"
+    },
+    {
       "src": "sw.js",
       "use": "@vercel/static"
     },
@@ -50,6 +54,12 @@
       ]
     },
     {
+      "source": "/js/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, must-revalidate" }
+      ]
+    },
+    {
       "source": "/styles.css",
       "headers": [
         { "key": "Cache-Control", "value": "no-cache, must-revalidate" }
@@ -75,6 +85,10 @@
     },
     {
       "src": "/inventory",
+      "dest": "/main.py"
+    },
+    {
+      "src": "/inventory/(.*)",
       "dest": "/main.py"
     },
     {
@@ -116,6 +130,10 @@
     {
       "src": "/app.js",
       "dest": "/app.js"
+    },
+    {
+      "src": "/js/(.*)",
+      "dest": "/js/$1"
     },
     {
       "src": "/sw.js",
