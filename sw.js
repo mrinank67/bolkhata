@@ -1,8 +1,16 @@
-const CACHE_VERSION = "bolkhata-v3";
+const CACHE_VERSION = "bolkhata-v4";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
   "/app.js",
+  "/js/config.js",
+  "/js/auth.js",
+  "/js/recording.js",
+  "/js/ui.js",
+  "/js/dashboard.js",
+  "/js/history.js",
+  "/js/suppliers.js",
+  "/js/ledger.js",
   "/styles.css",
   "/manifest.json",
   "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
