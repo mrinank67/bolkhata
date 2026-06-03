@@ -13,3 +13,6 @@ __pycache__/
 # Environment files (Never upload local API keys!)
 .env
 bolkhata-prod-firebase-adminsdk-fbsvc-842a3ee7ed.json
+
+# Claude Code
+CLAUDE.md
