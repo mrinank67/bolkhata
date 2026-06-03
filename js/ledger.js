@@ -143,9 +143,23 @@ function renderLedgerCustomers() {
       const due = Number(btn.dataset.due);
       const dueStr = due.toLocaleString('en-IN');
 
+      let payToken;
+      try {
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch(`${API}/pay/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ pa: upiId, pn: 'BolKhata', am: due, tn: `Payment for ${customerName}` })
+        });
+        const data = await res.json();
+        payToken = data.token;
+      } catch {
+        showToast('Could not generate payment link.');
+        return;
+      }
+
       const phone = waNumber.startsWith('+') ? waNumber.substring(1) : (waNumber.length === 10 ? '91' + waNumber : waNumber);
-      const txnNote = `Payment for ${customerName}`;
-      const payLink = `${window.location.origin}/pay?pa=${encodeURIComponent(upiId)}&pn=BolKhata&am=${due}&tn=${encodeURIComponent(txnNote)}`;
+      const payLink = `${window.location.origin}/pay?token=${encodeURIComponent(payToken)}`;
 
       const message = `Namaste ${customerName} ji,\n\nAapka ₹${dueStr} ka hisaab baaki hai.\n\nPayment karne ke liye yahan click karein:\n${payLink}\n\nDhanyavaad,\nBolKhata`;
 

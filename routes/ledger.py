@@ -2,13 +2,17 @@
 Customer ledger endpoints — all /ledger/* routes
 """
 
+import os
 from fastapi import APIRouter, HTTPException, Header, Query
 from fastapi.responses import HTMLResponse
 from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
+from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 
 from auth import verify_token
-from models import LedgerEntryRequest, LedgerEntryUpdate, WhatsAppReminderRequest, UserSettingsRequest
+from models import LedgerEntryRequest, LedgerEntryUpdate, WhatsAppReminderRequest, UserSettingsRequest, PayLinkRequest
+
+_pay_serializer = URLSafeTimedSerializer(os.getenv("PAY_LINK_SECRET", "bolkhata-pay-default-secret"))
 
 router = APIRouter()
 
@@ -167,20 +171,32 @@ async def schedule_whatsapp_reminder(req: WhatsAppReminderRequest, authorization
     }
 
 
+PAY_LINK_MAX_AGE = 24 * 60 * 60  # 24 hours
+
+
+@router.post("/pay/create")
+async def create_pay_link(req: PayLinkRequest, authorization: str = Header(None)):
+    verify_token(authorization)
+    token = _pay_serializer.dumps({"pa": req.pa, "pn": req.pn, "am": req.am, "tn": req.tn})
+    return {"token": token}
+
+
 @router.get("/pay", response_class=HTMLResponse)
-async def pay_page(
-    pa: str = Query(..., description="UPI ID"),
-    pn: str = Query("BolKhata", description="Payee name"),
-    am: str = Query(..., description="Amount"),
-    tn: str = Query("", description="Transaction note"),
-):
+async def pay_page(token: str = Query(..., description="Signed payment token")):
     from html import escape
 
-    upi_id = escape(pa)
-    payee = escape(pn)
-    amount = escape(am)
-    note = escape(tn)
-    upi_uri = f"upi://pay?pa={pa}&pn={pn}&am={am}&cu=INR&tn={tn}"
+    try:
+        data = _pay_serializer.loads(token, max_age=PAY_LINK_MAX_AGE)
+    except SignatureExpired:
+        return _pay_error_page("This payment link has expired. Please ask the sender for a new link.")
+    except BadSignature:
+        return _pay_error_page("This payment link is invalid.")
+
+    upi_id = escape(str(data["pa"]))
+    payee = escape(str(data["pn"]))
+    amount = escape(str(data["am"]))
+    note = escape(str(data.get("tn", "")))
+    upi_uri = f"upi://pay?pa={data['pa']}&pn={data['pn']}&am={data['am']}&cu=INR&tn={data.get('tn', '')}"
 
     return f"""<!DOCTYPE html>
 <html lang="hi">
@@ -212,6 +228,34 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
   <div class="upi-id">{upi_id}</div>
   <div class="note">{note if note else ''}</div>
   <a class="pay-btn" href="{upi_uri}">Pay Now</a>
+  <div class="footer">Powered by BolKhata</div>
+</div>
+</body>
+</html>"""
+
+
+def _pay_error_page(message: str) -> str:
+    from html import escape
+    msg = escape(message)
+    return f"""<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Link Expired — BolKhata</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f0f13;color:#e8e8e8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}}
+.card{{background:#1a1a24;border-radius:16px;padding:32px 24px;max-width:380px;width:100%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4)}}
+.logo{{font-size:1.6rem;font-weight:800;margin-bottom:4px}}
+.msg{{font-size:1rem;color:#ef5350;margin:24px 0}}
+.footer{{margin-top:20px;font-size:0.7rem;color:#555}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">BolKhata</div>
+  <div class="msg">{msg}</div>
   <div class="footer">Powered by BolKhata</div>
 </div>
 </body>
