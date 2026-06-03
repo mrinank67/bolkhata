@@ -2192,23 +2192,46 @@ input::placeholder {
   margin-bottom: 10px;
 }
 
-.whatsapp-input input {
+.wa-split-input {
+  display: flex;
+  gap: 8px;
+}
+
+.wa-split-input input {
+  width: auto;
   padding: 10px 12px !important;
   font-size: 0.85rem !important;
 }
 
+.wa-split-input .wa-code-input {
+  width: 60px;
+  flex-shrink: 0;
+  text-align: center;
+  padding: 10px 6px !important;
+}
+
+.wa-split-input .wa-number-input {
+  flex: 1;
+  min-width: 0;
+}
+
 
 .btn-whatsapp {
-  background: linear-gradient(135deg, #25D366, #128C7E);
+  background: #25D366;
   color: #fff;
   font-size: 0.9rem;
   font-weight: 700;
   padding: 12px 20px;
   border-radius: var(--radius-md);
   box-shadow: 0 4px 12px rgba(37,211,102,0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .btn-whatsapp:hover {
+  background: #22c55e;
   box-shadow: 0 6px 20px rgba(37,211,102,0.35);
 }
 
