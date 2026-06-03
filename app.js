@@ -15,6 +15,7 @@
 // Import all modules — each self-registers its event listeners on import
 import "./js/config.js";
 import "./js/auth.js";
+import "./js/idle-timer.js";
 import "./js/ui.js";
 import "./js/recording.js";
 import "./js/dashboard.js";
