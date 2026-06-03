@@ -120,13 +120,21 @@ function renderLedgerCustomers() {
 
   // Wire up WhatsApp reminder buttons
   listEl.querySelectorAll('.wa-remind-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const card = btn.closest('.ledger-customer-card');
       const waInput = card.querySelector('.wa-number-input');
       const waNumber = waInput.value.trim().replace(/[\s\-()]/g, '');
-      const upiId = localStorage.getItem('bolkhata_upi') || '';
 
       if (!waNumber) { showToast('❌ Please enter a WhatsApp number.'); return; }
+
+      let upiId = '';
+      try {
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch(`${API}/settings`, { headers: { Authorization: `Bearer ${token}` } });
+        const data = await res.json();
+        upiId = data.upi_id || '';
+      } catch { /* silent */ }
+
       if (!upiId) { showToast('❌ Pehle Account Settings mein apna UPI ID set karein.'); return; }
 
       saveWhatsAppNumber(btn.dataset.customer, btn.dataset.modifier, waNumber);

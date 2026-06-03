@@ -128,6 +128,14 @@
       "dest": "/main.py"
     },
     {
+      "src": "/pay",
+      "dest": "/main.py"
+    },
+    {
+      "src": "/settings",
+      "dest": "/main.py"
+    },
+    {
       "src": "/app.js",
       "dest": "/app.js"
     },
