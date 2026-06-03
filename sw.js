@@ -1,10 +1,11 @@
-const CACHE_VERSION = "bolkhata-v4";
+const CACHE_VERSION = "bolkhata-v5";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
   "/app.js",
   "/js/config.js",
   "/js/auth.js",
+  "/js/idle-timer.js",
   "/js/recording.js",
   "/js/ui.js",
   "/js/dashboard.js",
