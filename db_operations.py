@@ -10,6 +10,27 @@ from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 
+SUPPLIER_SUFFIXES = {"supplier", "suppliers", "wholesale", "distributor", "distributors", "traders", "supply", "supplies", "vendor", "vendors"}
+
+
+def _normalize_supplier_name(name: str) -> str:
+    words = name.strip().lower().split()
+    if len(words) > 1 and words[-1] in SUPPLIER_SUFFIXES:
+        words = words[:-1]
+    return " ".join(words)
+
+
+def _match_supplier(raw_name: str, existing_suppliers: list[str]) -> str:
+    normalized = _normalize_supplier_name(raw_name)
+    if not existing_suppliers:
+        return normalized
+    # Check if normalized name fuzzy-matches an existing supplier
+    best_match, score = process.extractOne(normalized, existing_suppliers)
+    if score > 70:
+        return best_match
+    return normalized
+
+
 def process_transactions(
     transactions: list,
     hindi_text: str,
@@ -30,6 +51,10 @@ def process_transactions(
     # Fetch dynamic inventory to enrich fuzzy matching
     stock_docs = list(user_stock_ref.stream())
     all_fuzzy_candidates = [doc.id for doc in stock_docs]
+
+    # Fetch existing supplier names for fuzzy matching
+    purchases_docs = db.collection("users").document(uid).collection("suppliers_purchases").stream()
+    existing_suppliers = list({doc.to_dict().get("supplier_name", "").strip().lower() for doc in purchases_docs if doc.to_dict().get("supplier_name", "").strip()})
 
     # Structured result groups keyed by action type
     result_groups = {}
@@ -54,7 +79,7 @@ def process_transactions(
         customer_name = txn.get("customer_name", "").lower()
         customer_modifier = txn.get("customer_modifier", "").lower()
         is_credit = txn.get("is_credit", False)
-        supplier_name = txn.get("supplier_name", "").strip()
+        supplier_name = _match_supplier(txn.get("supplier_name", ""), existing_suppliers) if txn.get("supplier_name", "").strip() else ""
         txn_amount = txn.get("amount", 0)
         txn_rate = txn.get("rate", 0)
         txn_unit = txn.get("unit", "")
