@@ -205,6 +205,52 @@ def process_transactions(
                 )
             continue
 
+        # --- Handle Send Reminder ---
+        if target == "ledger" and operation == "send_reminder":
+            if not customer_name:
+                errors.append("Kisko reminder bhejun? (Please specify a name).")
+                continue
+
+            title_name = (
+                f"{customer_name.capitalize()} ({customer_modifier})"
+                if customer_modifier
+                else customer_name.capitalize()
+            )
+            group_key = f"send_reminder_{customer_name}_{customer_modifier}"
+
+            docs = user_udhaar_ref.where(
+                filter=FieldFilter("customer_name", "==", customer_name)
+            ).stream()
+
+            total_due = 0
+            wa_number = ""
+            for doc in docs:
+                data = doc.to_dict()
+                if customer_modifier and customer_modifier.lower() != data.get("customer_modifier", "").lower():
+                    continue
+                total_due += data.get("amount", 0)
+                if data.get("whatsapp_number"):
+                    wa_number = data["whatsapp_number"]
+
+            if total_due <= 0:
+                group = get_group(group_key, f"Reminder — {title_name}", "🔔", ["Customer", "Status"])
+                group["empty_message"] = f"{title_name} ka koi baaki hisaab nahi hai."
+                continue
+
+            # Read UPI ID from user settings
+            user_doc = db.collection("users").document(uid).get()
+            upi_id = user_doc.to_dict().get("upi_id", "") if user_doc.exists else ""
+
+            group = get_group(group_key, f"Reminder — {title_name}", "🔔", ["Customer", "Due"])
+            group["rows"].append({"Customer": title_name, "Due": f"₹{total_due:,.0f}"})
+            group["reminder_data"] = {
+                "customer_name": title_name,
+                "total_due": total_due,
+                "whatsapp_number": wa_number,
+                "upi_id": upi_id,
+            }
+            continue
+
         # --- Normal Stock Processing ---
         if not raw_item or raw_item == "ALL":
             continue

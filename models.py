@@ -48,7 +48,11 @@ class WhatsAppReminderRequest(BaseModel):
     customer_name: str
     customer_modifier: Optional[str] = ""
     whatsapp_number: str
-    reminder_schedule: str
+    reminder_schedule: Optional[str] = ""
+
+
+class UserSettingsRequest(BaseModel):
+    upi_id: Optional[str] = ""
 
 
 class SupplierCreateRequest(BaseModel):
