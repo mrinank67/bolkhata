@@ -1268,6 +1268,72 @@ input::placeholder {
   display: none;
 }
 
+.drawer-user-info-clickable {
+  cursor: pointer;
+  padding: 8px;
+  margin: -8px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition);
+}
+
+.drawer-user-info-clickable:hover {
+  background: var(--surface-3);
+}
+
+.drawer-user-chevron {
+  margin-left: auto;
+  font-size: 1.2rem;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+/* Account Settings Modal */
+.account-settings-card {
+  text-align: left;
+}
+
+.account-settings-card .modal-title {
+  text-align: center;
+}
+
+.settings-field {
+  margin-bottom: 20px;
+}
+
+.settings-field-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+
+.settings-field-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color var(--transition);
+  box-sizing: border-box;
+}
+
+.settings-field-input:focus {
+  border-color: var(--accent);
+}
+
+.settings-field-hint {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  font-style: italic;
+}
+
 .drawer-logout-btn {
   display: flex;
   align-items: center;
@@ -2131,47 +2197,26 @@ input::placeholder {
   font-size: 0.85rem !important;
 }
 
-.reminder-select {
-  width: 100%;
-  padding: 10px 12px;
-  background: var(--surface-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 0.85rem;
-  cursor: pointer;
-  outline: none;
-  -webkit-appearance: none;
-  appearance: none;
-  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888899' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  background-size: 14px;
-  padding-right: 30px;
-  margin-bottom: 10px;
-}
 
 .btn-whatsapp {
-  background: linear-gradient(135deg, #f59e0b, #d97706);
+  background: linear-gradient(135deg, #25D366, #128C7E);
   color: #fff;
   font-size: 0.9rem;
   font-weight: 700;
   padding: 12px 20px;
   border-radius: var(--radius-md);
-  box-shadow: 0 4px 12px rgba(245,158,11,0.25);
+  box-shadow: 0 4px 12px rgba(37,211,102,0.25);
 }
 
 .btn-whatsapp:hover {
-  box-shadow: 0 6px 20px rgba(245,158,11,0.35);
+  box-shadow: 0 6px 20px rgba(37,211,102,0.35);
 }
 
-.reminder-status {
-  text-align: center;
-  font-size: 0.72rem;
-  color: var(--text-tertiary);
-  margin-top: 6px;
-  font-style: italic;
+.reminder-action {
+  padding: 12px 16px;
+}
+.reminder-action .btn-whatsapp {
+  width: 100%;
 }
 
 /* Edit button for ledger items */

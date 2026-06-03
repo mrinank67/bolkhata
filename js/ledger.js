@@ -5,6 +5,21 @@
 import { $, auth, API } from "./config.js";
 import { showToast, escapeHtml, capitalize } from "./ui.js";
 
+async function saveWhatsAppNumber(customerName, customerModifier, waNumber) {
+  try {
+    const token = await auth.currentUser.getIdToken();
+    await fetch(`${API}/ledger/whatsapp-reminder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        customer_name: customerName,
+        customer_modifier: customerModifier,
+        whatsapp_number: waNumber,
+      })
+    });
+  } catch { /* silent — number save is best-effort */ }
+}
+
 let currentLedgerData = { customers: [], total_due: 0, customer_count: 0 };
 let currentLedgerSort = 'recent';
 let ledgerSearchQuery = '';
@@ -61,8 +76,6 @@ function renderLedgerCustomers() {
     const lastEntry = c.last_entry ? `Last entry ${formatLedgerDate(c.last_entry)}` : '';
     const amountClass = (c.total_due || 0) > 3000 ? 'high' : (c.total_due || 0) > 0 ? 'due' : 'low';
     const wa = c.whatsapp_number || '';
-    const reminderSched = c.reminder_schedule || '';
-    const reminderSent = c.reminder_sent ? 'Reminder sent ✓' : 'Reminder not scheduled';
     const customerKey = `${c.customer_name}|${c.customer_modifier || ''}`;
 
     // Items table
@@ -96,18 +109,9 @@ function renderLedgerCustomers() {
         <div class="whatsapp-section">
           <div class="whatsapp-section-label">WHATSAPP NUMBER</div>
           <div class="whatsapp-input">
-            <input type="tel" class="wa-number-input" placeholder="+91 98765 43210" value="${escapeHtml(wa)}" data-customer="${escapeHtml(c.customer_name)}" data-modifier="${escapeHtml(c.customer_modifier || '')}" />
+            <input type="tel" class="wa-number-input" placeholder="+91 98765 43210" value="${escapeHtml(wa)}" />
           </div>
-          <div class="whatsapp-section-label">REMINDER SCHEDULE</div>
-          <select class="reminder-select" data-customer="${escapeHtml(c.customer_name)}" data-modifier="${escapeHtml(c.customer_modifier || '')}">
-            <option value="" ${!reminderSched ? 'selected' : ''}>Select time</option>
-            <option value="Today evening" ${reminderSched === 'Today evening' ? 'selected' : ''}>Today evening</option>
-            <option value="Tomorrow morning" ${reminderSched === 'Tomorrow morning' ? 'selected' : ''}>Tomorrow morning</option>
-            <option value="This weekend" ${reminderSched === 'This weekend' ? 'selected' : ''}>This weekend</option>
-            <option value="Next week" ${reminderSched === 'Next week' ? 'selected' : ''}>Next week</option>
-          </select>
-          <button class="btn btn-whatsapp wa-remind-btn" data-customer="${escapeHtml(c.customer_name)}" data-modifier="${escapeHtml(c.customer_modifier || '')}">Schedule WhatsApp reminder</button>
-          <div class="reminder-status">${reminderSent}</div>
+          <button class="btn btn-whatsapp wa-remind-btn" data-customer="${escapeHtml(c.customer_name)}" data-modifier="${escapeHtml(c.customer_modifier || '')}" data-due="${c.total_due || 0}">Send Reminder</button>
         </div>
       </div>
     </div>`;
@@ -116,41 +120,29 @@ function renderLedgerCustomers() {
 
   // Wire up WhatsApp reminder buttons
   listEl.querySelectorAll('.wa-remind-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       const card = btn.closest('.ledger-customer-card');
       const waInput = card.querySelector('.wa-number-input');
-      const schedSelect = card.querySelector('.reminder-select');
-      const waNumber = waInput.value.trim();
-      const schedule = schedSelect.value;
+      const waNumber = waInput.value.trim().replace(/[\s\-()]/g, '');
+      const upiId = localStorage.getItem('bolkhata_upi') || '';
 
       if (!waNumber) { showToast('❌ Please enter a WhatsApp number.'); return; }
-      if (!schedule) { showToast('❌ Please select a reminder schedule.'); return; }
+      if (!upiId) { showToast('❌ Pehle Account Settings mein apna UPI ID set karein.'); return; }
 
-      btn.innerHTML = '<div class="spinner"></div>';
-      btn.disabled = true;
+      saveWhatsAppNumber(btn.dataset.customer, btn.dataset.modifier, waNumber);
 
-      try {
-        const token = await auth.currentUser.getIdToken();
-        const res = await fetch(`${API}/ledger/whatsapp-reminder`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({
-            customer_name: btn.dataset.customer,
-            customer_modifier: btn.dataset.modifier,
-            whatsapp_number: waNumber,
-            reminder_schedule: schedule
-          })
-        });
-        const data = await res.json();
-        showToast('📱 ' + (data.message || 'Reminder scheduled!'));
-        const statusEl = card.querySelector('.reminder-status');
-        if (statusEl) statusEl.textContent = `Scheduled: ${schedule}`;
-      } catch {
-        showToast('❌ Could not schedule reminder.');
-      } finally {
-        btn.textContent = 'Schedule WhatsApp reminder';
-        btn.disabled = false;
-      }
+      const customerName = capitalize(btn.dataset.customer);
+      const due = Number(btn.dataset.due);
+      const dueStr = due.toLocaleString('en-IN');
+
+      const phone = waNumber.startsWith('+') ? waNumber.substring(1) : (waNumber.length === 10 ? '91' + waNumber : waNumber);
+      const txnNote = `Payment for ${customerName}`;
+      const payLink = `${window.location.origin}/pay?pa=${encodeURIComponent(upiId)}&pn=BolKhata&am=${due}&tn=${encodeURIComponent(txnNote)}`;
+
+      const message = `Namaste ${customerName} ji,\n\nAapka ₹${dueStr} ka hisaab baaki hai.\n\nPayment karne ke liye yahan click karein:\n${payLink}\n\nDhanyavaad,\nBolKhata`;
+
+      const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+      window.open(waUrl, '_blank');
     });
   });
 }

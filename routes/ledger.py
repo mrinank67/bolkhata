@@ -2,12 +2,13 @@
 Customer ledger endpoints — all /ledger/* routes
 """
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Query
+from fastapi.responses import HTMLResponse
 from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from auth import verify_token
-from models import LedgerEntryRequest, LedgerEntryUpdate, WhatsAppReminderRequest
+from models import LedgerEntryRequest, LedgerEntryUpdate, WhatsAppReminderRequest, UserSettingsRequest
 
 router = APIRouter()
 
@@ -164,3 +165,75 @@ async def schedule_whatsapp_reminder(req: WhatsAppReminderRequest, authorization
         "message": f"WhatsApp reminder scheduled for {req.customer_name}. (Placeholder — integration pending)",
         "updated_entries": updated,
     }
+
+
+@router.get("/pay", response_class=HTMLResponse)
+async def pay_page(
+    pa: str = Query(..., description="UPI ID"),
+    pn: str = Query("BolKhata", description="Payee name"),
+    am: str = Query(..., description="Amount"),
+    tn: str = Query("", description="Transaction note"),
+):
+    from html import escape
+
+    upi_id = escape(pa)
+    payee = escape(pn)
+    amount = escape(am)
+    note = escape(tn)
+    upi_uri = f"upi://pay?pa={pa}&pn={pn}&am={am}&cu=INR&tn={tn}"
+
+    return f"""<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pay ₹{amount} — {payee}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f0f13;color:#e8e8e8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}}
+.card{{background:#1a1a24;border-radius:16px;padding:32px 24px;max-width:380px;width:100%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4)}}
+.logo{{font-size:1.6rem;font-weight:800;margin-bottom:4px}}
+.subtitle{{font-size:0.8rem;color:#888;margin-bottom:24px}}
+.amount{{font-size:2.8rem;font-weight:800;color:#4fc3f7;margin:16px 0 8px}}
+.to{{font-size:0.85rem;color:#aaa;margin-bottom:4px}}
+.upi-id{{font-size:0.9rem;color:#ccc;font-family:monospace;margin-bottom:6px}}
+.note{{font-size:0.8rem;color:#777;margin-bottom:28px;font-style:italic}}
+.pay-btn{{display:block;width:100%;padding:16px;background:linear-gradient(135deg,#4fc3f7,#2196f3);color:#fff;font-size:1.1rem;font-weight:700;border:none;border-radius:12px;cursor:pointer;text-decoration:none;transition:box-shadow 0.2s}}
+.pay-btn:hover{{box-shadow:0 6px 20px rgba(33,150,243,0.4)}}
+.footer{{margin-top:20px;font-size:0.7rem;color:#555}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">BolKhata</div>
+  <div class="subtitle">Payment Request</div>
+  <div class="amount">₹{amount}</div>
+  <div class="to">Pay to</div>
+  <div class="upi-id">{upi_id}</div>
+  <div class="note">{note if note else ''}</div>
+  <a class="pay-btn" href="{upi_uri}">Pay Now</a>
+  <div class="footer">Powered by BolKhata</div>
+</div>
+</body>
+</html>"""
+
+
+@router.get("/settings")
+async def get_settings(authorization: str = Header(None)):
+    from main import db
+
+    uid = verify_token(authorization)
+    doc = db.collection("users").document(uid).get()
+    data = doc.to_dict() if doc.exists else {}
+    return {"upi_id": data.get("upi_id", "")}
+
+
+@router.put("/settings")
+async def update_settings(req: UserSettingsRequest, authorization: str = Header(None)):
+    from main import db
+
+    uid = verify_token(authorization)
+    db.collection("users").document(uid).set(
+        {"upi_id": req.upi_id or ""}, merge=True
+    )
+    return {"status": "success"}

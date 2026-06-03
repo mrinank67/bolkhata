@@ -38,6 +38,14 @@ export function buildResultHTML(results, errors, { isHistory = false } = {}) {
       }
       html += '</tbody></table></div>';
     }
+    // WhatsApp reminder action
+    if (group.reminder_data) {
+      const rd = group.reminder_data;
+      const escaped = JSON.stringify(rd).replace(/"/g, '&quot;');
+      html += `<div class="reminder-action" data-reminder="${escaped}">
+        <button class="btn btn-whatsapp reminder-wa-btn">Send on WhatsApp</button>
+      </div>`;
+    }
     // Confirmation prompt for destructive actions
     if (group.requires_confirmation) {
       if (isHistory) {
@@ -69,6 +77,32 @@ export function renderResults(results, errors) {
   const API = (location.hostname === "localhost" || location.hostname === "127.0.0.1") ? "http://localhost:8000" : "";
   const html = buildResultHTML(results, errors);
   resultEl.innerHTML = html || '<div class="result-placeholder">No results</div>';
+
+  // Wire up WhatsApp reminder buttons
+  resultEl.querySelectorAll('.reminder-wa-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const container = btn.closest('.reminder-action');
+      const rd = JSON.parse(container.dataset.reminder);
+
+      if (!rd.whatsapp_number) {
+        showToast('WhatsApp number nahi mila. Ledger mein number add karein.');
+        return;
+      }
+      if (!rd.upi_id) {
+        showToast('Pehle Account Settings mein UPI ID set karein.');
+        return;
+      }
+
+      const dueStr = Number(rd.total_due).toLocaleString('en-IN');
+      const phone = rd.whatsapp_number.startsWith('+')
+        ? rd.whatsapp_number.substring(1)
+        : (rd.whatsapp_number.length === 10 ? '91' + rd.whatsapp_number : rd.whatsapp_number);
+      const payLink = `${window.location.origin}/pay?pa=${encodeURIComponent(rd.upi_id)}&pn=BolKhata&am=${rd.total_due}&tn=${encodeURIComponent('Payment for ' + rd.customer_name)}`;
+      const message = `Namaste ${rd.customer_name} ji,\n\nAapka ₹${dueStr} ka hisaab baaki hai.\n\nPayment karne ke liye yahan click karein:\n${payLink}\n\nDhanyavaad,\nBolKhata`;
+      const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+      window.open(waUrl, '_blank');
+    });
+  });
 
   // Wire up confirmation buttons
   resultEl.querySelectorAll('.confirm-yes-btn').forEach(btn => {

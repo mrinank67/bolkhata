@@ -138,16 +138,33 @@
           </button>
         </nav>
         <div class="drawer-footer">
-          <div id="drawer-user-info" class="drawer-user-info">
+          <div id="drawer-user-info" class="drawer-user-info drawer-user-info-clickable">
             <div class="drawer-user-avatar">👤</div>
             <div class="drawer-user-details">
               <div id="drawer-user-name" class="drawer-user-name">User</div>
               <div id="drawer-user-email" class="drawer-user-email"></div>
             </div>
+            <span class="drawer-user-chevron">›</span>
           </div>
           <button id="logout-btn" class="drawer-logout-btn">
             <span>🚪</span> Log out
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ACCOUNT SETTINGS MODAL -->
+    <div id="account-settings-modal" class="modal-overlay">
+      <div class="modal-card account-settings-card">
+        <h3 class="modal-title">Account Settings</h3>
+        <div class="settings-field">
+          <label class="settings-field-label">UPI ID</label>
+          <input type="text" id="settings-upi-input" class="settings-field-input" placeholder="yourname@upi" />
+          <div class="settings-field-hint">QR code mein use hoga customer reminders ke liye</div>
+        </div>
+        <div class="modal-actions">
+          <button id="settings-cancel-btn" class="btn btn-outline">Cancel</button>
+          <button id="settings-save-btn" class="btn btn-primary">Save</button>
         </div>
       </div>
     </div>

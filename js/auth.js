@@ -3,7 +3,7 @@
  */
 
 import {
-  $, auth, setCurrentAuth,
+  $, auth, API, setCurrentAuth,
   onAuthStateChanged, signOut,
   RecaptchaVerifier, signInWithPhoneNumber,
   GoogleAuthProvider, signInWithPopup,
@@ -35,6 +35,45 @@ onAuthStateChanged(auth, async user => {
     const displayName = user.displayName || user.email || user.phoneNumber || "User";
     $("drawer-user-name").textContent = displayName;
     $("drawer-user-email").textContent = user.email || user.phoneNumber || "";
+
+    // Account settings modal
+    const settingsModal = $("account-settings-modal");
+    const settingsUpiInput = $("settings-upi-input");
+
+    // Load UPI ID from backend on login
+    try {
+      const settingsRes = await fetch(`${API}/settings`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const settingsData = await settingsRes.json();
+      if (settingsData.upi_id) localStorage.setItem("bolkhata_upi", settingsData.upi_id);
+    } catch { /* silent */ }
+
+    $("drawer-user-info").addEventListener("click", () => {
+      document.getElementById("drawer-overlay").classList.remove("open");
+      settingsUpiInput.value = localStorage.getItem("bolkhata_upi") || "";
+      settingsModal.classList.add("open");
+    });
+
+    $("settings-save-btn").addEventListener("click", async () => {
+      const val = settingsUpiInput.value.trim();
+      if (val) localStorage.setItem("bolkhata_upi", val);
+      else localStorage.removeItem("bolkhata_upi");
+      settingsModal.classList.remove("open");
+
+      try {
+        const t = await auth.currentUser.getIdToken();
+        await fetch(`${API}/settings`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+          body: JSON.stringify({ upi_id: val })
+        });
+      } catch { /* silent */ }
+    });
+
+    $("settings-cancel-btn").addEventListener("click", () => {
+      settingsModal.classList.remove("open");
+    });
   } else {
     setCurrentAuth(null, null);
     appView.classList.add("hidden");
