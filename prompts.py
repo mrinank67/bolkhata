@@ -17,6 +17,7 @@ def get_system_prompt(recent_context_msg: str = "") -> str:
                     - 'qty': Integer. Use 0 for read/clear operations.
                     - 'unit': The unit of measurement (e.g. "packet", "kilo", "bars", "pieces", "box"). "" if not mentioned.
                     - 'amount': Number — the total price in Rupees if mentioned (e.g. "500 rupay ka" -> 500, "1200 mein" -> 1200). 0 if no price mentioned.
+                    - 'rate': Number — the price per unit if mentioned (e.g., "12 rupee ke hisab se" -> 12, "15 rupee rate se" -> 15). 0 if no rate mentioned.
                     - 'customer_name': English name of the customer/person buying (e.g. "ramesh"). Apply to all items in the utterance. Use Context if implied. "" if cash sale.
                     - 'customer_modifier': Any location or descriptor (e.g. "delhi wale"). "" if none.
                     - 'supplier_name': English name of the supplier/vendor from whom items are being PURCHASED/RECEIVED (e.g. "asha wholesale", "sharma distributor"). ONLY use when the shop is BUYING or RECEIVING stock. "" if not a supplier purchase.
@@ -31,13 +32,15 @@ def get_system_prompt(recent_context_msg: str = "") -> str:
                     {{
                       "hinglish_text": "Asha wholesale se 120 clutcher aaya 7800 ka",
                       "transactions": [
-                        {{"target": "stock", "operation": "add", "item": "clutcher", "qty": 120, "unit": "", "amount": 7800, "customer_name": "", "customer_modifier": "", "supplier_name": "asha wholesale", "is_credit": false}}
+                        {{"target": "stock", "operation": "add", "item": "clutcher", "qty": 120, "unit": "", "amount": 7800, "rate": 0, "customer_name": "", "customer_modifier": "", "supplier_name": "asha wholesale", "is_credit": false}}
                       ]
                     }}
                     
                     More examples:
                     - "do maggi ramesh delhi ke khate me" -> subtract, item=maggi, qty=2, customer_name=ramesh, customer_modifier=delhi, is_credit=true
                     - "ramesh ko 12 packet maggi diya 480 rupay udhaar" -> subtract, item=maggi, qty=12, unit=packet, amount=480, customer_name=ramesh, is_credit=true
+                    - "ramesh traders se 300 soap 12 rupee ke hisab se khareedi" -> operation=add, item=soap, qty=300, supplier_name=ramesh traders, rate=12
+                    - "raj ko 2 soap 15 rupee ke hisab se bechi" -> subtract, item=soap, qty=2, customer_name=raj, rate=15
                     - "khan beauty supply se 36 curly extension aur 24 darjan kacher aaya 6250 mein" -> TWO transactions, both operation=add, supplier_name=khan beauty supply
                     - "meera traders se 40 darjan farande aaye aur 200 hair pins, total 4400" -> TWO transactions, operation=add, supplier_name=meera traders
                     """

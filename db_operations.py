@@ -56,6 +56,7 @@ def process_transactions(
         is_credit = txn.get("is_credit", False)
         supplier_name = txn.get("supplier_name", "").strip()
         txn_amount = txn.get("amount", 0)
+        txn_rate = txn.get("rate", 0)
         txn_unit = txn.get("unit", "")
 
         # --- Handle Order Inquiries ---
@@ -226,11 +227,14 @@ def process_transactions(
         if not stock_doc.exists:
             if operation == "add":
                 current_qty = 0
+                db_price = 0
             else:
                 errors.append(f"{standard_item} not found in inventory.")
                 continue
         else:
-            current_qty = stock_doc.to_dict().get("quantity", 0)
+            stock_data = stock_doc.to_dict()
+            current_qty = stock_data.get("quantity", 0)
+            db_price = stock_data.get("price", 0)
 
         # Inquiry
         if target == "stock" and operation == "read":
@@ -248,6 +252,13 @@ def process_transactions(
                 qty = int(raw_qty)
             except ValueError:
                 qty = 1
+
+        # Calculate txn_amount if not provided
+        if not txn_amount:
+            if txn_rate > 0:
+                txn_amount = txn_rate * qty
+            elif db_price > 0:
+                txn_amount = db_price * qty
 
         # Calculate new stock
         if operation == "subtract":
@@ -273,7 +284,7 @@ def process_transactions(
                 "udhaar_sale",
                 "Credit Sale (Udhaar)",
                 "📒",
-                ["Item", "Qty", "Previous", "Current", "Customer"],
+                ["Item", "Qty", "Amount", "Previous", "Current", "Customer"],
             )
             
             docs = user_udhaar_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).where(filter=FieldFilter("item", "==", standard_item)).stream()
@@ -317,6 +328,7 @@ def process_transactions(
                 {
                     "Item": standard_item.capitalize(),
                     "Qty": final_qty,
+                    "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
                     "Previous": current_qty,
                     "Current": new_qty,
                     "Customer": title_name,
@@ -327,7 +339,7 @@ def process_transactions(
                 "order_sale",
                 "Customer Order",
                 "🛍️",
-                ["Item", "Qty", "Previous", "Current", "Customer"]
+                ["Item", "Qty", "Amount", "Previous", "Current", "Customer"]
             )
             
             docs = user_orders_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).where(filter=FieldFilter("item", "==", standard_item)).stream()
@@ -338,12 +350,17 @@ def process_transactions(
                     break
                     
             if existing_doc:
-                existing_qty = existing_doc.to_dict().get("quantity", 0)
+                existing_data = existing_doc.to_dict()
+                existing_qty = existing_data.get("quantity", 0)
                 final_qty = existing_qty + qty
-                existing_doc.reference.update({
+                update_fields = {
                     "quantity": final_qty,
                     "timestamp": firestore.SERVER_TIMESTAMP
-                })
+                }
+                if txn_amount:
+                    existing_amount = existing_data.get("amount", 0)
+                    update_fields["amount"] = existing_amount + txn_amount
+                existing_doc.reference.update(update_fields)
             else:
                 user_orders_ref.add(
                     {
@@ -351,6 +368,7 @@ def process_transactions(
                         "customer_modifier": customer_modifier,
                         "item": standard_item,
                         "quantity": qty,
+                        "amount": txn_amount or 0,
                         "timestamp": firestore.SERVER_TIMESTAMP,
                     }
                 )
@@ -360,6 +378,7 @@ def process_transactions(
                 {
                     "Item": standard_item.capitalize(),
                     "Qty": final_qty,
+                    "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
                     "Previous": current_qty,
                     "Current": new_qty,
                     "Customer": title_name
@@ -367,12 +386,13 @@ def process_transactions(
             )
         elif operation == "subtract":
             group = get_group(
-                "decrease", "Stock Sold", "🛒", ["Item", "Sold", "Previous", "Current"]
+                "decrease", "Stock Sold", "🛒", ["Item", "Sold", "Amount", "Previous", "Current"]
             )
             group["rows"].append(
                 {
                     "Item": standard_item.capitalize(),
                     "Sold": qty,
+                    "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
                     "Previous": current_qty,
                     "Current": new_qty,
                 }
