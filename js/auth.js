@@ -40,25 +40,20 @@ onAuthStateChanged(auth, async user => {
     const settingsModal = $("account-settings-modal");
     const settingsUpiInput = $("settings-upi-input");
 
-    // Load UPI ID from backend on login
-    try {
-      const settingsRes = await fetch(`${API}/settings`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const settingsData = await settingsRes.json();
-      if (settingsData.upi_id) localStorage.setItem("bolkhata_upi", settingsData.upi_id);
-    } catch { /* silent */ }
-
-    $("drawer-user-info").addEventListener("click", () => {
+    $("drawer-user-info").addEventListener("click", async () => {
       document.getElementById("drawer-overlay").classList.remove("open");
-      settingsUpiInput.value = localStorage.getItem("bolkhata_upi") || "";
+      settingsUpiInput.value = "";
       settingsModal.classList.add("open");
+      try {
+        const t = await auth.currentUser.getIdToken();
+        const res = await fetch(`${API}/settings`, { headers: { Authorization: `Bearer ${t}` } });
+        const data = await res.json();
+        settingsUpiInput.value = data.upi_id || "";
+      } catch { /* silent */ }
     });
 
     $("settings-save-btn").addEventListener("click", async () => {
       const val = settingsUpiInput.value.trim();
-      if (val) localStorage.setItem("bolkhata_upi", val);
-      else localStorage.removeItem("bolkhata_upi");
       settingsModal.classList.remove("open");
 
       try {
