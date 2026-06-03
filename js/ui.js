@@ -80,7 +80,7 @@ export function renderResults(results, errors) {
 
   // Wire up WhatsApp reminder buttons
   resultEl.querySelectorAll('.reminder-wa-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const container = btn.closest('.reminder-action');
       const rd = JSON.parse(container.dataset.reminder);
 
@@ -93,11 +93,26 @@ export function renderResults(results, errors) {
         return;
       }
 
+      let payToken;
+      try {
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch(`${API}/pay/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ pa: rd.upi_id, pn: 'BolKhata', am: rd.total_due, tn: 'Payment for ' + rd.customer_name })
+        });
+        const data = await res.json();
+        payToken = data.token;
+      } catch {
+        showToast('Could not generate payment link.');
+        return;
+      }
+
       const dueStr = Number(rd.total_due).toLocaleString('en-IN');
       const phone = rd.whatsapp_number.startsWith('+')
         ? rd.whatsapp_number.substring(1)
         : (rd.whatsapp_number.length === 10 ? '91' + rd.whatsapp_number : rd.whatsapp_number);
-      const payLink = `${window.location.origin}/pay?pa=${encodeURIComponent(rd.upi_id)}&pn=BolKhata&am=${rd.total_due}&tn=${encodeURIComponent('Payment for ' + rd.customer_name)}`;
+      const payLink = `${window.location.origin}/pay?token=${encodeURIComponent(payToken)}`;
       const message = `Namaste ${rd.customer_name} ji,\n\nAapka ₹${dueStr} ka hisaab baaki hai.\n\nPayment karne ke liye yahan click karein:\n${payLink}\n\nDhanyavaad,\nBolKhata`;
       const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
       window.open(waUrl, '_blank');

@@ -55,6 +55,13 @@ class UserSettingsRequest(BaseModel):
     upi_id: Optional[str] = ""
 
 
+class PayLinkRequest(BaseModel):
+    pa: str
+    pn: str = "BolKhata"
+    am: float
+    tn: str = ""
+
+
 class SupplierCreateRequest(BaseModel):
     name: str
     mobile: Optional[str] = ""
