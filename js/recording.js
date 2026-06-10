@@ -5,33 +5,61 @@
 import { $, auth, API, getToken, setCurrentAuth, signOut } from "./config.js";
 import { renderResults, showToast } from "./ui.js";
 
-let mediaRecorder, audioChunks = [], activeStream;
+let mediaRecorder, audioChunks = [], activeStream, isPressed = false;
 const recordBtn = $("recordBtn");
 const statusEl  = $("status");
 const resultEl  = $("result");
+
+const stopStream = stream => stream?.getTracks().forEach(t => t.stop());
 
 const startRecording = async e => {
   if (e.cancelable) e.preventDefault();
   if (!getToken()) return;
   if (recordBtn.disabled) return; // Cooldown active
+  if (mediaRecorder && mediaRecorder.state !== "inactive") return; // Already recording
 
+  isPressed = true;
   try {
-    activeStream = await navigator.mediaDevices.getUserMedia({ 
-      audio: { 
-        noiseSuppression: true, 
-        echoCancellation: true, 
-        autoGainControl: true 
-      } 
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        noiseSuppression: true,
+        echoCancellation: true,
+        autoGainControl: true
+      }
     });
-    mediaRecorder = new MediaRecorder(activeStream);
+
+    // iOS Safari: getUserMedia can resolve after the press was already
+    // released (slow grant / permission dialog) — don't start an
+    // unstoppable recording, release the mic immediately.
+    if (!isPressed) {
+      stopStream(stream);
+      return;
+    }
+
+    // Never leak a previous stream if one is somehow still live
+    stopStream(activeStream);
+    activeStream = stream;
+    mediaRecorder = new MediaRecorder(stream);
     audioChunks = [];
 
     mediaRecorder.ondataavailable = ev => audioChunks.push(ev.data);
 
     mediaRecorder.onstop = async () => {
-      activeStream.getTracks().forEach(t => t.stop());
-      const token = await auth.currentUser.getIdToken();
-      setCurrentAuth(token, auth.currentUser.uid);
+      stopStream(stream);
+      if (activeStream === stream) activeStream = null;
+      // Block new recordings while the request is in flight; the timed
+      // cooldown in `finally` re-enables the button.
+      recordBtn.disabled = true;
+      recordBtn.classList.add("cooldown");
+      let token;
+      try {
+        token = await auth.currentUser.getIdToken();
+        setCurrentAuth(token, auth.currentUser.uid);
+      } catch {
+        statusEl.innerText = "Offline";
+        applyRecordCooldown(2);
+        return;
+      }
 
       statusEl.innerText = "Processing";
       statusEl.classList.add("processing-dots");
@@ -95,11 +123,16 @@ const startRecording = async e => {
 
 // ── Record Button Cooldown ──
 let recordCooldownTimer = null;
+let recordCooldownUntil = 0;
 function applyRecordCooldown(seconds) {
+  const until = Date.now() + seconds * 1000;
+  if (until <= recordCooldownUntil) return; // longer cooldown already running
+  recordCooldownUntil = until;
   recordBtn.disabled = true;
   recordBtn.classList.add("cooldown");
   clearTimeout(recordCooldownTimer);
   recordCooldownTimer = setTimeout(() => {
+    recordCooldownUntil = 0;
     recordBtn.disabled = false;
     recordBtn.classList.remove("cooldown");
   }, seconds * 1000);
@@ -108,11 +141,29 @@ function applyRecordCooldown(seconds) {
 
 const stopRecording = e => {
   if (e.cancelable) e.preventDefault();
-  if (mediaRecorder?.state === "recording") {
+  isPressed = false;
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
     mediaRecorder.stop();
     recordBtn.classList.remove("recording");
   }
 };
+
+// Release the mic if the page is backgrounded mid-recording (iOS Safari
+// suspends the recorder and onstop may never fire otherwise)
+const releaseOnHide = () => {
+  isPressed = false;
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    try { mediaRecorder.stop(); } catch { /* already stopped */ }
+  } else {
+    stopStream(activeStream);
+    activeStream = null;
+  }
+  recordBtn.classList.remove("recording");
+};
+window.addEventListener("pagehide", releaseOnHide);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") releaseOnHide();
+});
 
 recordBtn.addEventListener("mousedown", startRecording);
 recordBtn.addEventListener("mouseup", stopRecording);
