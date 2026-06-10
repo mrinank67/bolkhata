@@ -9,7 +9,7 @@ import { loadSuppliers, loadSavedSuppliers } from "./suppliers.js";
 import { loadLedgerCustomers } from "./ledger.js";
 
 // ═══════ TABLE RENDERER ═══════
-const numericColumns = new Set(["#", "Stock", "Qty", "Sold", "Added", "Previous", "Current", "Current Stock", "Quantity Owed", "Amount", "Stock Now"]);
+const numericColumns = new Set(["#", "Stock", "Qty", "Sold", "Added", "Previous", "Current", "Current Stock", "Qty Owed", "Amount Owed", "Amount", "Stock Now", "Rate", "Total Owed", "Total Ordered", "Entries", "Amount Cleared"]);
 
 export function buildResultHTML(results, errors, { isHistory = false } = {}) {
   let html = '';

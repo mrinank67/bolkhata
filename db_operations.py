@@ -52,9 +52,12 @@ def process_transactions(
     stock_docs = list(user_stock_ref.stream())
     all_fuzzy_candidates = [doc.id for doc in stock_docs]
 
-    # Fetch existing supplier names for fuzzy matching
+    # Fetch existing supplier names for fuzzy matching (from both directory and purchases)
+    directory_docs = db.collection("users").document(uid).collection("suppliers").stream()
+    directory_names = {doc.to_dict().get("name", "").strip().lower() for doc in directory_docs if doc.to_dict().get("name", "").strip()}
     purchases_docs = db.collection("users").document(uid).collection("suppliers_purchases").stream()
-    existing_suppliers = list({doc.to_dict().get("supplier_name", "").strip().lower() for doc in purchases_docs if doc.to_dict().get("supplier_name", "").strip()})
+    purchase_names = {doc.to_dict().get("supplier_name", "").strip().lower() for doc in purchases_docs if doc.to_dict().get("supplier_name", "").strip()}
+    existing_suppliers = list(directory_names | purchase_names)
 
     # Structured result groups keyed by action type
     result_groups = {}
@@ -89,14 +92,14 @@ def process_transactions(
             if not customer_name:
                 errors.append("Kiske orders dekhne hain? (Please specify a name).")
                 continue
-            
+
             group_key = f"order_inquiry_{customer_name}_{customer_modifier}"
             title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
-            group = get_group(group_key, f"{title_name}'s Orders", "🛍️", ["Item", "Qty"])
+            group = get_group(group_key, f"{title_name}'s Orders", "🛍️", ["Item", "Qty", "Amount"])
 
             local_orders_ref = db.collection("users").document(uid).collection("orders")
             docs = local_orders_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).stream()
-            
+
             orders_found = False
             for doc in docs:
                 data = doc.to_dict()
@@ -105,8 +108,13 @@ def process_transactions(
                 orders_found = True
                 item_name = data.get("item", "unknown")
                 qty = data.get("quantity", 0)
-                group["rows"].append({"Item": item_name.capitalize(), "Qty": qty})
-            
+                amt = data.get("amount", 0)
+                group["rows"].append({
+                    "Item": item_name.capitalize(),
+                    "Qty": qty,
+                    "Amount": f"₹{amt:,.0f}" if amt else "-",
+                })
+
             if not orders_found:
                 group["empty_message"] = f"No orders found for {title_name}."
             continue
@@ -165,31 +173,42 @@ def process_transactions(
                 group_key,
                 f"{title_name}'s Ledger",
                 "📒",
-                ["Item", "Quantity Owed"],
+                ["Item", "Qty Owed", "Amount Owed"],
             )
 
             docs = user_udhaar_ref.where(
                 filter=FieldFilter("customer_name", "==", customer_name)
             ).stream()
             dues_map = {}
+            amount_map = {}
             for doc in docs:
                 data = doc.to_dict()
                 if customer_modifier and customer_modifier.lower() != data.get("customer_modifier", "").lower():
                     continue
                 item_name = data.get("item", "unknown")
-                dues_map[item_name] = dues_map.get(item_name, 0) + data.get(
-                    "quantity", 0
-                )
+                dues_map[item_name] = dues_map.get(item_name, 0) + data.get("quantity", 0)
+                amount_map[item_name] = amount_map.get(item_name, 0) + data.get("amount", 0)
 
             if not dues_map:
                 group["empty_message"] = (
                     f"{title_name} ka khaata clear hai. No dues!"
                 )
             else:
+                total_amount = 0
                 for item, qty in dues_map.items():
-                    group["rows"].append(
-                        {"Item": item.capitalize(), "Quantity Owed": qty}
-                    )
+                    amt = amount_map.get(item, 0)
+                    total_amount += amt
+                    group["rows"].append({
+                        "Item": item.capitalize(),
+                        "Qty Owed": qty,
+                        "Amount Owed": f"₹{amt:,.0f}" if amt else "-",
+                    })
+                if len(dues_map) > 1 and total_amount:
+                    group["rows"].append({
+                        "Item": "Total",
+                        "Qty Owed": "",
+                        "Amount Owed": f"₹{total_amount:,.0f}",
+                    })
             continue
 
         # --- Handle Clearing Ledgers ---
@@ -200,7 +219,7 @@ def process_transactions(
 
             group_key = f"clear_ledger_{customer_name}_{customer_modifier}"
             title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
-            group = get_group(group_key, "Ledger Cleared", "💰", ["Customer", "Status"])
+            group = get_group(group_key, "Ledger Cleared", "💰", ["Customer", "Entries", "Amount Cleared", "Status"])
 
             docs = list(
                 user_udhaar_ref.where(
@@ -209,25 +228,30 @@ def process_transactions(
             )
 
             docs_to_delete = []
+            cleared_amount = 0
             for doc in docs:
                 data = doc.to_dict()
                 if customer_modifier and customer_modifier.lower() != data.get("customer_modifier", "").lower():
                     continue
                 docs_to_delete.append(doc)
+                cleared_amount += data.get("amount", 0)
 
             if docs_to_delete:
                 for doc in docs_to_delete:
                     doc.reference.delete()
-                group["rows"].append(
-                    {"Customer": title_name, "Status": "✅ Settled"}
-                )
+                group["rows"].append({
+                    "Customer": title_name,
+                    "Entries": len(docs_to_delete),
+                    "Amount Cleared": f"₹{cleared_amount:,.0f}" if cleared_amount else "-",
+                    "Status": "✅ Settled",
+                })
             else:
-                group["rows"].append(
-                    {
-                        "Customer": title_name,
-                        "Status": "ℹ️ No dues found",
-                    }
-                )
+                group["rows"].append({
+                    "Customer": title_name,
+                    "Entries": 0,
+                    "Amount Cleared": "-",
+                    "Status": "ℹ️ No dues found",
+                })
             continue
 
         # --- Handle Send Reminder ---
@@ -355,26 +379,27 @@ def process_transactions(
                 "udhaar_sale",
                 "Credit Sale (Udhaar)",
                 "📒",
-                ["Item", "Qty", "Amount", "Previous", "Current", "Customer"],
+                ["Customer", "Item", "Qty", "Unit", "Amount", "Total Owed", "Stock"],
             )
-            
+
             docs = user_udhaar_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).where(filter=FieldFilter("item", "==", standard_item)).stream()
             existing_doc = None
             for doc in docs:
                 if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
                     existing_doc = doc
                     break
-                    
+
             if existing_doc:
                 existing_qty = existing_doc.to_dict().get("quantity", 0)
+                existing_amount = existing_doc.to_dict().get("amount", 0)
                 final_qty = existing_qty + qty
+                total_owed_amount = existing_amount + (txn_amount or 0)
                 update_fields = {
                     "quantity": final_qty,
                     "timestamp": firestore.SERVER_TIMESTAMP
                 }
                 if txn_amount:
-                    existing_amount = existing_doc.to_dict().get("amount", 0)
-                    update_fields["amount"] = existing_amount + txn_amount
+                    update_fields["amount"] = total_owed_amount
                 if txn_unit:
                     update_fields["unit"] = txn_unit
                 existing_doc.reference.update(update_fields)
@@ -394,43 +419,43 @@ def process_transactions(
                 }
                 user_udhaar_ref.add(udhaar_data)
                 final_qty = qty
-                
-            group["rows"].append(
-                {
-                    "Item": standard_item.capitalize(),
-                    "Qty": final_qty,
-                    "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
-                    "Previous": current_qty,
-                    "Current": new_qty,
-                    "Customer": title_name,
-                }
-            )
+                total_owed_amount = txn_amount or 0
+
+            group["rows"].append({
+                "Customer": title_name,
+                "Item": standard_item.capitalize(),
+                "Qty": final_qty,
+                "Unit": txn_unit or "-",
+                "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
+                "Total Owed": f"₹{total_owed_amount:,.0f}" if total_owed_amount else "-",
+                "Stock": new_qty,
+            })
         elif operation == "subtract" and customer_name:
             group = get_group(
                 "order_sale",
                 "Customer Order",
                 "🛍️",
-                ["Item", "Qty", "Amount", "Previous", "Current", "Customer"]
+                ["Customer", "Item", "Qty", "Amount", "Total Ordered", "Stock"]
             )
-            
+
             docs = user_orders_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).where(filter=FieldFilter("item", "==", standard_item)).stream()
             existing_doc = None
             for doc in docs:
                 if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
                     existing_doc = doc
                     break
-                    
+
             if existing_doc:
                 existing_data = existing_doc.to_dict()
                 existing_qty = existing_data.get("quantity", 0)
                 final_qty = existing_qty + qty
+                total_order_amount = existing_data.get("amount", 0) + (txn_amount or 0)
                 update_fields = {
                     "quantity": final_qty,
                     "timestamp": firestore.SERVER_TIMESTAMP
                 }
                 if txn_amount:
-                    existing_amount = existing_data.get("amount", 0)
-                    update_fields["amount"] = existing_amount + txn_amount
+                    update_fields["amount"] = total_order_amount
                 existing_doc.reference.update(update_fields)
             else:
                 user_orders_ref.add(
@@ -444,17 +469,16 @@ def process_transactions(
                     }
                 )
                 final_qty = qty
-                
-            group["rows"].append(
-                {
-                    "Item": standard_item.capitalize(),
-                    "Qty": final_qty,
-                    "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
-                    "Previous": current_qty,
-                    "Current": new_qty,
-                    "Customer": title_name
-                }
-            )
+                total_order_amount = txn_amount or 0
+
+            group["rows"].append({
+                "Customer": title_name,
+                "Item": standard_item.capitalize(),
+                "Qty": final_qty,
+                "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
+                "Total Ordered": f"₹{total_order_amount:,.0f}" if total_order_amount else "-",
+                "Stock": new_qty,
+            })
         elif operation == "subtract":
             group = get_group(
                 "decrease", "Stock Sold", "🛒", ["Item", "Sold", "Amount", "Previous", "Current"]
@@ -475,9 +499,8 @@ def process_transactions(
                     "supplier_purchase",
                     "Supplier Purchase",
                     "🏪",
-                    ["Item", "Added", "Amount", "Supplier", "Stock Now"],
+                    ["Supplier", "Item", "Qty", "Unit", "Rate", "Amount", "Stock Now"],
                 )
-                # Also record in suppliers_purchases collection
                 purchases_ref = db.collection("users").document(uid).collection("suppliers_purchases")
                 purchases_ref.add({
                     "supplier_name": supplier_name,
@@ -487,15 +510,15 @@ def process_transactions(
                     "proof_image_url": "",
                     "timestamp": firestore.SERVER_TIMESTAMP,
                 })
-                group["rows"].append(
-                    {
-                        "Item": standard_item.capitalize(),
-                        "Added": qty,
-                        "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
-                        "Supplier": supplier_name.title(),
-                        "Stock Now": new_qty,
-                    }
-                )
+                group["rows"].append({
+                    "Supplier": supplier_name.title(),
+                    "Item": standard_item.capitalize(),
+                    "Qty": qty,
+                    "Unit": txn_unit or "-",
+                    "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
+                    "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
+                    "Stock Now": new_qty,
+                })
             else:
                 group = get_group(
                     "increase",

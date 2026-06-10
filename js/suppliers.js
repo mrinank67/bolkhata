@@ -9,6 +9,13 @@ let currentSupplierData = { purchases: [], month_total: 0, month_items: 0 };
 let currentSupplierSort = 'recent';
 let savedSuppliers = [];
 
+const SUPPLIER_SUFFIXES = new Set(["supplier", "suppliers", "wholesale", "distributor", "distributors", "traders", "supply", "supplies", "vendor", "vendors"]);
+function normalizeSupplierName(name) {
+  const words = name.trim().toLowerCase().split(/\s+/);
+  if (words.length > 1 && SUPPLIER_SUFFIXES.has(words[words.length - 1])) words.pop();
+  return words.join(' ');
+}
+
 // ── Tab Switching ──
 document.querySelectorAll('.supplier-tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -107,12 +114,12 @@ async function toggleSupplierPurchases(supplierId) {
   card.classList.add('expanded');
   btn.textContent = '▴';
 
-  // Find supplier name
+  // Find supplier name and match using normalized form (strips suffixes like "supplier")
   const supplierName = card.dataset.name;
+  const normalizedDir = normalizeSupplierName(supplierName);
 
-  // Filter purchases by this supplier
   const purchases = (currentSupplierData.purchases || []).filter(
-    p => (p.supplier_name || '').toLowerCase() === supplierName.toLowerCase()
+    p => normalizeSupplierName(p.supplier_name || '') === normalizedDir
   );
 
   if (purchases.length === 0) {
@@ -282,6 +289,7 @@ $('purchase-modal-save').addEventListener('click', async () => {
       showToast('✅ ' + data.message);
       $('supplier-purchase-modal').classList.remove('open');
       loadSuppliers();
+      loadSavedSuppliers();
     } else {
       showToast('❌ ' + (data.detail || 'Failed to add purchase.'));
     }
