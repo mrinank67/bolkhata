@@ -348,12 +348,11 @@ def process_transactions(
             except ValueError:
                 qty = 1
 
-        # Calculate txn_amount if not provided
-        if not txn_amount:
-            if txn_rate > 0:
-                txn_amount = txn_rate * qty
-            elif db_price > 0:
-                txn_amount = db_price * qty
+        # Calculate txn_amount — rate is unambiguous (per-unit), so it always wins
+        if txn_rate > 0 and qty > 0:
+            txn_amount = txn_rate * qty
+        elif not txn_amount and db_price > 0:
+            txn_amount = db_price * qty
 
         # Calculate new stock
         if operation == "subtract":
