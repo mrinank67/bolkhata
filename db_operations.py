@@ -300,6 +300,61 @@ def process_transactions(
             }
             continue
 
+        # --- Handle amount-only credit entry (no item, e.g. "Suresh pe 800 ka udhaar") ---
+        if is_credit and customer_name and txn_amount and not raw_item:
+            title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
+            group = get_group(
+                "udhaar_sale",
+                "Credit Sale (Udhaar)",
+                "📒",
+                ["Customer", "Item", "Qty", "Unit", "Amount", "Total Owed", "Stock"],
+            )
+
+            docs = user_udhaar_ref.where(
+                filter=FieldFilter("customer_name", "==", customer_name)
+            ).where(
+                filter=FieldFilter("item", "==", "general")
+            ).stream()
+            existing_doc = None
+            for doc in docs:
+                if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
+                    existing_doc = doc
+                    break
+
+            if existing_doc:
+                existing_amount = existing_doc.to_dict().get("amount", 0)
+                total_owed_amount = existing_amount + txn_amount
+                existing_doc.reference.update({
+                    "amount": total_owed_amount,
+                    "timestamp": firestore.SERVER_TIMESTAMP,
+                })
+            else:
+                user_udhaar_ref.add({
+                    "customer_name": customer_name,
+                    "customer_modifier": customer_modifier,
+                    "item": "general",
+                    "quantity": 0,
+                    "amount": txn_amount,
+                    "unit": "",
+                    "whatsapp_number": "",
+                    "reminder_schedule": "",
+                    "reminder_sent": False,
+                    "due_note": "",
+                    "timestamp": firestore.SERVER_TIMESTAMP,
+                })
+                total_owed_amount = txn_amount
+
+            group["rows"].append({
+                "Customer": title_name,
+                "Item": "General",
+                "Qty": "-",
+                "Unit": "-",
+                "Amount": f"₹{txn_amount:,.0f}",
+                "Total Owed": f"₹{total_owed_amount:,.0f}",
+                "Stock": "-",
+            })
+            continue
+
         # --- Normal Stock Processing ---
         if not raw_item or raw_item == "ALL":
             continue

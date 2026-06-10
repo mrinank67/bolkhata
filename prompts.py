@@ -40,4 +40,6 @@ Examples:
 - "show Ramesh's account" → ledger, read, ramesh, is_credit=true (account = ledger)
 - "show Ramesh's balance" → ledger, read, ramesh, is_credit=true
 - "send Ramesh a reminder" → ledger, send_reminder, ramesh
-- "remind Suresh from Delhi about payment" → ledger, send_reminder, suresh, delhi"""
+- "remind Suresh from Delhi about payment" → ledger, send_reminder, suresh, delhi
+- "Suresh has 800 rupees credit" → ledger, subtract, item="", qty=0, amount=800, suresh, is_credit=true (recording a credit amount, NOT a read/inquiry)
+- "Meera has 500 rupees pending" → ledger, subtract, item="", qty=0, amount=500, meera, is_credit=true"""
