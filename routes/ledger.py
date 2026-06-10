@@ -204,7 +204,9 @@ async def create_pay_link(req: PayLinkRequest, authorization: str = Header(None)
     if not upi_id:
         raise HTTPException(status_code=400, detail="Set your UPI ID in Account Settings first.")
 
-    token = _get_pay_serializer().dumps({"pa": upi_id, "pn": req.pn, "am": req.am, "tn": req.tn})
+    # pn (payee display name) is also fixed server-side so a crafted request
+    # can't impersonate another brand on the payment page
+    token = _get_pay_serializer().dumps({"pa": upi_id, "pn": "BolKhata", "am": req.am, "tn": req.tn})
     return {"token": token}
 
 

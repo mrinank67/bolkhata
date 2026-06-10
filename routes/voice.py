@@ -69,7 +69,8 @@ async def process_voice(
     # 1. Per-user cooldown + daily cap
     allowed, retry_after = check_user_cooldown(db, uid)
     if not allowed:
-        if retry_after > 3600:
+        # Cooldown retries are <= 2s; anything longer is the daily cap
+        if retry_after > 10:
             message = "Aaj ki voice limit khatam ho gayi. Please try again tomorrow."
         else:
             message = f"Thoda ruko! Try again in {retry_after:.0f}s."

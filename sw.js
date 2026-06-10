@@ -1,4 +1,4 @@
-const CACHE_VERSION = "bolkhata-v5";
+const CACHE_VERSION = "bolkhata-v6";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
@@ -49,12 +49,15 @@ self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
   if (
     url.pathname.startsWith("/process_voice") ||
+    url.pathname.startsWith("/voice") ||
     url.pathname.startsWith("/config") ||
     url.pathname.startsWith("/history") ||
     url.pathname.startsWith("/inventory") ||
     url.pathname.startsWith("/confirm_clear_inventory") ||
     url.pathname.startsWith("/suppliers") ||
-    url.pathname.startsWith("/ledger")
+    url.pathname.startsWith("/ledger") ||
+    url.pathname.startsWith("/pay") ||
+    url.pathname.startsWith("/settings")
   ) {
     return;
   }

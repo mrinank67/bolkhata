@@ -61,9 +61,9 @@ class UserSettingsRequest(BaseModel):
 
 
 class PayLinkRequest(BaseModel):
-    # Note: the payee UPI ID (pa) is intentionally NOT accepted from the
-    # client — it is read from the authenticated user's saved settings.
-    pn: str = Field(default="BolKhata", max_length=50)
+    # Note: the payee UPI ID (pa) and display name (pn) are intentionally NOT
+    # accepted from the client — pa comes from the authenticated user's saved
+    # settings and pn is fixed server-side.
     am: float = Field(gt=0, le=10_000_000)
     tn: str = Field(default="", max_length=120)
 
