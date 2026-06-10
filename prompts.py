@@ -10,7 +10,7 @@ Context: {recent_context_msg}
 
 Schema:
 - target: "stock" (sales/restocks/supplier purchases) | "ledger" (accounts/order history only)
-- operation (shop's perspective): "add" (restock/receive) | "subtract" (sell/give — "write in account"/"add to account"/"write down"/"note down" = subtract with is_credit=true) | "read" (inquiry) | "clear" (settle/delete — ONLY "clear"/"remove"/"delete"/"settle") | "send_reminder"
+- operation (shop's perspective): "add" (restock/receive) | "subtract" (sell/give — "write in account"/"add to account"/"write down"/"note down" = subtract with is_credit=true) | "read" (inquiry) | "clear" (settle/delete — ONLY "clear"/"remove"/"delete"/"settle") | "send_reminder" | "payment" (customer paid/gave money towards dues)
 - item: English name, strip units. "ALL" for full inventory. "" if N/A
 - qty: int. 0 for read/clear
 - unit: "packet"/"kilo"/"bars"/"pieces"/"box"/etc. "" if unmentioned
@@ -42,4 +42,8 @@ Examples:
 - "send Ramesh a reminder" → ledger, send_reminder, ramesh
 - "remind Suresh from Delhi about payment" → ledger, send_reminder, suresh, delhi
 - "Suresh has 800 rupees credit" → ledger, subtract, item="", qty=0, amount=800, suresh, is_credit=true (recording a credit amount, NOT a read/inquiry)
-- "Meera has 500 rupees pending" → ledger, subtract, item="", qty=0, amount=500, meera, is_credit=true"""
+- "Meera has 500 rupees pending" → ledger, subtract, item="", qty=0, amount=500, meera, is_credit=true
+- "Suresh gave 400 rupees" → ledger, payment, item="", qty=0, amount=400, suresh, is_credit=true
+- "received 500 from Meera" → ledger, payment, item="", qty=0, amount=500, meera, is_credit=true
+- "Raj paid 1000 rupees" → ledger, payment, item="", qty=0, amount=1000, raj, is_credit=true
+- "Suresh gave 400 out of 1000, rest on credit" → ledger, payment, item="", qty=0, amount=400, suresh, is_credit=true (only the PAID amount, remaining is auto-calculated)"""

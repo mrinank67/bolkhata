@@ -300,6 +300,63 @@ def process_transactions(
             }
             continue
 
+        # --- Handle Payment (full or partial) ---
+        if target == "ledger" and operation == "payment":
+            if not customer_name:
+                errors.append("Kisne payment kiya? (Please specify a name).")
+                continue
+            if not txn_amount:
+                errors.append("Kitna payment hua? (Please specify an amount).")
+                continue
+
+            title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
+            group_key = f"payment_{customer_name}_{customer_modifier}"
+
+            docs = list(user_udhaar_ref.where(
+                filter=FieldFilter("customer_name", "==", customer_name)
+            ).stream())
+
+            matching = []
+            for doc in docs:
+                data = doc.to_dict()
+                if customer_modifier and customer_modifier.lower() != data.get("customer_modifier", "").lower():
+                    continue
+                matching.append((doc, data))
+
+            if not matching:
+                group = get_group(group_key, f"Payment — {title_name}", "💰", ["Customer", "Status"])
+                group["empty_message"] = f"{title_name} ka koi baaki hisaab nahi hai."
+                continue
+
+            total_owed = sum(d.get("amount", 0) for _, d in matching)
+            payment = min(txn_amount, total_owed)
+            remaining = total_owed - payment
+
+            payment_left = payment
+            matching.sort(key=lambda x: (x[1].get("timestamp") or 0))
+            for doc, data in matching:
+                entry_amount = data.get("amount", 0)
+                if entry_amount <= 0:
+                    continue
+                reduction = min(payment_left, entry_amount)
+                doc.reference.update({
+                    "amount": entry_amount - reduction,
+                    "timestamp": firestore.SERVER_TIMESTAMP,
+                })
+                payment_left -= reduction
+                if payment_left <= 0:
+                    break
+
+            group = get_group(group_key, f"Payment — {title_name}", "💰",
+                              ["Customer", "Paid", "Previous Due", "Remaining"])
+            group["rows"].append({
+                "Customer": title_name,
+                "Paid": f"₹{payment:,.0f}",
+                "Previous Due": f"₹{total_owed:,.0f}",
+                "Remaining": f"₹{remaining:,.0f}" if remaining > 0 else "✅ Settled",
+            })
+            continue
+
         # --- Handle amount-only credit entry (no item, e.g. "Suresh pe 800 ka udhaar") ---
         if is_credit and customer_name and txn_amount and not raw_item:
             title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
