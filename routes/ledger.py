@@ -184,6 +184,7 @@ async def create_pay_link(req: PayLinkRequest, authorization: str = Header(None)
 @router.get("/pay", response_class=HTMLResponse)
 async def pay_page(token: str = Query(..., description="Signed payment token")):
     from html import escape
+    from urllib.parse import quote
 
     try:
         data = _pay_serializer.loads(token, max_age=PAY_LINK_MAX_AGE)
@@ -196,7 +197,14 @@ async def pay_page(token: str = Query(..., description="Signed payment token")):
     payee = escape(str(data["pn"]))
     amount = escape(str(data["am"]))
     note = escape(str(data.get("tn", "")))
-    upi_uri = f"upi://pay?pa={data['pa']}&pn={data['pn']}&am={data['am']}&cu=INR&tn={data.get('tn', '')}"
+    upi_uri = escape(
+        "upi://pay?pa={pa}&pn={pn}&am={am}&cu=INR&tn={tn}".format(
+            pa=quote(str(data["pa"]), safe=""),
+            pn=quote(str(data["pn"]), safe=""),
+            am=quote(str(data["am"]), safe=""),
+            tn=quote(str(data.get("tn", "")), safe=""),
+        )
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="hi">

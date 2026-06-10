@@ -273,7 +273,8 @@ async def process_voice(
     # --- STEP 3: Standardization & Database Loop ---
     t3 = time.time()
     # Handle LLM returning either a flat object or a transactions array
-    transactions = intent.get("transactions", [])
+    # (or "transactions": null)
+    transactions = intent.get("transactions") or []
     if not transactions and "action" in intent:
         # LLM returned a single flat transaction instead of an array
         transactions = [intent]
@@ -321,6 +322,7 @@ async def process_voice(
 @router.post("/voice/resolve")
 async def resolve_transaction(
     req: ResolveTransactionRequest,
+    background_tasks: BackgroundTasks,
     authorization: str = Header(None),
 ):
     from main import db
@@ -328,6 +330,9 @@ async def resolve_transaction(
     uid = verify_token(authorization)
     txn = req.transaction
     txn["customer_modifier"] = req.selected_modifier
+    # Mark as user-resolved so processing doesn't re-prompt when the chosen
+    # customer has no modifier (empty modifier would otherwise loop forever)
+    txn["_resolved"] = True
 
     user_stock_ref = db.collection("users").document(uid).collection("stock")
     user_udhaar_ref = db.collection("users").document(uid).collection("udhaar")
@@ -342,5 +347,22 @@ async def resolve_transaction(
         user_udhaar_ref=user_udhaar_ref,
         user_orders_ref=user_orders_ref,
     )
+
+    # Save to history in background, same as /process_voice
+    if result_list or errors:
+
+        def write_history():
+            user_history_ref = (
+                db.collection("users").document(uid).collection("history")
+            )
+            user_history_ref.add(
+                {
+                    "results": result_list,
+                    "errors": errors,
+                    "timestamp": firestore.SERVER_TIMESTAMP,
+                }
+            )
+
+        background_tasks.add_task(write_history)
 
     return {"status": "success", "results": result_list, "errors": errors}

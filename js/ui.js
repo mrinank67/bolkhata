@@ -12,27 +12,30 @@ import { loadLedgerCustomers } from "./ledger.js";
 const numericColumns = new Set(["#", "Stock", "Qty", "Sold", "Added", "Previous", "Current", "Current Stock", "Qty Owed", "Amount Owed", "Amount", "Stock Now", "Rate", "Total Owed", "Total Ordered", "Entries", "Amount Cleared"]);
 
 export function buildResultHTML(results, errors, { isHistory = false } = {}) {
+  // Escape any value before inserting into innerHTML — customer/item names
+  // come from voice transcripts and manual entry
+  const esc = (v) => escapeHtml(String(v ?? '-'));
   let html = '';
   for (const group of results) {
     html += '<div class="result-card">';
     html += `<div class="result-card-header">
-      <span class="result-card-icon">${group.icon}</span>
-      <span class="result-card-title">${group.title}</span>
+      <span class="result-card-icon">${esc(group.icon)}</span>
+      <span class="result-card-title">${esc(group.title)}</span>
     </div>`;
     if (group.empty_message) {
-      html += `<div class="result-card-empty">${group.empty_message}</div>`;
+      html += `<div class="result-card-empty">${esc(group.empty_message)}</div>`;
     } else if (group.rows && group.rows.length > 0) {
       html += '<div class="table-scroll"><table class="result-table"><thead><tr>';
       for (const col of group.columns) {
         const cls = numericColumns.has(col) ? ' class="cell-num"' : '';
-        html += `<th${cls}>${col}</th>`;
+        html += `<th${cls}>${esc(col)}</th>`;
       }
       html += '</tr></thead><tbody>';
       for (const row of group.rows) {
         html += '<tr>';
         for (const col of group.columns) {
           const cls = numericColumns.has(col) ? ' class="cell-num"' : '';
-          html += `<td${cls}>${row[col] ?? '-'}</td>`;
+          html += `<td${cls}>${esc(row[col])}</td>`;
         }
         html += '</tr>';
       }
@@ -48,31 +51,36 @@ export function buildResultHTML(results, errors, { isHistory = false } = {}) {
     }
     // Customer disambiguation prompt
     if (group.requires_disambiguation) {
-      const opts = JSON.stringify(group.disambiguation_options).replace(/"/g, '&quot;');
-      const pending = JSON.stringify(group.pending_transaction).replace(/"/g, '&quot;');
-      html += `<div class="disambig-prompt" data-options="${opts}" data-pending="${pending}">
-        <p class="disambig-message">Multiple customers with this name found. Please select:</p>
-        <div class="disambig-buttons">`;
-      for (const opt of group.disambiguation_options) {
-        const label = opt.modifier
-          ? `${group.title.replace('Which ', '').replace('?', '')} (${opt.modifier})`
-          : group.title.replace('Which ', '').replace('?', '');
-        const phone = opt.phone || 'No number';
-        const mod = (opt.modifier || '').replace(/"/g, '&quot;');
-        html += `<button class="disambig-option-btn" data-modifier="${mod}">
-          <span class="disambig-option-name">${label}</span>
-          <span class="disambig-option-phone">${escapeHtml(phone)}</span>
-        </button>`;
+      if (isHistory) {
+        // No listeners are wired in history, and re-resolving an old
+        // transaction would apply it twice — render a static note instead
+        html += '<div class="confirm-result confirm-cancelled" style="padding:12px 16px;">Customer selection was requested.</div>';
+      } else {
+        const opts = JSON.stringify(group.disambiguation_options).replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        const pending = JSON.stringify(group.pending_transaction).replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        html += `<div class="disambig-prompt" data-options="${opts}" data-pending="${pending}">
+          <p class="disambig-message">Multiple customers with this name found. Please select:</p>
+          <div class="disambig-buttons">`;
+        for (const opt of group.disambiguation_options) {
+          const baseName = group.title.replace('Which ', '').replace('?', '');
+          const label = opt.modifier ? `${baseName} (${opt.modifier})` : baseName;
+          const phone = opt.phone || 'No number';
+          const mod = (opt.modifier || '').replace(/"/g, '&quot;');
+          html += `<button class="disambig-option-btn" data-modifier="${mod}">
+            <span class="disambig-option-name">${escapeHtml(label)}</span>
+            <span class="disambig-option-phone">${escapeHtml(phone)}</span>
+          </button>`;
+        }
+        html += `</div></div>`;
       }
-      html += `</div></div>`;
     }
     // Confirmation prompt for destructive actions
     if (group.requires_confirmation) {
       if (isHistory) {
         html += '<div class="confirm-result confirm-cancelled" style="padding:12px 16px;">Inventory deletion was attempted.</div>';
       } else {
-        html += `<div class="confirm-prompt" data-action="${group.action}">
-          <p class="confirm-message">${group.confirmation_message}</p>
+        html += `<div class="confirm-prompt" data-action="${esc(group.action)}">
+          <p class="confirm-message">${esc(group.confirmation_message)}</p>
           <div class="confirm-buttons">
             <button class="confirm-yes-btn" data-action="${group.action}">🗑️ Yes, Delete All</button>
             <button class="confirm-no-btn" data-action="${group.action}">Cancel</button>
@@ -85,7 +93,7 @@ export function buildResultHTML(results, errors, { isHistory = false } = {}) {
   if (errors.length > 0) {
     html += '<ul class="error-list">';
     for (const err of errors) {
-      html += `<li class="error-item">❌ ${err}</li>`;
+      html += `<li class="error-item">❌ ${esc(err)}</li>`;
     }
     html += '</ul>';
   }

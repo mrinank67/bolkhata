@@ -5,12 +5,27 @@ Contains the core business logic for processing parsed transactions
 and updating Firestore (stock, udhaar, orders collections).
 """
 
+import datetime
+
 from thefuzz import process
 from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 
 SUPPLIER_SUFFIXES = {"supplier", "suppliers", "wholesale", "distributor", "distributors", "traders", "supply", "supplies", "vendor", "vendors"}
+
+# Sort fallback for udhaar docs missing a timestamp (must be tz-aware to compare
+# with Firestore timestamps)
+_EPOCH_MIN = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+
+def _to_number(value, default=0):
+    """Coerce LLM-provided values (None, "2.5", "800", 12) to a number."""
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return default
+    return int(num) if num.is_integer() else num
 
 
 def _normalize_supplier_name(name: str) -> str:
@@ -75,28 +90,42 @@ def process_transactions(
         return result_groups[action_key]
 
     for txn in transactions:
+        if not isinstance(txn, dict):
+            continue
+        # The LLM may emit null for any field, so .get() defaults aren't enough
         target = txn.get("target")
         operation = txn.get("operation")
-        raw_item = txn.get("item", "")
+        raw_item = str(txn.get("item") or "")
         raw_qty = txn.get("qty", 1)
-        customer_name = txn.get("customer_name", "").lower()
-        customer_modifier = txn.get("customer_modifier", "").lower()
-        is_credit = txn.get("is_credit", False)
-        supplier_name = _match_supplier(txn.get("supplier_name", ""), existing_suppliers) if txn.get("supplier_name", "").strip() else ""
-        txn_amount = txn.get("amount", 0)
-        txn_rate = txn.get("rate", 0)
-        txn_unit = txn.get("unit", "")
+        customer_name = (txn.get("customer_name") or "").lower()
+        customer_modifier = (txn.get("customer_modifier") or "").lower()
+        is_credit = bool(txn.get("is_credit"))
+        raw_supplier = (txn.get("supplier_name") or "").strip()
+        supplier_name = _match_supplier(raw_supplier, existing_suppliers) if raw_supplier else ""
+        txn_amount = _to_number(txn.get("amount"))
+        txn_rate = _to_number(txn.get("rate"))
+        txn_unit = txn.get("unit") or ""
 
         # --- Disambiguate duplicate customer names ---
-        if customer_name and not customer_modifier and operation in ("subtract", "payment"):
+        # _resolved is set by /voice/resolve after the user picks a customer;
+        # without it, picking the no-modifier option would re-trigger this prompt forever.
+        if (
+            customer_name
+            and not customer_modifier
+            and not txn.get("_resolved")
+            and operation in ("subtract", "payment", "clear", "send_reminder")
+        ):
+            # Distinct customers are identified by modifier only — entries for the
+            # same person can have mixed whatsapp_number values ("" on new entries).
             seen = {}
             for doc in user_udhaar_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).stream():
                 data = doc.to_dict()
-                mod = data.get("customer_modifier", "")
+                mod = (data.get("customer_modifier") or "").lower()
                 phone = data.get("whatsapp_number", "")
-                key = (mod, phone)
-                if key not in seen:
-                    seen[key] = {"modifier": mod, "phone": phone}
+                if mod not in seen:
+                    seen[mod] = {"modifier": mod, "phone": phone}
+                elif phone and not seen[mod]["phone"]:
+                    seen[mod]["phone"] = phone
             if len(seen) > 1:
                 title_name = customer_name.capitalize()
                 group_key = f"disambig_{customer_name}"
@@ -353,30 +382,40 @@ def process_transactions(
                 group["empty_message"] = f"{title_name} ka koi baaki hisaab nahi hai."
                 continue
 
-            total_owed = sum(d.get("amount", 0) for _, d in matching)
+            total_owed = sum(d.get("amount", 0) or 0 for _, d in matching)
             payment = min(txn_amount, total_owed)
             remaining = total_owed - payment
 
+            # Apply payment FIFO (oldest debt first). Fully-paid entries are
+            # deleted so the ledger reads as settled; partially-paid entries
+            # keep their original timestamp (FIFO order) and record the
+            # payment time separately.
             payment_left = payment
-            matching.sort(key=lambda x: (x[1].get("timestamp") or 0))
+            matching.sort(key=lambda x: x[1].get("timestamp") or _EPOCH_MIN)
             for doc, data in matching:
-                entry_amount = data.get("amount", 0)
+                entry_amount = data.get("amount", 0) or 0
                 if entry_amount <= 0:
                     continue
                 reduction = min(payment_left, entry_amount)
-                doc.reference.update({
-                    "amount": entry_amount - reduction,
-                    "timestamp": firestore.SERVER_TIMESTAMP,
-                })
+                if entry_amount - reduction <= 0:
+                    doc.reference.delete()
+                else:
+                    doc.reference.update({
+                        "amount": entry_amount - reduction,
+                        "last_payment_at": firestore.SERVER_TIMESTAMP,
+                    })
                 payment_left -= reduction
                 if payment_left <= 0:
                     break
 
+            paid_display = f"₹{payment:,.0f}"
+            if txn_amount > total_owed:
+                paid_display = f"₹{payment:,.0f} (of ₹{txn_amount:,.0f} — only dues recorded)"
             group = get_group(group_key, f"Payment — {title_name}", "💰",
                               ["Customer", "Paid", "Previous Due", "Remaining"])
             group["rows"].append({
                 "Customer": title_name,
-                "Paid": f"₹{payment:,.0f}",
+                "Paid": paid_display,
                 "Previous Due": f"₹{total_owed:,.0f}",
                 "Remaining": f"₹{remaining:,.0f}" if remaining > 0 else "✅ Settled",
             })
@@ -476,19 +515,18 @@ def process_transactions(
             )
             continue
 
-        # Quantity
+        # Quantity — keep fractional values ("2.5 kilo") instead of collapsing to 1
         if raw_qty == "ALL" and operation == "subtract":
             qty = current_qty
         else:
-            try:
-                qty = int(raw_qty)
-            except ValueError:
-                qty = 1
+            qty = _to_number(raw_qty, default=1)
 
-        # Calculate txn_amount — rate is unambiguous (per-unit), so it always wins
+        # Calculate txn_amount — rate is unambiguous (per-unit), so it always wins.
+        # The stored retail price only applies to sales; using it for restocks
+        # would fabricate a purchase cost in supplier records.
         if txn_rate > 0 and qty > 0:
             txn_amount = txn_rate * qty
-        elif not txn_amount and db_price > 0:
+        elif not txn_amount and db_price > 0 and operation == "subtract":
             txn_amount = db_price * qty
 
         # Calculate new stock
@@ -588,8 +626,8 @@ def process_transactions(
                         "amount": txn_amount or 0,
                         "timestamp": firestore.SERVER_TIMESTAMP,
                     })
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️ Order dual-write failed for {customer_name}/{standard_item}: {e}")
 
             group["rows"].append({
                 "Customer": title_name,
