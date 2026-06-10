@@ -3,7 +3,7 @@
  */
 
 import { $, auth, API } from "./config.js";
-import { showToast } from "./ui.js";
+import { showToast, escapeHtml } from "./ui.js";
 
 let currentInventory = [];
 let currentSort = 'name-asc';
@@ -56,8 +56,8 @@ function renderDashboardInventory() {
       ? `<div class="inventory-tile-price">Total: ₹${(qty * price).toLocaleString('en-IN')} <span style="font-weight: 500; font-size: 0.85em; opacity: 0.8;">(₹${price.toLocaleString('en-IN')}/item)</span></div>`
       : '';
 
-    html += `<div class="inventory-tile" data-item-id="${item.item}" data-item-qty="${qty}" data-item-price="${price}">
-      <div class="inventory-tile-name">${item.item}</div>
+    html += `<div class="inventory-tile" data-item-id="${escapeHtml(item.item)}" data-item-qty="${qty}" data-item-price="${price}">
+      <div class="inventory-tile-name">${escapeHtml(item.item)}</div>
       <div class="inventory-tile-qty ${qtyClass}">${qty}</div>
       ${priceHtml}
       <div class="inventory-tile-edit-hint">Tap to edit</div>

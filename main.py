@@ -25,10 +25,15 @@ db = init_firebase()
 # Create FastAPI app
 app = FastAPI()
 
+# CORS: the deployed frontend is same-origin (no CORS needed), so only local
+# dev origins are allowed by default. Auth uses Bearer headers (not cookies),
+# so allow_credentials is unnecessary. Extra origins (e.g. a custom domain
+# serving the frontend separately) go in ALLOWED_ORIGINS, comma-separated.
+_extra_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_extra_origins,
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -311,10 +311,15 @@ async def get_settings(authorization: str = Header(None)):
 
 @router.put("/settings")
 async def update_settings(req: UserSettingsRequest, authorization: str = Header(None)):
+    import re
     from main import db
 
     uid = verify_token(authorization)
+    upi_id = (req.upi_id or "").strip()
+    # VPA format: handle@psp (e.g. 98765@ybl, shopname@okhdfcbank)
+    if upi_id and not re.fullmatch(r"[A-Za-z0-9._\-]{2,256}@[A-Za-z]{2,64}", upi_id):
+        raise HTTPException(status_code=400, detail="Invalid UPI ID. Expected format: name@bank")
     db.collection("users").document(uid).set(
-        {"upi_id": req.upi_id or ""}, merge=True
+        {"upi_id": upi_id}, merge=True
     )
     return {"status": "success"}

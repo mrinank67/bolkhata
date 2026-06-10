@@ -47,6 +47,12 @@ def _get_sarvam_key():
     return _sarvam_api_key
 
 
+def _debug_logs() -> bool:
+    """Transcripts/intents are PII — only log them when explicitly enabled.
+    Read at call time because this module imports before load_dotenv()."""
+    return os.getenv("DEBUG_LOGS", "").lower() in ("1", "true", "yes")
+
+
 @router.post("/process_voice")
 async def process_voice(
     background_tasks: BackgroundTasks,
@@ -60,14 +66,18 @@ async def process_voice(
     uid = verify_token(authorization)
 
     # ── Rate Limit Checks (before any external API calls) ──
-    # 1. Per-user cooldown
+    # 1. Per-user cooldown + daily cap
     allowed, retry_after = check_user_cooldown(db, uid)
     if not allowed:
+        if retry_after > 3600:
+            message = "Aaj ki voice limit khatam ho gayi. Please try again tomorrow."
+        else:
+            message = f"Thoda ruko! Try again in {retry_after:.0f}s."
         return JSONResponse(
             status_code=429,
             content={
                 "status": "rate_limited",
-                "message": f"Thoda ruko! Try again in {retry_after:.0f}s.",
+                "message": message,
                 "retry_after": retry_after,
             },
             headers={"Retry-After": str(int(retry_after) + 1)},
@@ -157,6 +167,13 @@ async def process_voice(
                 "message": "Audio too short. Please hold the button while speaking.",
             }
 
+        # Push-to-talk clips are well under 1 MB; cap before spending Sarvam quota
+        if len(audio_bytes) > 2 * 1024 * 1024:
+            return {
+                "status": "error",
+                "message": "Audio too long. Please keep messages under 30 seconds.",
+            }
+
         url = "https://api.sarvam.ai/speech-to-text"
         files = {
             'file': (audio.filename, audio_bytes, audio.content_type)
@@ -200,13 +217,15 @@ async def process_voice(
         hindi_text = result.get('transcript', result.get('text', ''))
         
         print(f"⏱️ STT (Sarvam): {time.time() - t1:.2f}s")
-        print(f"Heard: {hindi_text}")
+        if _debug_logs():
+            print(f"Heard: {hindi_text}")
 
     except Exception as e:
         print(f"❌ SARVAM STT ERROR: {str(e)}")
         if hasattr(e, 'response') and e.response is not None:
             print(f"Response: {e.response.text}")
-        raise HTTPException(status_code=500, detail=f"STT Error: {str(e)}")
+        # Don't leak internal error details to the client
+        raise HTTPException(status_code=500, detail="Speech recognition failed. Please try again.")
 
     if not hindi_text.strip():
         return {"status": "error", "message": "Could not hear anything clearly."}
@@ -252,7 +271,8 @@ async def process_voice(
         json_str = chat_completion.choices[0].message.content
         intent = json.loads(json_str)
         print(f"⏱️ LLM (Groq Llama3): {time.time() - t2:.2f}s")
-        print(f"Understood Intent: {intent}")
+        if _debug_logs():
+            print(f"Understood Intent: {intent}")
 
     except Exception as e:
         print(f"❌ GROQ LLM ERROR: {str(e)}")

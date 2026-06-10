@@ -58,6 +58,12 @@ SARVAM_RPM = RateLimitConfig(
 # Set low (2s) for hectic shop environments where speed matters.
 USER_COOLDOWN_SECONDS = 2
 
+# ── Per-user daily cap ──
+# Stops a single account from exhausting the shared Groq/Sarvam quota
+# (open signup + global limits = one abuser can lock out everyone).
+# A busy shop doing a sale every 2 minutes for 12 hours is ~360 requests.
+USER_DAILY_LIMIT = 400
+
 
 # ═══════════════════════════════════════════════════════════════
 # RATE LIMIT LOGIC (Firestore-backed sliding window)
@@ -174,7 +180,7 @@ def check_user_cooldown(
     db, uid: str, cooldown_seconds: float = USER_COOLDOWN_SECONDS
 ) -> Tuple[bool, float]:
     """
-    Check per-user cooldown to prevent rapid-fire requests.
+    Check per-user cooldown and daily request cap.
 
     Returns:
         (allowed, retry_after)
@@ -186,18 +192,32 @@ def check_user_cooldown(
         .document("voice_cooldown")
     )
     now = time.time()
+    today = datetime.date.today().isoformat()
 
     try:
         doc = doc_ref.get()
-        if doc.exists:
-            last_request = doc.to_dict().get("last_request_at", 0)
-            elapsed = now - last_request
-            if elapsed < cooldown_seconds:
-                retry_after = round(cooldown_seconds - elapsed, 1)
-                return False, max(retry_after, 0.1)
+        data = doc.to_dict() if doc.exists else {}
 
-        # Update last request time
-        doc_ref.set({"last_request_at": now})
+        last_request = data.get("last_request_at", 0)
+        elapsed = now - last_request
+        if elapsed < cooldown_seconds:
+            retry_after = round(cooldown_seconds - elapsed, 1)
+            return False, max(retry_after, 0.1)
+
+        # Daily cap — counter resets when the date changes
+        daily_count = data.get("daily_count", 0) if data.get("daily_date") == today else 0
+        if daily_count >= USER_DAILY_LIMIT:
+            now_dt = datetime.datetime.now()
+            midnight = datetime.datetime.combine(
+                now_dt.date() + datetime.timedelta(days=1), datetime.time.min
+            )
+            return False, round((midnight - now_dt).total_seconds(), 0)
+
+        doc_ref.set({
+            "last_request_at": now,
+            "daily_count": daily_count + 1,
+            "daily_date": today,
+        })
         return True, 0.0
     except Exception as e:
         print(f"⚠️ User cooldown check failed: {e}")
