@@ -16,6 +16,7 @@ from firebase_admin import firestore
 from auth import verify_token
 from prompts import get_system_prompt
 from db_operations import process_transactions
+from models import ResolveTransactionRequest
 from rate_limiter import (
     check_user_cooldown,
     check_global_rate_limit,
@@ -315,3 +316,31 @@ async def process_voice(
         "raw_text": hinglish_text,
         "understood_intent": intent,
     }
+
+
+@router.post("/voice/resolve")
+async def resolve_transaction(
+    req: ResolveTransactionRequest,
+    authorization: str = Header(None),
+):
+    from main import db
+
+    uid = verify_token(authorization)
+    txn = req.transaction
+    txn["customer_modifier"] = req.selected_modifier
+
+    user_stock_ref = db.collection("users").document(uid).collection("stock")
+    user_udhaar_ref = db.collection("users").document(uid).collection("udhaar")
+    user_orders_ref = db.collection("users").document(uid).collection("orders")
+
+    result_list, errors = process_transactions(
+        transactions=[txn],
+        hindi_text="",
+        uid=uid,
+        db=db,
+        user_stock_ref=user_stock_ref,
+        user_udhaar_ref=user_udhaar_ref,
+        user_orders_ref=user_orders_ref,
+    )
+
+    return {"status": "success", "results": result_list, "errors": errors}

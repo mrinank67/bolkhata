@@ -87,6 +87,31 @@ def process_transactions(
         txn_rate = txn.get("rate", 0)
         txn_unit = txn.get("unit", "")
 
+        # --- Disambiguate duplicate customer names ---
+        if customer_name and not customer_modifier and operation in ("subtract", "payment"):
+            seen = {}
+            for doc in user_udhaar_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).stream():
+                data = doc.to_dict()
+                mod = data.get("customer_modifier", "")
+                phone = data.get("whatsapp_number", "")
+                key = (mod, phone)
+                if key not in seen:
+                    seen[key] = {"modifier": mod, "phone": phone}
+            if len(seen) > 1:
+                title_name = customer_name.capitalize()
+                group_key = f"disambig_{customer_name}"
+                group = get_group(group_key, f"Which {title_name}?", "👥", ["Customer", "Phone"])
+                options = []
+                for opt in seen.values():
+                    label = f"{title_name} ({opt['modifier']})" if opt["modifier"] else title_name
+                    phone_display = opt["phone"] if opt["phone"] else "No number"
+                    group["rows"].append({"Customer": label, "Phone": phone_display})
+                    options.append(opt)
+                group["requires_disambiguation"] = True
+                group["disambiguation_options"] = options
+                group["pending_transaction"] = txn
+                continue
+
         # --- Handle Order Inquiries ---
         if target == "ledger" and operation == "read" and not is_credit:
             if not customer_name:

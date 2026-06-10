@@ -967,6 +967,74 @@ input::placeholder {
 
 .confirm-cancelled {
   color: var(--text-tertiary);
+}
+
+/* ══════════════════════════════════════
+   DISAMBIGUATION PROMPT (Duplicate Names)
+   ══════════════════════════════════════ */
+.disambig-prompt {
+  padding: 16px;
+  border-top: 1px solid rgba(99,102,241,0.15);
+  background: rgba(99,102,241,0.04);
+}
+
+.disambig-message {
+  margin: 0 0 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.disambig-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.disambig-option-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  min-height: 44px;
+}
+
+.disambig-option-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--primary);
+}
+
+.disambig-option-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.disambig-option-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.disambig-option-phone {
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+}
+
+.disambig-option-btn .spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(99,102,241,0.3);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin: 0 auto;
   font-style: italic;
 }
 

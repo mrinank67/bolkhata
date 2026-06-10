@@ -72,6 +72,10 @@
       "dest": "/main.py"
     },
     {
+      "src": "/voice/resolve",
+      "dest": "/main.py"
+    },
+    {
       "src": "/config",
       "dest": "/main.py"
     },

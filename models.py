@@ -66,3 +66,8 @@ class SupplierCreateRequest(BaseModel):
     name: str
     mobile: Optional[str] = ""
     gst_number: Optional[str] = ""
+
+
+class ResolveTransactionRequest(BaseModel):
+    transaction: dict
+    selected_modifier: str = ""
