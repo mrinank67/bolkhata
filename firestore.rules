@@ -1,0 +1,17 @@
+rules_version = '2';
+
+// BolKhata: ALL data access goes through the FastAPI backend, which uses the
+// Firebase Admin SDK (Admin SDK bypasses these rules entirely). The web client
+// only uses Firebase Auth — it never reads or writes Firestore directly.
+// Therefore client access is denied completely. If you ever add direct
+// client-side Firestore reads, scope them per-user, e.g.:
+//   match /users/{uid}/{document=**} {
+//     allow read: if request.auth != null && request.auth.uid == uid;
+//   }
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -12,7 +12,23 @@ from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 from auth import verify_token
 from models import LedgerEntryRequest, LedgerEntryUpdate, WhatsAppReminderRequest, UserSettingsRequest, PayLinkRequest
 
-_pay_serializer = URLSafeTimedSerializer(os.getenv("PAY_LINK_SECRET", "bolkhata-pay-default-secret"))
+# Lazy-initialized: this module is imported before main.py runs load_dotenv(),
+# and a hardcoded fallback secret would let anyone forge payment links.
+_pay_serializer = None
+
+
+def _get_pay_serializer() -> URLSafeTimedSerializer:
+    global _pay_serializer
+    if _pay_serializer is None:
+        secret = os.getenv("PAY_LINK_SECRET")
+        if not secret:
+            raise HTTPException(
+                status_code=503,
+                detail="Payment links are not configured (PAY_LINK_SECRET is missing).",
+            )
+        _pay_serializer = URLSafeTimedSerializer(secret)
+    return _pay_serializer
+
 
 router = APIRouter()
 
@@ -176,8 +192,19 @@ PAY_LINK_MAX_AGE = 24 * 60 * 60  # 24 hours
 
 @router.post("/pay/create")
 async def create_pay_link(req: PayLinkRequest, authorization: str = Header(None)):
-    verify_token(authorization)
-    token = _pay_serializer.dumps({"pa": req.pa, "pn": req.pn, "am": req.am, "tn": req.tn})
+    from main import db
+
+    uid = verify_token(authorization)
+
+    # The payee UPI ID comes from the caller's saved settings, never from the
+    # request body — otherwise any account could mint official-looking
+    # BolKhata payment pages pointing at an arbitrary UPI ID.
+    user_doc = db.collection("users").document(uid).get()
+    upi_id = (user_doc.to_dict() or {}).get("upi_id", "").strip() if user_doc.exists else ""
+    if not upi_id:
+        raise HTTPException(status_code=400, detail="Set your UPI ID in Account Settings first.")
+
+    token = _get_pay_serializer().dumps({"pa": upi_id, "pn": req.pn, "am": req.am, "tn": req.tn})
     return {"token": token}
 
 
@@ -187,11 +214,13 @@ async def pay_page(token: str = Query(..., description="Signed payment token")):
     from urllib.parse import quote
 
     try:
-        data = _pay_serializer.loads(token, max_age=PAY_LINK_MAX_AGE)
+        data = _get_pay_serializer().loads(token, max_age=PAY_LINK_MAX_AGE)
     except SignatureExpired:
         return _pay_error_page("This payment link has expired. Please ask the sender for a new link.")
     except BadSignature:
         return _pay_error_page("This payment link is invalid.")
+    except HTTPException:
+        return _pay_error_page("Payment links are temporarily unavailable.")
 
     upi_id = escape(str(data["pa"]))
     payee = escape(str(data["pn"]))

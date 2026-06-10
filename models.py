@@ -2,7 +2,7 @@
 Pydantic request/response models for BolKhata API.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 
@@ -56,10 +56,11 @@ class UserSettingsRequest(BaseModel):
 
 
 class PayLinkRequest(BaseModel):
-    pa: str
-    pn: str = "BolKhata"
-    am: float
-    tn: str = ""
+    # Note: the payee UPI ID (pa) is intentionally NOT accepted from the
+    # client — it is read from the authenticated user's saved settings.
+    pn: str = Field(default="BolKhata", max_length=50)
+    am: float = Field(gt=0, le=10_000_000)
+    tn: str = Field(default="", max_length=120)
 
 
 class SupplierCreateRequest(BaseModel):
