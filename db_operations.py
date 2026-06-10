@@ -48,7 +48,6 @@ def _match_supplier(raw_name: str, existing_suppliers: list[str]) -> str:
 
 def process_transactions(
     transactions: list,
-    hindi_text: str,
     uid: str,
     db,
     user_stock_ref,
@@ -61,8 +60,6 @@ def process_transactions(
     Returns:
         (result_list, errors) — structured result groups and error messages.
     """
-    hinglish_text = hindi_text
-
     # Fetch dynamic inventory to enrich fuzzy matching
     stock_docs = list(user_stock_ref.stream())
     all_fuzzy_candidates = [doc.id for doc in stock_docs]

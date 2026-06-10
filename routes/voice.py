@@ -216,7 +216,7 @@ async def process_voice(
     try:
         recent_context_msg = ""
         if recent_customer:
-            recent_context_msg = f"\n                    RECENT CONTEXT: The user just made a transaction for a customer named '{recent_customer}' (modifier: '{recent_modifier}'). If the user says something like 'aur 2 item de do' (give 2 more) WITHOUT explicitly saying a name, you MUST use '{recent_customer}' as the customer_name and '{recent_modifier}' as the customer_modifier."
+            recent_context_msg = f"\nRECENT CONTEXT: The user just made a transaction for a customer named '{recent_customer}' (modifier: '{recent_modifier}'). If the user says something like 'aur 2 item de do' (give 2 more) WITHOUT explicitly saying a name, you MUST use '{recent_customer}' as the customer_name and '{recent_modifier}' as the customer_modifier."
 
         system_prompt = get_system_prompt(recent_context_msg)
 
@@ -278,11 +278,9 @@ async def process_voice(
     if not transactions and "action" in intent:
         # LLM returned a single flat transaction instead of an array
         transactions = [intent]
-    hinglish_text = intent.get("hinglish_text", hindi_text)
 
     result_list, errors = process_transactions(
         transactions=transactions,
-        hindi_text=hinglish_text,
         uid=uid,
         db=db,
         user_stock_ref=user_stock_ref,
@@ -314,7 +312,7 @@ async def process_voice(
         "status": "success",
         "results": result_list,
         "errors": errors,
-        "raw_text": hinglish_text,
+        "raw_text": hindi_text,
         "understood_intent": intent,
     }
 
@@ -340,7 +338,6 @@ async def resolve_transaction(
 
     result_list, errors = process_transactions(
         transactions=[txn],
-        hindi_text="",
         uid=uid,
         db=db,
         user_stock_ref=user_stock_ref,
