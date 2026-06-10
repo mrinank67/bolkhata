@@ -420,6 +420,40 @@ def process_transactions(
                 final_qty = qty
                 total_owed_amount = txn_amount or 0
 
+            # Dual-write: also create/update order record (credit sale = goods left the shop)
+            try:
+                order_docs = user_orders_ref.where(
+                    filter=FieldFilter("customer_name", "==", customer_name)
+                ).where(
+                    filter=FieldFilter("item", "==", standard_item)
+                ).stream()
+                existing_order_doc = None
+                for doc in order_docs:
+                    if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
+                        existing_order_doc = doc
+                        break
+
+                if existing_order_doc:
+                    existing_order_data = existing_order_doc.to_dict()
+                    order_update_fields = {
+                        "quantity": existing_order_data.get("quantity", 0) + qty,
+                        "timestamp": firestore.SERVER_TIMESTAMP,
+                    }
+                    if txn_amount:
+                        order_update_fields["amount"] = existing_order_data.get("amount", 0) + txn_amount
+                    existing_order_doc.reference.update(order_update_fields)
+                else:
+                    user_orders_ref.add({
+                        "customer_name": customer_name,
+                        "customer_modifier": customer_modifier,
+                        "item": standard_item,
+                        "quantity": qty,
+                        "amount": txn_amount or 0,
+                        "timestamp": firestore.SERVER_TIMESTAMP,
+                    })
+            except Exception:
+                pass
+
             group["rows"].append({
                 "Customer": title_name,
                 "Item": standard_item.capitalize(),
