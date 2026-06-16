@@ -428,39 +428,31 @@ def process_transactions(
                 ["Customer", "Item", "Qty", "Unit", "Amount", "Total Owed", "Stock"],
             )
 
-            docs = user_udhaar_ref.where(
+            # Log each lump credit as its own entry; the running "Total Owed"
+            # sums prior matching "general" entries plus this one.
+            prior_owed = 0
+            for doc in user_udhaar_ref.where(
                 filter=FieldFilter("customer_name", "==", customer_name)
             ).where(
                 filter=FieldFilter("item", "==", "general")
-            ).stream()
-            existing_doc = None
-            for doc in docs:
+            ).stream():
                 if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
-                    existing_doc = doc
-                    break
+                    prior_owed += doc.to_dict().get("amount", 0) or 0
 
-            if existing_doc:
-                existing_amount = existing_doc.to_dict().get("amount", 0)
-                total_owed_amount = existing_amount + txn_amount
-                existing_doc.reference.update({
-                    "amount": total_owed_amount,
-                    "timestamp": firestore.SERVER_TIMESTAMP,
-                })
-            else:
-                user_udhaar_ref.add({
-                    "customer_name": customer_name,
-                    "customer_modifier": customer_modifier,
-                    "item": "general",
-                    "quantity": 0,
-                    "amount": txn_amount,
-                    "unit": "",
-                    "whatsapp_number": "",
-                    "reminder_schedule": "",
-                    "reminder_sent": False,
-                    "due_note": "",
-                    "timestamp": firestore.SERVER_TIMESTAMP,
-                })
-                total_owed_amount = txn_amount
+            user_udhaar_ref.add({
+                "customer_name": customer_name,
+                "customer_modifier": customer_modifier,
+                "item": "general",
+                "quantity": 0,
+                "amount": txn_amount,
+                "unit": "",
+                "whatsapp_number": "",
+                "reminder_schedule": "",
+                "reminder_sent": False,
+                "due_note": "",
+                "timestamp": firestore.SERVER_TIMESTAMP,
+            })
+            total_owed_amount = prior_owed + txn_amount
 
             group["rows"].append({
                 "Customer": title_name,
@@ -553,83 +545,50 @@ def process_transactions(
                 ["Customer", "Item", "Qty", "Unit", "Amount", "Total Owed", "Stock"],
             )
 
-            docs = user_udhaar_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).where(filter=FieldFilter("item", "==", standard_item)).stream()
-            existing_doc = None
-            for doc in docs:
+            # Log every credit sale as its own entry (a transaction record),
+            # rather than merging into the customer's existing item entry. The
+            # running "Total Owed" is computed by summing prior matching entries.
+            prior_owed = 0
+            for doc in user_udhaar_ref.where(
+                filter=FieldFilter("customer_name", "==", customer_name)
+            ).where(
+                filter=FieldFilter("item", "==", standard_item)
+            ).stream():
                 if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
-                    existing_doc = doc
-                    break
+                    prior_owed += doc.to_dict().get("amount", 0) or 0
 
-            if existing_doc:
-                existing_qty = existing_doc.to_dict().get("quantity", 0)
-                existing_amount = existing_doc.to_dict().get("amount", 0)
-                final_qty = existing_qty + qty
-                total_owed_amount = existing_amount + (txn_amount or 0)
-                update_fields = {
-                    "quantity": final_qty,
-                    "timestamp": firestore.SERVER_TIMESTAMP
-                }
-                if txn_amount:
-                    update_fields["amount"] = total_owed_amount
-                if txn_unit:
-                    update_fields["unit"] = txn_unit
-                existing_doc.reference.update(update_fields)
-            else:
-                udhaar_data = {
+            user_udhaar_ref.add({
+                "customer_name": customer_name,
+                "customer_modifier": customer_modifier,
+                "item": standard_item,
+                "quantity": qty,
+                "amount": txn_amount or 0,
+                "unit": txn_unit or "",
+                "whatsapp_number": "",
+                "reminder_schedule": "",
+                "reminder_sent": False,
+                "due_note": "",
+                "timestamp": firestore.SERVER_TIMESTAMP,
+            })
+            total_owed_amount = prior_owed + (txn_amount or 0)
+
+            # Dual-write: also log a matching order record (credit sale = goods left the shop)
+            try:
+                user_orders_ref.add({
                     "customer_name": customer_name,
                     "customer_modifier": customer_modifier,
                     "item": standard_item,
                     "quantity": qty,
                     "amount": txn_amount or 0,
-                    "unit": txn_unit or "",
-                    "whatsapp_number": "",
-                    "reminder_schedule": "",
-                    "reminder_sent": False,
-                    "due_note": "",
                     "timestamp": firestore.SERVER_TIMESTAMP,
-                }
-                user_udhaar_ref.add(udhaar_data)
-                final_qty = qty
-                total_owed_amount = txn_amount or 0
-
-            # Dual-write: also create/update order record (credit sale = goods left the shop)
-            try:
-                order_docs = user_orders_ref.where(
-                    filter=FieldFilter("customer_name", "==", customer_name)
-                ).where(
-                    filter=FieldFilter("item", "==", standard_item)
-                ).stream()
-                existing_order_doc = None
-                for doc in order_docs:
-                    if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
-                        existing_order_doc = doc
-                        break
-
-                if existing_order_doc:
-                    existing_order_data = existing_order_doc.to_dict()
-                    order_update_fields = {
-                        "quantity": existing_order_data.get("quantity", 0) + qty,
-                        "timestamp": firestore.SERVER_TIMESTAMP,
-                    }
-                    if txn_amount:
-                        order_update_fields["amount"] = existing_order_data.get("amount", 0) + txn_amount
-                    existing_order_doc.reference.update(order_update_fields)
-                else:
-                    user_orders_ref.add({
-                        "customer_name": customer_name,
-                        "customer_modifier": customer_modifier,
-                        "item": standard_item,
-                        "quantity": qty,
-                        "amount": txn_amount or 0,
-                        "timestamp": firestore.SERVER_TIMESTAMP,
-                    })
+                })
             except Exception as e:
                 print(f"⚠️ Order dual-write failed for {customer_name}/{standard_item}: {e}")
 
             group["rows"].append({
                 "Customer": title_name,
                 "Item": standard_item.capitalize(),
-                "Qty": final_qty,
+                "Qty": qty,
                 "Unit": txn_unit or "-",
                 "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
                 "Total Owed": f"₹{total_owed_amount:,.0f}" if total_owed_amount else "-",
@@ -643,43 +602,34 @@ def process_transactions(
                 ["Customer", "Item", "Qty", "Amount", "Total Ordered", "Stock"]
             )
 
-            docs = user_orders_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).where(filter=FieldFilter("item", "==", standard_item)).stream()
-            existing_doc = None
-            for doc in docs:
+            # Log every sale as its own order entry (a transaction record),
+            # rather than merging into the customer's existing item entry. The
+            # running "Total Ordered" is computed by summing prior matching entries.
+            prior_ordered = 0
+            for doc in user_orders_ref.where(
+                filter=FieldFilter("customer_name", "==", customer_name)
+            ).where(
+                filter=FieldFilter("item", "==", standard_item)
+            ).stream():
                 if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
-                    existing_doc = doc
-                    break
+                    prior_ordered += doc.to_dict().get("amount", 0) or 0
 
-            if existing_doc:
-                existing_data = existing_doc.to_dict()
-                existing_qty = existing_data.get("quantity", 0)
-                final_qty = existing_qty + qty
-                total_order_amount = existing_data.get("amount", 0) + (txn_amount or 0)
-                update_fields = {
-                    "quantity": final_qty,
-                    "timestamp": firestore.SERVER_TIMESTAMP
+            user_orders_ref.add(
+                {
+                    "customer_name": customer_name,
+                    "customer_modifier": customer_modifier,
+                    "item": standard_item,
+                    "quantity": qty,
+                    "amount": txn_amount or 0,
+                    "timestamp": firestore.SERVER_TIMESTAMP,
                 }
-                if txn_amount:
-                    update_fields["amount"] = total_order_amount
-                existing_doc.reference.update(update_fields)
-            else:
-                user_orders_ref.add(
-                    {
-                        "customer_name": customer_name,
-                        "customer_modifier": customer_modifier,
-                        "item": standard_item,
-                        "quantity": qty,
-                        "amount": txn_amount or 0,
-                        "timestamp": firestore.SERVER_TIMESTAMP,
-                    }
-                )
-                final_qty = qty
-                total_order_amount = txn_amount or 0
+            )
+            total_order_amount = prior_ordered + (txn_amount or 0)
 
             group["rows"].append({
                 "Customer": title_name,
                 "Item": standard_item.capitalize(),
-                "Qty": final_qty,
+                "Qty": qty,
                 "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
                 "Total Ordered": f"₹{total_order_amount:,.0f}" if total_order_amount else "-",
                 "Stock": new_qty,
