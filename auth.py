@@ -7,7 +7,7 @@ import json
 import time
 
 import firebase_admin
-from firebase_admin import credentials, firestore, auth
+from firebase_admin import credentials, firestore, auth, storage
 from fastapi import HTTPException
 
 
@@ -28,8 +28,16 @@ def init_firebase():
                 )
             cred = credentials.Certificate(cred_path)
 
-        firebase_admin.initialize_app(cred)
+        # storageBucket lets storage.bucket() resolve the default bucket for bill PDFs.
+        firebase_admin.initialize_app(
+            cred, {"storageBucket": os.getenv("FIREBASE_STORAGE_BUCKET")}
+        )
     return firestore.client()
+
+
+def get_bucket():
+    """Return the default Firebase Storage bucket (Admin SDK; bypasses Storage rules)."""
+    return storage.bucket()
 
 
 def verify_token(authorization: str) -> str:

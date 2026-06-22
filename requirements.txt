@@ -7,3 +7,4 @@ python-dotenv==1.2.2
 firebase-admin==7.4.0
 uvicorn==0.48.0
 itsdangerous==2.2.0
+reportlab==4.2.5

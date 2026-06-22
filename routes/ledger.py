@@ -308,7 +308,12 @@ async def get_settings(authorization: str = Header(None)):
     uid = verify_token(authorization)
     doc = db.collection("users").document(uid).get()
     data = doc.to_dict() if doc.exists else {}
-    return {"upi_id": data.get("upi_id", "")}
+    return {
+        "upi_id": data.get("upi_id", ""),
+        "shop_name": data.get("shop_name", ""),
+        "shop_mobile": data.get("shop_mobile", ""),
+        "shop_address": data.get("shop_address", ""),
+    }
 
 
 @router.put("/settings")
@@ -322,6 +327,12 @@ async def update_settings(req: UserSettingsRequest, authorization: str = Header(
     if upi_id and not re.fullmatch(r"[A-Za-z0-9._\-]{2,256}@[A-Za-z]{2,64}", upi_id):
         raise HTTPException(status_code=400, detail="Invalid UPI ID. Expected format: name@bank")
     db.collection("users").document(uid).set(
-        {"upi_id": upi_id}, merge=True
+        {
+            "upi_id": upi_id,
+            "shop_name": (req.shop_name or "").strip(),
+            "shop_mobile": (req.shop_mobile or "").strip(),
+            "shop_address": (req.shop_address or "").strip(),
+        },
+        merge=True,
     )
     return {"status": "success"}

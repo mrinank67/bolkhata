@@ -16,6 +16,52 @@ let currentOrdersData = { orders: [], order_count: 0, total_value: 0 };
 let currentOrdersSort = 'recent';
 let ordersSearchQuery = '';
 let inventoryPrices = {};            // { itemNameLower: price }
+let ledgerNumbers = {};              // { "name|modifier": whatsapp_number } — for bill-send prefill
+
+// WhatsApp number split helpers (mirror js/ledger.js).
+function parseWaCode(wa) {
+  if (!wa) return '+91';
+  wa = wa.replace(/[\s\-()]/g, '');
+  if (wa.startsWith('+') && wa.length > 10) return wa.slice(0, wa.length - 10);
+  if (!wa.startsWith('+') && wa.length > 10) return '+' + wa.slice(0, wa.length - 10);
+  return '+91';
+}
+function parseWaNumber(wa) {
+  if (!wa) return '';
+  wa = wa.replace(/[\s\-()]/g, '');
+  if (wa.startsWith('+')) wa = wa.substring(1);
+  return wa.length > 10 ? wa.slice(-10) : wa;
+}
+
+// Best-effort: persist the WhatsApp number onto the customer's ledger entries (if any).
+async function saveWhatsAppNumber(customerName, customerModifier, waNumber) {
+  try {
+    const token = await auth.currentUser.getIdToken();
+    await fetch(`${API}/ledger/whatsapp-reminder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        customer_name: customerName,
+        customer_modifier: customerModifier,
+        whatsapp_number: waNumber,
+      }),
+    });
+  } catch { /* silent — number save is best-effort */ }
+}
+
+// Generate (or regenerate) the bill PDF for an order; returns { bill_number, pdf_url }.
+async function generateBill(orderId) {
+  const token = await auth.currentUser.getIdToken();
+  const res = await fetch(`${API}/orders/${encodeURIComponent(orderId)}/bill`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.status !== 'success') {
+    throw new Error(data.detail || 'Could not generate bill.');
+  }
+  return data;
+}
 
 // Pending modal state
 let orderEditState = null;           // { mode:'edit'|'add', itemId, orderId, customerName, customerModifier }
@@ -28,11 +74,22 @@ export async function loadOrders() {
   listEl.innerHTML = '<div class="inventory-empty">Loading orders…</div>';
   try {
     const token = await auth.currentUser.getIdToken();
-    const [ordersRes, invRes] = await Promise.all([
+    const [ordersRes, invRes, ledgerRes] = await Promise.all([
       fetch(`${API}/orders`, { headers: { Authorization: `Bearer ${token}` } }),
       fetch(`${API}/inventory`, { headers: { Authorization: `Bearer ${token}` } }),
+      fetch(`${API}/ledger/customers`, { headers: { Authorization: `Bearer ${token}` } }),
     ]);
     currentOrdersData = await ordersRes.json();
+
+    // Build WhatsApp number lookup from the ledger to prefill bill-send inputs.
+    ledgerNumbers = {};
+    try {
+      const led = await ledgerRes.json();
+      for (const c of (led.customers || [])) {
+        const key = `${c.customer_name || ''}|${c.customer_modifier || ''}`;
+        if (c.whatsapp_number) ledgerNumbers[key] = c.whatsapp_number;
+      }
+    } catch { /* best-effort — inputs just won't prefill */ }
 
     // Build inventory price map + datalist for price defaults / autocomplete
     inventoryPrices = {};
@@ -86,6 +143,7 @@ function renderOrders() {
       ? `${capitalize(o.customer_name)} (${o.customer_modifier})`
       : capitalize(o.customer_name);
     const lastOrder = o.last_order ? `Last order ${formatOrderDate(o.last_order)}` : '';
+    const waNum = ledgerNumbers[`${o.customer_name}|${o.customer_modifier || ''}`] || '';
 
     let itemsHtml = '';
     for (const item of (o.items || [])) {
@@ -121,6 +179,13 @@ function renderOrders() {
         <div class="order-item-actions-row">
           <button class="btn btn-outline order-add-item-btn">+ Add item</button>
           <button class="btn btn-outline order-delete-order-btn">🗑️ Delete order</button>
+        </div>
+        <div class="whatsapp-section">
+          <div class="whatsapp-section-label">WHATSAPP NUMBER</div>
+          <div class="whatsapp-input wa-split-input">
+            <input type="tel" class="wa-code-input" value="${escapeHtml(parseWaCode(waNum))}" maxlength="4" />
+            <input type="tel" class="wa-number-input" placeholder="98765 43210" value="${escapeHtml(parseWaNumber(waNum))}" maxlength="10" inputmode="numeric" />
+          </div>
         </div>
         <div class="order-bill-actions">
           <button class="btn btn-primary order-generate-bill-btn">🧾 Generate Bill</button>
@@ -182,12 +247,65 @@ function wireOrderCards(listEl) {
     });
   });
 
-  // Placeholder bill buttons
-  listEl.querySelectorAll('.order-generate-bill-btn').forEach(btn => {
-    btn.addEventListener('click', () => showToast('🧾 Bill generation coming soon.'));
+  // Restrict the WhatsApp number input to 10 digits.
+  listEl.querySelectorAll('.wa-number-input').forEach(input => {
+    input.addEventListener('input', () => {
+      input.value = input.value.replace(/\D/g, '').slice(0, 10);
+    });
   });
+
+  // Generate Bill — create/refresh the PDF and open it.
+  listEl.querySelectorAll('.order-generate-bill-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const orderId = btn.closest('.order-card').dataset.orderId;
+      const label = btn.innerHTML;
+      btn.innerHTML = '<div class="spinner"></div>';
+      btn.disabled = true;
+      try {
+        const { bill_number, pdf_url } = await generateBill(orderId);
+        window.open(pdf_url, '_blank');
+        showToast(`✅ Bill ${bill_number} generated`);
+      } catch (e) {
+        showToast('❌ ' + (e.message || 'Could not generate bill.'));
+      } finally {
+        btn.innerHTML = label;
+        btn.disabled = false;
+      }
+    });
+  });
+
+  // Send Bill on WhatsApp — generate the PDF, then share its link via wa.me.
   listEl.querySelectorAll('.order-send-bill-btn').forEach(btn => {
-    btn.addEventListener('click', () => showToast('📲 Send bill on WhatsApp coming soon.'));
+    btn.addEventListener('click', async () => {
+      const card = btn.closest('.order-card');
+      const orderId = card.dataset.orderId;
+      const customer = capitalize(card.dataset.customer);
+      const code = (card.querySelector('.wa-code-input').value || '').trim().replace(/[^+\d]/g, '');
+      const num = (card.querySelector('.wa-number-input').value || '').trim().replace(/\D/g, '');
+
+      if (!num || num.length !== 10) {
+        showToast('❌ Please enter a valid 10-digit WhatsApp number.');
+        return;
+      }
+      const waNumber = code + num;
+
+      const label = btn.innerHTML;
+      btn.innerHTML = '<div class="spinner"></div>';
+      btn.disabled = true;
+      try {
+        saveWhatsAppNumber(card.dataset.customer, card.dataset.modifier, waNumber);
+        const { pdf_url } = await generateBill(orderId);
+        const phone = waNumber.startsWith('+') ? waNumber.substring(1)
+          : (waNumber.length === 10 ? '91' + waNumber : waNumber);
+        const message = `Namaste ${customer} ji,\n\nAapka bill yahan dekhein:\n${pdf_url}\n\nDhanyavaad,\nBolKhata`;
+        window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
+      } catch (e) {
+        showToast('❌ ' + (e.message || 'Could not generate bill.'));
+      } finally {
+        btn.innerHTML = label;
+        btn.disabled = false;
+      }
+    });
   });
 }
 

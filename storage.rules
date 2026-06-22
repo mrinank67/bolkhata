@@ -1,0 +1,13 @@
+rules_version = '2';
+
+// All client SDK access is denied. Bill PDFs are written by the backend Admin SDK
+// (which bypasses these rules) and read only via their Firebase download-token URL,
+// which serves the file independently of these rules. No client can browse the
+// bucket or read another user's files through the SDK.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

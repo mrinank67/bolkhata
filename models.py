@@ -83,6 +83,10 @@ class OrderItemUpdate(BaseModel):
 
 class UserSettingsRequest(BaseModel):
     upi_id: Optional[str] = Field(default="", max_length=256)
+    # Shop ("Bill From") details — rendered on generated bills.
+    shop_name: Optional[str] = Field(default="", max_length=100)
+    shop_mobile: Optional[str] = Field(default="", max_length=16)
+    shop_address: Optional[str] = Field(default="", max_length=300)
 
 
 class PayLinkRequest(BaseModel):

@@ -39,16 +39,25 @@ onAuthStateChanged(auth, async user => {
     // Account settings modal
     const settingsModal = $("account-settings-modal");
     const settingsUpiInput = $("settings-upi-input");
+    const settingsShopNameInput = $("settings-shop-name-input");
+    const settingsShopMobileInput = $("settings-shop-mobile-input");
+    const settingsShopAddressInput = $("settings-shop-address-input");
 
     $("drawer-user-info").addEventListener("click", async () => {
       document.getElementById("drawer-overlay").classList.remove("open");
       settingsUpiInput.value = "";
+      settingsShopNameInput.value = "";
+      settingsShopMobileInput.value = "";
+      settingsShopAddressInput.value = "";
       settingsModal.classList.add("open");
       try {
         const t = await auth.currentUser.getIdToken();
         const res = await fetch(`${API}/settings`, { headers: { Authorization: `Bearer ${t}` } });
         const data = await res.json();
         settingsUpiInput.value = data.upi_id || "";
+        settingsShopNameInput.value = data.shop_name || "";
+        settingsShopMobileInput.value = data.shop_mobile || "";
+        settingsShopAddressInput.value = data.shop_address || "";
       } catch { /* silent */ }
     });
 
@@ -61,7 +70,12 @@ onAuthStateChanged(auth, async user => {
         await fetch(`${API}/settings`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
-          body: JSON.stringify({ upi_id: val })
+          body: JSON.stringify({
+            upi_id: val,
+            shop_name: settingsShopNameInput.value.trim(),
+            shop_mobile: settingsShopMobileInput.value.trim(),
+            shop_address: settingsShopAddressInput.value.trim(),
+          })
         });
       } catch { /* silent */ }
     });
