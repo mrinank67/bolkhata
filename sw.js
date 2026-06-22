@@ -1,4 +1,4 @@
-const CACHE_VERSION = "bolkhata-v8";
+const CACHE_VERSION = "bolkhata-v9";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
@@ -14,6 +14,7 @@ const STATIC_ASSETS = [
   "/js/history.js",
   "/js/suppliers.js",
   "/js/ledger.js",
+  "/js/orders.js",
   "/styles.css",
   "/manifest.json",
   "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
@@ -58,6 +59,7 @@ self.addEventListener("fetch", e => {
     url.pathname.startsWith("/confirm_clear_inventory") ||
     url.pathname.startsWith("/suppliers") ||
     url.pathname.startsWith("/ledger") ||
+    url.pathname.startsWith("/orders") ||
     url.pathname.startsWith("/pay") ||
     url.pathname.startsWith("/settings")
   ) {

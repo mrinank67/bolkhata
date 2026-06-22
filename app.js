@@ -23,6 +23,7 @@ import "./js/dashboard.js";
 import "./js/history.js";
 import "./js/suppliers.js";
 import "./js/ledger.js";
+import "./js/orders.js";
 
 // ═══════ PWA SERVICE WORKER — AUTO-UPDATE ═══════
 if ("serviceWorker" in navigator) {

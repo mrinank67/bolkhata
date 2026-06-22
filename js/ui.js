@@ -7,6 +7,7 @@ import { loadDashboardInventory } from "./dashboard.js";
 import { loadHistory } from "./history.js";
 import { loadSuppliers, loadSavedSuppliers } from "./suppliers.js";
 import { loadLedgerCustomers } from "./ledger.js";
+import { loadOrders } from "./orders.js";
 
 // ═══════ TABLE RENDERER ═══════
 const numericColumns = new Set(["#", "Stock", "Qty", "Sold", "Added", "Previous", "Current", "Current Stock", "Qty Owed", "Amount Owed", "Amount", "Stock Now", "Rate", "Total Owed", "Total Ordered", "Entries", "Amount Cleared"]);
@@ -226,7 +227,7 @@ export function renderResults(results, errors) {
 
 // ═══════ PAGE NAVIGATION ═══════
 let currentPage = "voice";
-const pages = ["voice", "dashboard", "history", "suppliers", "ledger"];
+const pages = ["voice", "dashboard", "history", "suppliers", "ledger", "orders"];
 export function navigateTo(page) {
   if (!pages.includes(page)) return;
   currentPage = page;
@@ -250,6 +251,7 @@ export function navigateTo(page) {
   if (page === "history") loadHistory();
   if (page === "suppliers") { loadSuppliers(); loadSavedSuppliers(); }
   if (page === "ledger") loadLedgerCustomers();
+  if (page === "orders") loadOrders();
 }
 
 // Wire nav items

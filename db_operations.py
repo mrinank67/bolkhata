@@ -75,6 +75,15 @@ def process_transactions(
     result_groups = {}
     errors = []
 
+    # One order "session" id per customer per voice call, so all items spoken in
+    # a single command for the same customer group into one order on the Orders page.
+    order_session_ids = {}
+
+    def _order_id_for(ckey):
+        if ckey not in order_session_ids:
+            order_session_ids[ckey] = user_orders_ref.document().id  # pre-generated shared id
+        return order_session_ids[ckey]
+
     def get_group(action_key, title, icon, columns):
         if action_key not in result_groups:
             result_groups[action_key] = {
@@ -580,6 +589,8 @@ def process_transactions(
                     "item": standard_item,
                     "quantity": qty,
                     "amount": txn_amount or 0,
+                    "price": (txn_amount / qty) if (txn_amount and qty) else (db_price or 0),
+                    "order_id": _order_id_for(f"{customer_name}|{customer_modifier}"),
                     "timestamp": firestore.SERVER_TIMESTAMP,
                 })
             except Exception as e:
@@ -621,6 +632,8 @@ def process_transactions(
                     "item": standard_item,
                     "quantity": qty,
                     "amount": txn_amount or 0,
+                    "price": (txn_amount / qty) if (txn_amount and qty) else (db_price or 0),
+                    "order_id": _order_id_for(f"{customer_name}|{customer_modifier}"),
                     "timestamp": firestore.SERVER_TIMESTAMP,
                 }
             )

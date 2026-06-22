@@ -16,6 +16,7 @@ from routes.inventory import router as inventory_router
 from routes.history import router as history_router
 from routes.suppliers import router as suppliers_router
 from routes.ledger import router as ledger_router
+from routes.orders import router as orders_router
 
 load_dotenv()
 
@@ -44,6 +45,7 @@ app.include_router(inventory_router)
 app.include_router(history_router)
 app.include_router(suppliers_router)
 app.include_router(ledger_router)
+app.include_router(orders_router)
 
 
 @app.get("/config")

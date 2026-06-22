@@ -56,6 +56,31 @@ class WhatsAppReminderRequest(BaseModel):
     reminder_schedule: Optional[str] = Field(default="", max_length=50)
 
 
+class OrderItemCreate(BaseModel):
+    item: str = Field(max_length=100)
+    quantity: int = Field(gt=0, le=_MAX_QTY)
+    price: float = Field(ge=0, le=_MAX_AMOUNT)
+
+
+class OrderCreateRequest(BaseModel):
+    customer_name: str = Field(max_length=100)
+    customer_modifier: Optional[str] = Field(default="", max_length=100)
+    items: list[OrderItemCreate] = Field(default_factory=list)
+
+
+class OrderItemAddRequest(OrderItemCreate):
+    # Customer is used as a fallback when the order_id can't be looked up
+    # (e.g. legacy orders that predate the order_id field).
+    customer_name: Optional[str] = Field(default="", max_length=100)
+    customer_modifier: Optional[str] = Field(default="", max_length=100)
+
+
+class OrderItemUpdate(BaseModel):
+    item: Optional[str] = Field(default=None, max_length=100)
+    quantity: Optional[int] = Field(default=None, gt=0, le=_MAX_QTY)
+    price: Optional[float] = Field(default=None, ge=0, le=_MAX_AMOUNT)
+
+
 class UserSettingsRequest(BaseModel):
     upi_id: Optional[str] = Field(default="", max_length=256)
 

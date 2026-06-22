@@ -2400,6 +2400,147 @@ input::placeholder {
   color: var(--accent);
 }
 
+/* ═══════ ORDERS PAGE ═══════ */
+.orders-badge {
+  background: rgba(245,158,11,0.12);
+  color: var(--amber, #f59e0b);
+  border: 1px solid rgba(245,158,11,0.2);
+}
+
+/* Order line items (editable list inside an order card) */
+.order-items-list {
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.order-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.order-item-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.order-item-meta {
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.order-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.order-item-edit,
+.order-item-remove {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.order-item-edit:hover {
+  background: var(--accent-soft);
+  border-color: rgba(99,102,241,0.3);
+  color: var(--accent);
+}
+
+.order-item-remove:hover {
+  background: rgba(239,68,68,0.1);
+  border-color: rgba(239,68,68,0.3);
+  color: var(--red);
+}
+
+/* Row of secondary actions (add item / delete order) */
+.order-item-actions-row {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.order-item-actions-row .btn {
+  flex: 1;
+  padding: 9px 10px;
+  font-size: 0.8rem;
+}
+
+/* Bill actions — Generate Bill + Send Bill on WhatsApp */
+.order-bill-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.order-bill-actions .btn {
+  width: 100%;
+}
+
+/* New-order modal: dynamic item rows */
+.order-items-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0 10px;
+}
+
+.order-new-item-row {
+  display: grid;
+  grid-template-columns: 1fr 64px 72px 32px;
+  gap: 6px;
+  align-items: center;
+}
+
+.order-new-item-row input {
+  width: 100%;
+}
+
+.order-new-remove {
+  width: 32px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.order-new-remove:hover {
+  background: rgba(239,68,68,0.1);
+  border-color: rgba(239,68,68,0.3);
+  color: var(--red);
+}
+
+.order-add-row-btn {
+  width: 100%;
+  padding: 9px 10px;
+  font-size: 0.82rem;
+}
+
 /* Toast notification */
 .toast {
   position: fixed;

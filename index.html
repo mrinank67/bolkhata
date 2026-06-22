@@ -151,6 +151,10 @@
             <span class="nav-icon">📒</span>
             <span class="nav-label">Ledger</span>
           </button>
+          <button class="nav-item" data-page="orders">
+            <span class="nav-icon">📦</span>
+            <span class="nav-label">Orders</span>
+          </button>
         </nav>
         <div class="drawer-footer">
           <div id="drawer-user-info" class="drawer-user-info drawer-user-info-clickable">
@@ -487,6 +491,102 @@
             <div class="modal-actions" style="margin-top:16px;">
               <button id="ledger-modal-cancel" class="btn btn-outline">Cancel</button>
               <button id="ledger-modal-save" class="btn btn-accent">Add Entry</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+
+      <!-- PAGE: Customer Orders -->
+      <div id="page-orders" class="page-container hidden">
+        <div class="ledger-header">
+          <h2 class="ledger-title">Customer Orders</h2>
+          <span class="page-badge orders-badge">ORDERS</span>
+        </div>
+
+        <div class="summary-cards">
+          <div class="summary-card summary-card-blue">
+            <div class="summary-card-label">Orders</div>
+            <div id="orders-count" class="summary-card-value">0</div>
+          </div>
+          <div class="summary-card summary-card-green">
+            <div class="summary-card-label">Total value</div>
+            <div id="orders-total-value" class="summary-card-value">₹0</div>
+          </div>
+        </div>
+
+        <div class="sort-row">
+          <input type="text" id="orders-search" class="ledger-search-input" placeholder="Search customer" />
+          <select id="orders-sort" class="inventory-sort-select sort-compact">
+            <option value="recent">Sort: Recent</option>
+            <option value="name-asc">Name (A-Z)</option>
+            <option value="amount-desc">Value (High)</option>
+          </select>
+          <button id="orders-add-btn" class="add-entry-btn" aria-label="Add order">+</button>
+        </div>
+
+        <div id="orders-list" class="ledger-customer-list">
+          <div class="inventory-empty">Loading orders…</div>
+        </div>
+
+        <!-- Datalist of inventory items (populated by orders.js) -->
+        <datalist id="orders-item-datalist"></datalist>
+
+        <!-- Add Order Modal -->
+        <div id="order-add-modal" class="modal-overlay">
+          <div class="modal-card" style="text-align:left;">
+            <h3 class="modal-title">New Order</h3>
+            <div class="field-group">
+              <label class="field-label">Customer Name</label>
+              <input type="text" id="order-entry-customer" placeholder="e.g. Ramesh Kirana" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">Modifier (optional)</label>
+              <input type="text" id="order-entry-modifier" placeholder="e.g. Delhi wale" />
+            </div>
+            <label class="field-label">Items</label>
+            <div id="order-items-container" class="order-items-container"></div>
+            <button id="order-add-row-btn" class="btn btn-outline order-add-row-btn">+ Add item</button>
+            <div class="modal-actions" style="margin-top:16px;">
+              <button id="order-modal-cancel" class="btn btn-outline">Cancel</button>
+              <button id="order-modal-save" class="btn btn-accent">Create Order</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Edit / Add Item Modal -->
+        <div id="order-edit-modal" class="modal-overlay">
+          <div class="modal-card" style="text-align:left;">
+            <h3 id="order-edit-title" class="modal-title">Edit Item</h3>
+            <div class="field-group">
+              <label class="field-label">Item</label>
+              <input type="text" id="order-edit-item" list="orders-item-datalist" placeholder="e.g. Maggi" />
+            </div>
+            <div class="form-row">
+              <div class="field-group field-half">
+                <label class="field-label">Quantity</label>
+                <input type="number" id="order-edit-qty" placeholder="2" min="1" />
+              </div>
+              <div class="field-group field-half">
+                <label class="field-label">Price (₹ each)</label>
+                <input type="number" id="order-edit-price" placeholder="12" min="0" />
+              </div>
+            </div>
+            <div class="modal-actions" style="margin-top:16px;">
+              <button id="order-edit-cancel" class="btn btn-outline">Cancel</button>
+              <button id="order-edit-save" class="btn btn-accent">Save</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Delete Confirm Modal -->
+        <div id="order-delete-modal" class="modal-overlay">
+          <div class="modal-card">
+            <h3 class="modal-title">Delete</h3>
+            <p id="order-delete-message" class="modal-message">Are you sure?</p>
+            <div class="modal-actions">
+              <button id="order-delete-cancel" class="btn btn-outline">Cancel</button>
+              <button id="order-delete-confirm" class="btn btn-danger">Delete</button>
             </div>
           </div>
         </div>

@@ -132,6 +132,14 @@
       "dest": "/main.py"
     },
     {
+      "src": "/orders",
+      "dest": "/main.py"
+    },
+    {
+      "src": "/orders/(.*)",
+      "dest": "/main.py"
+    },
+    {
       "src": "/pay/create",
       "dest": "/main.py"
     },
