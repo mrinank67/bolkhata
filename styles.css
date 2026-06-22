@@ -2143,7 +2143,8 @@ input::placeholder {
 /* ══════════════════════════════════════
    CUSTOMER LEDGER PAGE
    ══════════════════════════════════════ */
-#page-ledger {
+#page-ledger,
+#page-orders {
   grid-template-rows: auto auto auto 1fr;
   overflow-y: auto;
   padding: 0 2px;

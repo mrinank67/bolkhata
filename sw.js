@@ -1,4 +1,4 @@
-const CACHE_VERSION = "bolkhata-v9";
+const CACHE_VERSION = "bolkhata-v10";
 const STATIC_ASSETS = [
   "/",
   "/index.html",

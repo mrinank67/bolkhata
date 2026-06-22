@@ -193,8 +193,10 @@ async def update_order_item(item_id: str, req: OrderItemUpdate, authorization: s
     if req.quantity is not None or req.price is not None:
         update_data["amount"] = round((new_price or 0) * (new_qty or 0), 2)
 
+    # Do NOT touch `timestamp` here. Orders without an order_id group by
+    # customer + day (see get_orders), so re-dating an edited item would move it
+    # into another day's order — merging two separate orders for the same person.
     if update_data:
-        update_data["timestamp"] = firestore.SERVER_TIMESTAMP
         doc_ref.update(update_data)
 
     return {"status": "success", "message": "Order item updated."}
