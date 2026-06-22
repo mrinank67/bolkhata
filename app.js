@@ -13,6 +13,7 @@
  */
 
 // Import all modules — each self-registers its event listeners on import
+import "./js/theme.js";
 import "./js/config.js";
 import "./js/auth.js";
 import "./js/idle-timer.js";

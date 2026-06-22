@@ -227,9 +227,6 @@ export function renderResults(results, errors) {
 // ═══════ PAGE NAVIGATION ═══════
 let currentPage = "voice";
 const pages = ["voice", "dashboard", "history", "suppliers", "ledger"];
-const pageTitles = { voice: "Voice", dashboard: "Dashboard", history: "History", suppliers: "Suppliers", ledger: "Ledger" };
-const pageTitleEl = $("page-title");
-
 export function navigateTo(page) {
   if (!pages.includes(page)) return;
   currentPage = page;
@@ -244,9 +241,6 @@ export function navigateTo(page) {
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.page === page);
   });
-
-  // Update page title in topbar
-  pageTitleEl.textContent = pageTitles[page] || page;
 
   // Close drawer
   closeDrawer();

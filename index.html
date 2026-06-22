@@ -9,11 +9,23 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>BolKhata</title>
     <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <!-- Apply saved theme before first paint to avoid a flash -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("bk-theme") || "dark";
+          document.documentElement.setAttribute("data-theme", t);
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute("content", t === "light" ? "#f4f4f7" : "#0a0a0f");
+        } catch (e) {}
+      })();
+    </script>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -32,8 +44,11 @@
 
     <!-- ═══════════ LOGIN VIEW ═══════════ -->
     <div id="login-view" class="card">
+      <button id="theme-toggle-login" class="theme-toggle theme-toggle-login" type="button" aria-label="Toggle light/dark mode" title="Switch theme">
+        <span class="theme-toggle-icon">🌙</span>
+      </button>
       <div class="brand">
-        <div class="brand-icon"><img src="/icons/icon-192.png" alt="BolKhata" style="width:100%;height:100%;border-radius:12px;object-fit:cover;" /></div>
+        <div class="brand-icon"><img src="/icons/icon-192.png" alt="BolKhata" style="width:100%;height:100%;border-radius:inherit;object-fit:cover;" /></div>
         <div class="brand-name">BolKhata</div>
       </div>
       <p class="brand-sub">Voice-powered inventory & ledger<br />for your shop</p>
@@ -110,7 +125,7 @@
       <div class="drawer">
         <div class="drawer-header">
           <div class="brand">
-            <div class="brand-icon"><img src="/icons/icon-192.png" alt="BolKhata" style="width:100%;height:100%;border-radius:12px;object-fit:cover;" /></div>
+            <div class="brand-icon"><img src="/icons/icon-192.png" alt="BolKhata" style="width:100%;height:100%;border-radius:inherit;object-fit:cover;" /></div>
             <div class="brand-name">BolKhata</div>
           </div>
           <button id="drawer-close" class="drawer-close">✕</button>
@@ -187,10 +202,12 @@
           <span></span><span></span><span></span>
         </button>
         <div class="brand">
-          <div class="brand-icon"><img src="/icons/icon-192.png" alt="BolKhata" style="width:100%;height:100%;border-radius:12px;object-fit:cover;" /></div>
+          <div class="brand-icon"><img src="/icons/icon-192.png" alt="BolKhata" style="width:100%;height:100%;border-radius:inherit;object-fit:cover;" /></div>
           <div class="brand-name">BolKhata</div>
         </div>
-        <div id="page-title" class="page-title">Voice</div>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle light/dark mode" title="Switch theme">
+          <span class="theme-toggle-icon">🌙</span>
+        </button>
       </div>
 
       <!-- PAGE: Voice -->
