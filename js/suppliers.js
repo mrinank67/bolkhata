@@ -58,14 +58,14 @@ function renderSavedSuppliers() {
 
     html += `<div class="supplier-dir-card" data-id="${s.id}" data-name="${escapeHtml(s.name)}">
       <div class="supplier-dir-header">
-        <div class="supplier-dir-info">
-          <div class="supplier-dir-name">${escapeHtml(s.name)}</div>
+        <div class="supplier-dir-info" data-id="${s.id}" role="button" tabindex="0" aria-label="Show purchases for ${escapeHtml(s.name)}">
+          <div class="supplier-dir-name"><span class="supplier-dir-caret" aria-hidden="true">▾</span>${escapeHtml(s.name)}</div>
           ${mobileLine}
           ${gstLine}
         </div>
         <div class="supplier-dir-actions">
           <button class="supplier-add-purchase-btn" data-name="${escapeHtml(s.name)}" aria-label="Add purchase" title="Add purchase">＋</button>
-          <button class="supplier-expand-btn" data-id="${s.id}" aria-label="Show purchases">▾</button>
+          <button class="supplier-edit-btn" data-id="${s.id}" aria-label="Edit supplier" title="Edit supplier">✏️</button>
           <button class="supplier-delete-btn" data-id="${s.id}" data-name="${escapeHtml(s.name)}" aria-label="Delete supplier">🗑️</button>
         </div>
       </div>
@@ -76,9 +76,22 @@ function renderSavedSuppliers() {
   }
   listEl.innerHTML = html;
 
-  // Wire expand buttons
-  listEl.querySelectorAll('.supplier-expand-btn').forEach(btn => {
-    btn.addEventListener('click', () => toggleSupplierPurchases(btn.dataset.id));
+  // Clicking the supplier name/info expands its purchases (keyboard accessible)
+  listEl.querySelectorAll('.supplier-dir-info').forEach(info => {
+    const toggle = () => toggleSupplierPurchases(info.dataset.id);
+    info.addEventListener('click', toggle);
+    info.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  });
+
+  // Wire edit buttons (reuses the add modal in edit mode)
+  listEl.querySelectorAll('.supplier-edit-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const supplier = savedSuppliers.find(s => s.id === btn.dataset.id);
+      if (supplier) openSupplierModal(supplier);
+    });
   });
 
   // Wire delete buttons (opens custom modal)
@@ -101,18 +114,15 @@ function renderSavedSuppliers() {
 async function toggleSupplierPurchases(supplierId) {
   const panel = $(`supplier-purchases-${supplierId}`);
   const card = panel.closest('.supplier-dir-card');
-  const btn = card.querySelector('.supplier-expand-btn');
 
   if (!panel.classList.contains('hidden')) {
     panel.classList.add('hidden');
     card.classList.remove('expanded');
-    btn.textContent = '▾';
     return;
   }
 
   panel.classList.remove('hidden');
   card.classList.add('expanded');
-  btn.textContent = '▴';
 
   // Find supplier name and match using normalized form (strips suffixes like "supplier")
   const supplierName = card.dataset.name;
@@ -186,16 +196,26 @@ $('supplier-delete-confirm').addEventListener('click', async () => {
   }
 });
 
-// ── Add Supplier Modal ──
-$('supplier-add-btn').addEventListener('click', () => {
+// ── Add / Edit Supplier Modal ──
+// Tracks which supplier is being edited; null means we're adding a new one.
+let editingSupplierId = null;
+
+function openSupplierModal(supplier = null) {
+  editingSupplierId = supplier ? supplier.id : null;
+  $('supplier-modal-title').textContent = supplier ? 'Edit Supplier' : 'Add Supplier';
+  $('supplier-modal-save').textContent = supplier ? 'Save Changes' : 'Add Supplier';
+  $('supplier-modal-name').value = supplier ? (supplier.name || '') : '';
+  // Stored mobiles are saved with a +91 prefix; the input holds the 10 digits.
+  $('supplier-modal-mobile').value = supplier ? (supplier.mobile || '').replace(/^\+91/, '') : '';
+  $('supplier-modal-gst').value = supplier ? (supplier.gst_number || '') : '';
   $('supplier-add-modal').classList.add('open');
-  $('supplier-modal-name').value = '';
-  $('supplier-modal-mobile').value = '';
-  $('supplier-modal-gst').value = '';
   setTimeout(() => $('supplier-modal-name').focus(), 100);
-});
+}
+
+$('supplier-add-btn').addEventListener('click', () => openSupplierModal());
 
 $('supplier-modal-cancel').addEventListener('click', () => {
+  editingSupplierId = null;
   $('supplier-add-modal').classList.remove('open');
 });
 
@@ -209,14 +229,16 @@ $('supplier-modal-save').addEventListener('click', async () => {
     return;
   }
 
+  const isEdit = !!editingSupplierId;
   const btn = $('supplier-modal-save');
+  const label = isEdit ? 'Save Changes' : 'Add Supplier';
   btn.innerHTML = '<div class="spinner"></div>';
   btn.disabled = true;
 
   try {
     const token = await auth.currentUser.getIdToken();
-    const res = await fetch(`${API}/suppliers/add`, {
-      method: 'POST',
+    const res = await fetch(`${API}/suppliers/${isEdit ? editingSupplierId : 'add'}`, {
+      method: isEdit ? 'PUT' : 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`
@@ -227,14 +249,17 @@ $('supplier-modal-save').addEventListener('click', async () => {
     if (data.status === 'success') {
       showToast('✅ ' + data.message);
       $('supplier-add-modal').classList.remove('open');
+      editingSupplierId = null;
       loadSavedSuppliers();
+      // A rename can change how purchases display, so refresh those too.
+      if (isEdit) loadSuppliers();
     } else {
-      showToast('❌ ' + (data.detail || 'Failed to add supplier.'));
+      showToast('❌ ' + (data.detail || 'Failed to save supplier.'));
     }
   } catch {
     showToast('❌ Could not connect to server.');
   } finally {
-    btn.textContent = 'Add Supplier';
+    btn.textContent = label;
     btn.disabled = false;
   }
 });

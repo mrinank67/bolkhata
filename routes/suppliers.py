@@ -204,6 +204,45 @@ async def add_supplier(req: SupplierCreateRequest, authorization: str = Header(N
     }
 
 
+@router.put("/suppliers/{supplier_id}")
+async def update_supplier(supplier_id: str, req: SupplierCreateRequest, authorization: str = Header(None)):
+    """Edit a saved supplier's name, mobile, and GST number."""
+    from main import db
+
+    uid = verify_token(authorization)
+
+    if not req.name.strip():
+        raise HTTPException(status_code=400, detail="Supplier name is required.")
+
+    suppliers_ref = db.collection("users").document(uid).collection("suppliers")
+    doc_ref = suppliers_ref.document(supplier_id)
+    if not doc_ref.get().exists:
+        raise HTTPException(status_code=404, detail="Supplier not found.")
+
+    new_name = req.name.strip()
+    new_name_lower = new_name.lower()
+
+    # Reject a rename that collides with a *different* existing supplier
+    existing = suppliers_ref.where(
+        filter=FieldFilter("name_lower", "==", new_name_lower)
+    ).limit(2).stream()
+    if any(e.id != supplier_id for e in existing):
+        raise HTTPException(status_code=400, detail=f"Supplier '{new_name}' already exists.")
+
+    doc_ref.update({
+        "name": new_name,
+        "name_lower": new_name_lower,
+        "mobile": req.mobile.strip() if req.mobile else "",
+        "gst_number": req.gst_number.strip() if req.gst_number else "",
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    })
+
+    return {
+        "status": "success",
+        "message": f"Supplier '{new_name}' updated.",
+    }
+
+
 @router.delete("/suppliers/{supplier_id}")
 async def delete_supplier(supplier_id: str, authorization: str = Header(None)):
     """Delete a supplier from the user's directory."""
