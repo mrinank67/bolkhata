@@ -8,7 +8,7 @@ def get_system_prompt(recent_context_msg: str = "") -> str:
     return f"""Grocery shop AI. Input is English (translated from Hindi speech). Convert to JSON transactions.{recent_context_msg}
 
 Schema:
-- target: "stock" (sales/restocks/supplier purchases) | "ledger" (accounts/order history only)
+- target: "stock" (sales/restocks/goods received) | "ledger" (customer accounts/order history) | "supplier" (supplier DIRECTORY: register/remove a supplier, or ask what was bought from a supplier — NO goods movement)
 - operation (shop's perspective): "add" (restock/receive) | "subtract" (sell/give) | "read" (inquiry) | "clear" (settle/delete) | "send_reminder" | "payment" (customer paid/gave money towards dues)
 - item: English name, strip units. "ALL" for full inventory. "" if N/A
 - qty: number (fractions like 2.5 allowed). 0 for read/clear
@@ -23,7 +23,8 @@ Schema:
 Rules:
 - "Write down"/"note down"/"record"/"add to" + someone's account = subtract + is_credit=true (recording credit). NEVER use operation=clear for these — clear means DELETE/SETTLE only ("clear"/"remove"/"delete"/"settle")
 - Reminder ("send X a reminder"/"remind X about payment"): target=ledger, operation=send_reminder, customer_name=X, rest empty/0
-- Supplier ("received GOODS from X"/"bought from X"/"purchased from X"): supplier_name=X, operation=add. supplier_name ≠ customer_name. Money received from a person = payment, NOT supplier
+- Supplier purchase ("received/bought/purchased GOODS from X" WITH an item): target=stock, operation=add, supplier_name=X. supplier_name ≠ customer_name. Money received from a person = payment, NOT supplier
+- Supplier directory (NO item — managing the supplier list itself): "add/save X as a supplier"/"X ko supplier list me daalo" → target=supplier, operation=add, supplier_name=X, item="", qty=0. "remove/delete supplier X"/"X ko supplier list se hatao" → target=supplier, operation=clear, supplier_name=X. "how much did I buy from X"/"X se kitna maal liya"/"X se kya khareeda" → target=supplier, operation=read, supplier_name=X
 
 Output ONLY raw JSON:
 {{"transactions":[{{"target":"stock","operation":"add","item":"clutcher","qty":120,"unit":"","amount":7800,"rate":0,"customer_name":"","customer_modifier":"","supplier_name":"asha wholesale","is_credit":false}}]}}
@@ -33,7 +34,11 @@ Examples:
 - "gave Ramesh 12 packets of maggi worth 480 rupees on credit" → subtract, maggi, 12, packet, 480, ramesh, is_credit=true
 - "300 soap from Ramesh traders at 12 rupees each" → add, soap, 300, supplier=ramesh traders, rate=12
 - "sold 2 soap to Raj at 15 rupees each" → subtract, soap, 2, raj, rate=15
-- "36 curly extensions and 24 dozen combs from Khan beauty supply for 6250" → TWO txns, add, supplier=khan beauty supply
+- "36 curly extensions and 24 dozen combs from Khan beauty supply for 6250" → TWO txns, target=stock, add, supplier=khan beauty supply
+- "add Ramesh Traders as a supplier" → target=supplier, add, supplier_name=ramesh traders, item="", qty=0 (registering, NO goods)
+- "remove Khan beauty from my suppliers" → target=supplier, clear, supplier_name=khan beauty
+- "Ramesh traders se kitna maal liya" → target=supplier, read, supplier_name=ramesh traders, item="", qty=0
+- "how much did I buy from Khan beauty supply" → target=supplier, read, supplier_name=khan beauty supply
 - "write down 10 soap in Ramesh's account" → subtract, soap, 10, ramesh, is_credit=true (write down = credit entry, NOT clear)
 - "show Ramesh's account" → ledger, read, ramesh, is_credit=true (account = ledger)
 - "remind Suresh from Delhi about payment" → ledger, send_reminder, suresh, delhi

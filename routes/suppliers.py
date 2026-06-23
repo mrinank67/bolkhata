@@ -9,6 +9,7 @@ from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from auth import verify_token
+from db_operations import _normalize_supplier_name
 from models import PurchaseRequest, SupplierCreateRequest
 
 router = APIRouter()
@@ -22,12 +23,24 @@ async def get_suppliers(authorization: str = Header(None)):
     purchases_ref = db.collection("users").document(uid).collection("suppliers_purchases")
     docs = purchases_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
 
+    # Directory names are authoritative for how a supplier is displayed. Voice
+    # and manual entry store names with different case/suffixes, so group and
+    # display everything by a normalized key (lowercase, suffix stripped) — this
+    # is what keeps "Ramesh Traders" (manual) and "ramesh" (voice) as one card.
+    dir_ref = db.collection("users").document(uid).collection("suppliers")
+    dir_display = {}
+    for d in dir_ref.stream():
+        nm = (d.to_dict().get("name") or "").strip()
+        if nm:
+            dir_display.setdefault(_normalize_supplier_name(nm), nm)
+
     purchases = []
-    supplier_totals = {}
     now = datetime.datetime.now(datetime.timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     month_total = 0
     month_items = 0
+    # key -> canonical display name (directory wins; otherwise the longest variant seen)
+    canonical = dict(dir_display)
 
     for doc in docs:
         data = doc.to_dict()
@@ -38,9 +51,12 @@ async def get_suppliers(authorization: str = Header(None)):
             ts = 0
 
         amount = data.get("amount", 0)
+        raw_name = (data.get("supplier_name") or "").strip()
+        key = _normalize_supplier_name(raw_name)
         entry = {
             "id": doc.id,
-            "supplier_name": data.get("supplier_name", ""),
+            "supplier_name": raw_name,
+            "supplier_key": key,
             "item_name": data.get("item_name", ""),
             "quantity": data.get("quantity", 0),
             "amount": amount,
@@ -49,17 +65,26 @@ async def get_suppliers(authorization: str = Header(None)):
         }
         purchases.append(entry)
 
-        # Aggregate by supplier
-        sname = data.get("supplier_name", "Unknown")
-        if sname not in supplier_totals:
-            supplier_totals[sname] = {"total": 0, "items": []}
-        supplier_totals[sname]["total"] += amount
-        supplier_totals[sname]["items"].append(data.get("item_name", ""))
+        if key not in dir_display:
+            cur = canonical.get(key)
+            if cur is None or len(raw_name) > len(cur):
+                canonical[key] = raw_name
 
         # Monthly stats
         if ts_obj and ts_obj >= month_start:
             month_total += amount
             month_items += 1
+
+    # Resolve each purchase to its canonical display name and aggregate totals on
+    # the normalized key so case/suffix variants collapse into one supplier.
+    supplier_totals = {}
+    for entry in purchases:
+        key = entry["supplier_key"]
+        disp = canonical.get(key) or entry["supplier_name"]
+        entry["supplier_name"] = disp
+        bucket = supplier_totals.setdefault(key, {"name": disp, "total": 0, "items": []})
+        bucket["total"] += entry["amount"]
+        bucket["items"].append(entry["item_name"])
 
     return {
         "purchases": purchases,
@@ -194,15 +219,17 @@ async def delete_supplier(supplier_id: str, authorization: str = Header(None)):
     supplier_name = doc.to_dict().get("name", "")
     doc_ref.delete()
 
-    # Also delete all purchases from this supplier
+    # Also delete all purchases from this supplier. Voice and manual entry store
+    # the name with different case/suffixes, so match on the normalized key — an
+    # exact string match would leave voice-recorded purchases orphaned.
+    key = _normalize_supplier_name(supplier_name)
     purchases_ref = db.collection("users").document(uid).collection("suppliers_purchases")
-    purchase_docs = purchases_ref.where(
-        filter=FieldFilter("supplier_name", "==", supplier_name)
-    ).stream()
     deleted_count = 0
-    for pdoc in purchase_docs:
-        pdoc.reference.delete()
-        deleted_count += 1
+    for pdoc in purchases_ref.stream():
+        pname = (pdoc.to_dict().get("supplier_name") or "").strip()
+        if pname and _normalize_supplier_name(pname) == key:
+            pdoc.reference.delete()
+            deleted_count += 1
 
     return {
         "status": "success",

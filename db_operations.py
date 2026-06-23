@@ -18,6 +18,26 @@ SUPPLIER_SUFFIXES = {"supplier", "suppliers", "wholesale", "distributor", "distr
 # with Firestore timestamps)
 _EPOCH_MIN = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
 
+# Indian shops — show purchase dates in IST so "Today"/"Yesterday" line up with
+# the shopkeeper's day, not the server's UTC clock.
+_IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+
+def _format_purchase_date(ts) -> str:
+    """Format a Firestore timestamp as a short relative date for voice replies."""
+    if not ts:
+        return "-"
+    try:
+        d = ts.astimezone(_IST)
+    except (AttributeError, ValueError, OSError):
+        return "-"
+    today = datetime.datetime.now(_IST).date()
+    if d.date() == today:
+        return "Today"
+    if d.date() == today - datetime.timedelta(days=1):
+        return "Yesterday"
+    return f"{d.day} {d.strftime('%b')}"
+
 
 def _to_number(value, default=0):
     """Coerce LLM-provided values (None, "2.5", "800", 12) to a number."""
@@ -35,14 +55,20 @@ def _normalize_supplier_name(name: str) -> str:
     return " ".join(words)
 
 
-def _match_supplier(raw_name: str, existing_suppliers: list[str]) -> str:
+def _match_supplier(raw_name: str, supplier_display_map: dict) -> str:
+    """Resolve a spoken supplier name to its canonical display name.
+
+    `supplier_display_map` maps normalized keys -> display names (directory
+    entries are authoritative; past purchases fill in the rest). Returns the
+    fuzzy-matched display name (score > 70) or the normalized spoken name when
+    the supplier is new — keeping voice and manual entries on one identity.
+    """
     normalized = _normalize_supplier_name(raw_name)
-    if not existing_suppliers:
+    if not supplier_display_map:
         return normalized
-    # Check if normalized name fuzzy-matches an existing supplier
-    best_match, score = process.extractOne(normalized, existing_suppliers)
+    best_key, score = process.extractOne(normalized, list(supplier_display_map.keys()))
     if score > 70:
-        return best_match
+        return supplier_display_map[best_key]
     return normalized
 
 
@@ -133,12 +159,23 @@ def process_transactions(
     stock_docs = list(user_stock_ref.stream())
     all_fuzzy_candidates = [doc.id for doc in stock_docs]
 
-    # Fetch existing supplier names for fuzzy matching (from both directory and purchases)
-    directory_docs = db.collection("users").document(uid).collection("suppliers").stream()
-    directory_names = {doc.to_dict().get("name", "").strip().lower() for doc in directory_docs if doc.to_dict().get("name", "").strip()}
-    purchases_docs = db.collection("users").document(uid).collection("suppliers_purchases").stream()
-    purchase_names = {doc.to_dict().get("supplier_name", "").strip().lower() for doc in purchases_docs if doc.to_dict().get("supplier_name", "").strip()}
-    existing_suppliers = list(directory_names | purchase_names)
+    # Build a normalized-key -> display-name map of known suppliers so spoken
+    # names canonicalize to one identity. Directory entries win for display;
+    # past purchases fill in suppliers not yet saved to the directory.
+    suppliers_ref = db.collection("users").document(uid).collection("suppliers")
+    purchases_collection_ref = db.collection("users").document(uid).collection("suppliers_purchases")
+    supplier_display_map = {}
+    supplier_dir_keys = set()
+    for doc in suppliers_ref.stream():
+        name = (doc.to_dict().get("name") or "").strip()
+        if name:
+            key = _normalize_supplier_name(name)
+            supplier_display_map.setdefault(key, name)
+            supplier_dir_keys.add(key)
+    for doc in purchases_collection_ref.stream():
+        name = (doc.to_dict().get("supplier_name") or "").strip()
+        if name:
+            supplier_display_map.setdefault(_normalize_supplier_name(name), name)
 
     # Structured result groups keyed by action type
     result_groups = {}
@@ -183,7 +220,7 @@ def process_transactions(
         customer_modifier = (txn.get("customer_modifier") or "").lower()
         is_credit = bool(txn.get("is_credit"))
         raw_supplier = (txn.get("supplier_name") or "").strip()
-        supplier_name = _match_supplier(raw_supplier, existing_suppliers) if raw_supplier else ""
+        supplier_name = _match_supplier(raw_supplier, supplier_display_map) if raw_supplier else ""
         txn_amount = _to_number(txn.get("amount"))
         txn_rate = _to_number(txn.get("rate"))
         txn_unit = txn.get("unit") or ""
@@ -222,6 +259,96 @@ def process_transactions(
                 group["disambiguation_options"] = options
                 group["pending_transaction"] = txn
                 continue
+
+        # --- Handle Supplier Directory & Purchase Queries ---
+        if target == "supplier":
+            if not raw_supplier:
+                errors.append("Kaunsa supplier? (Please specify a supplier name).")
+                continue
+
+            # Add a supplier to the directory (registration only — no goods received).
+            # Dedupe on the raw normalized key (not fuzzy) so a genuinely new
+            # supplier isn't collapsed into a similarly-named existing one.
+            if operation == "add":
+                key = _normalize_supplier_name(raw_supplier)
+                display = raw_supplier.strip().title()
+                group = get_group("supplier_add", "Supplier Added", "🏪", ["Supplier", "Status"])
+                if key in supplier_dir_keys:
+                    group["rows"].append({
+                        "Supplier": supplier_display_map.get(key, display),
+                        "Status": "ℹ️ Already in your suppliers",
+                    })
+                else:
+                    suppliers_ref.add({
+                        "name": display,
+                        "name_lower": display.lower(),
+                        "mobile": "",
+                        "gst_number": "",
+                        "created_at": firestore.SERVER_TIMESTAMP,
+                    })
+                    supplier_dir_keys.add(key)
+                    supplier_display_map.setdefault(key, display)
+                    group["rows"].append({"Supplier": display, "Status": "✅ Added"})
+                continue
+
+            # Remove a supplier from the directory. Purchase history is kept —
+            # deleting financial records by voice is too risky to do silently.
+            if operation == "clear":
+                key = _normalize_supplier_name(supplier_name)
+                group = get_group("supplier_delete", "Supplier Removed", "🏪", ["Supplier", "Status"])
+                removed_name = ""
+                for doc in suppliers_ref.stream():
+                    dname = (doc.to_dict().get("name") or "").strip()
+                    if dname and _normalize_supplier_name(dname) == key:
+                        doc.reference.delete()
+                        removed_name = dname
+                if removed_name:
+                    group["rows"].append({
+                        "Supplier": removed_name,
+                        "Status": "✅ Removed (purchase history kept)",
+                    })
+                else:
+                    not_found = supplier_display_map.get(key) or raw_supplier.strip().title()
+                    group["empty_message"] = f"{not_found} aapke suppliers mein nahi mila."
+                continue
+
+            # Query purchases from a supplier ("Ramesh traders se kitna maal liya")
+            if operation == "read":
+                key = _normalize_supplier_name(supplier_name)
+                display = supplier_display_map.get(key) or raw_supplier.strip().title()
+                group_key = f"supplier_purchases_{key}"
+                group = get_group(group_key, f"{display} — Purchases", "🏪", ["Item", "Qty", "Amount", "When"])
+
+                matching = []
+                for doc in purchases_collection_ref.stream():
+                    data = doc.to_dict()
+                    pname = (data.get("supplier_name") or "").strip()
+                    if pname and _normalize_supplier_name(pname) == key:
+                        matching.append(data)
+
+                if not matching:
+                    group["empty_message"] = f"{display} se koi purchase record nahi mila."
+                    continue
+
+                matching.sort(key=lambda d: d.get("timestamp") or _EPOCH_MIN, reverse=True)
+                total_amount = sum((d.get("amount", 0) or 0) for d in matching)
+                for data in matching[:10]:
+                    amt = data.get("amount", 0) or 0
+                    group["rows"].append({
+                        "Item": (data.get("item_name") or "—").capitalize(),
+                        "Qty": data.get("quantity", 0),
+                        "Amount": f"₹{amt:,.0f}" if amt else "-",
+                        "When": _format_purchase_date(data.get("timestamp")),
+                    })
+                if len(matching) > 1:
+                    label = "Total" if len(matching) <= 10 else f"Total ({len(matching)} purchases)"
+                    group["rows"].append({
+                        "Item": label, "Qty": "", "Amount": f"₹{total_amount:,.0f}", "When": "",
+                    })
+                continue
+
+            # Unrecognized supplier operation — nothing to do
+            continue
 
         # --- Handle Order Inquiries ---
         if target == "ledger" and operation == "read" and not is_credit:
