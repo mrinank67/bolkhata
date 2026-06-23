@@ -37,16 +37,12 @@ class LedgerEntryRequest(BaseModel):
     due_note: Optional[str] = Field(default="", max_length=300)
 
 
-class LedgerEntryUpdate(BaseModel):
-    customer_name: Optional[str] = Field(default=None, max_length=100)
-    customer_modifier: Optional[str] = Field(default=None, max_length=100)
-    item: Optional[str] = Field(default=None, max_length=100)
-    quantity: Optional[int] = Field(default=None, ge=0, le=_MAX_QTY)
-    unit: Optional[str] = Field(default=None, max_length=30)
-    amount: Optional[float] = Field(default=None, ge=0, le=_MAX_AMOUNT)
-    whatsapp_number: Optional[str] = Field(default=None, max_length=16)
-    reminder_schedule: Optional[str] = Field(default=None, max_length=50)
-    due_note: Optional[str] = Field(default=None, max_length=300)
+class ClearDuesRequest(BaseModel):
+    customer_name: str = Field(max_length=100)
+    customer_modifier: Optional[str] = Field(default="", max_length=100)
+    # Amount the customer paid. >= the total owed settles the account fully;
+    # less than the total is a partial clear (applied oldest-debt-first).
+    amount: float = Field(gt=0, le=_MAX_AMOUNT)
 
 
 class WhatsAppReminderRequest(BaseModel):

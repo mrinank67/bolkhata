@@ -103,7 +103,7 @@ BolKhata uses a clean REST API structure. All endpoints except `/config` and `/p
 | `/suppliers/{supplier_id}` | `DELETE` | Removes a vendor and their purchase history |
 | `/ledger/customers` | `GET` | Compiles a list of active udhaar accounts, dues, and itemizations |
 | `/ledger/entry` | `POST` | Manually writes credit/udhaar entries directly |
-| `/ledger/entry/{id}` | `PUT` | Edits due notes, phone numbers, or quantities of ledger items |
+| `/ledger/clear` | `POST` | Settles a customer's dues — full or partial (FIFO), shared with the voice payment flow |
 | `/ledger/whatsapp-reminder` | `POST` | Saves a customer's WhatsApp number and reminder schedule |
 | `/pay/create` | `POST` | Mints a signed UPI payment link token for the caller's saved UPI ID |
 | `/pay` | `GET` | Public payment page; validates the signed token and renders a UPI deep link |

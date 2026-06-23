@@ -10,7 +10,8 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 
 from auth import verify_token
-from models import LedgerEntryRequest, LedgerEntryUpdate, WhatsAppReminderRequest, UserSettingsRequest, PayLinkRequest
+from db_operations import apply_payment
+from models import LedgerEntryRequest, ClearDuesRequest, WhatsAppReminderRequest, UserSettingsRequest, PayLinkRequest
 
 # Lazy-initialized: this module is imported before main.py runs load_dotenv(),
 # and a hardcoded fallback secret would let anyone forge payment links.
@@ -50,8 +51,10 @@ async def get_ledger_customers(authorization: str = Header(None)):
         cmod = data.get("customer_modifier", "")
         key = f"{cname}|{cmod}"
 
-        amount = data.get("amount", 0)
-        qty = data.get("quantity", 0)
+        # Coerce to numbers — a single legacy/null amount would otherwise blow up
+        # the whole ledger load with a TypeError on the running totals below.
+        amount = data.get("amount", 0) or 0
+        qty = data.get("quantity", 0) or 0
 
         ts_obj = data.get("timestamp")
         try:
@@ -131,28 +134,37 @@ async def add_ledger_entry(req: LedgerEntryRequest, authorization: str = Header(
     }
 
 
-@router.put("/ledger/entry/{entry_id}")
-async def update_ledger_entry(entry_id: str, req: LedgerEntryUpdate, authorization: str = Header(None)):
+@router.post("/ledger/clear")
+async def clear_ledger_dues(req: ClearDuesRequest, authorization: str = Header(None)):
+    """Record a payment against a customer's dues (full settle or partial clear).
+
+    Shares apply_payment() with the voice "payment" flow, so manual and voice
+    settlements behave identically (FIFO, oldest debt first).
+    """
     from main import db
 
     uid = verify_token(authorization)
     udhaar_ref = db.collection("users").document(uid).collection("udhaar")
-    doc_ref = udhaar_ref.document(entry_id)
-    doc = doc_ref.get()
 
-    if not doc.exists:
-        raise HTTPException(status_code=404, detail="Entry not found.")
+    matched, total_owed, paid, remaining = apply_payment(
+        udhaar_ref, req.customer_name, req.customer_modifier or "", req.amount
+    )
 
-    update_data = {}
-    for field, value in req.dict(exclude_unset=True).items():
-        if value is not None:
-            update_data[field] = value
+    if not matched:
+        raise HTTPException(status_code=404, detail="No dues found for this customer.")
 
-    if update_data:
-        update_data["timestamp"] = firestore.SERVER_TIMESTAMP
-        doc_ref.update(update_data)
-
-    return {"status": "success", "message": "Entry updated."}
+    return {
+        "status": "success",
+        "total_owed": total_owed,
+        "paid": paid,
+        "remaining": remaining,
+        "settled": remaining <= 0,
+        "message": (
+            "Dues fully settled. ✅"
+            if remaining <= 0
+            else f"₹{paid:,.0f} cleared. ₹{remaining:,.0f} baaki hai."
+        ),
+    }
 
 
 @router.post("/ledger/whatsapp-reminder")

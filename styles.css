@@ -2381,6 +2381,27 @@ input::placeholder {
   width: 100%;
 }
 
+/* Clear / Settle Dues */
+.ledger-clear-section {
+  margin-top: 12px;
+}
+.ledger-clear-btn {
+  width: 100%;
+}
+.ledger-clear-summary {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+}
+.ledger-clear-summary strong {
+  color: var(--text-primary);
+}
+.ledger-clear-hint {
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+  margin-top: 6px;
+}
+
 /* Edit button for ledger items */
 .ledger-edit-btn {
   background: none;

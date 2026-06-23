@@ -124,7 +124,7 @@
       "dest": "/main.py"
     },
     {
-      "src": "/ledger/entry/(.*)",
+      "src": "/ledger/clear",
       "dest": "/main.py"
     },
     {

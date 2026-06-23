@@ -129,13 +129,14 @@ async def process_voice(
     user_udhaar_ref = db.collection("users").document(uid).collection("udhaar")
     user_orders_ref = db.collection("users").document(uid).collection("orders")
 
-    # Fetch recent customer context from the last 5 minutes
+    # Fetch recent customer context from the last 2 minutes
     recent_customer = ""
     recent_modifier = ""
+    recent_order_id = ""
     try:
         last_orders = list(user_orders_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream())
         last_order_time = last_orders[0].to_dict().get("timestamp") if last_orders else None
-        
+
         last_udhaars = list(user_udhaar_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream())
         last_udhaar_time = last_udhaars[0].to_dict().get("timestamp") if last_udhaars else None
 
@@ -146,14 +147,32 @@ async def process_voice(
             latest_doc = last_orders[0]
         elif last_udhaar_time:
             latest_doc = last_udhaars[0]
-            
+
+        now = datetime.datetime.now(datetime.timezone.utc)
         if latest_doc:
             data = latest_doc.to_dict()
             ts = data.get("timestamp")
-            now = datetime.datetime.now(datetime.timezone.utc)
-            if ts and (now - ts).total_seconds() < 300: # 5 minutes
+            if ts and (now - ts).total_seconds() < 120: # 2 minutes
                 recent_customer = data.get("customer_name", "")
                 recent_modifier = data.get("customer_modifier", "")
+
+        # Carry the recent order's id forward so a follow-up command for the same
+        # customer appends to that order instead of starting a new one. Guarded so
+        # it only applies when the last order is itself within the window and
+        # belongs to the recent customer (an amount-only credit writes no order,
+        # leaving a stale last order that must not be reused).
+        if (
+            recent_customer
+            and last_orders
+            and last_order_time
+            and (now - last_order_time).total_seconds() < 120
+        ):
+            o = last_orders[0].to_dict()
+            if (
+                o.get("customer_name", "") == recent_customer
+                and (o.get("customer_modifier", "") or "") == (recent_modifier or "")
+            ):
+                recent_order_id = o.get("order_id", "")
     except Exception as e:
         print("Error fetching recent context:", e)
 
@@ -307,6 +326,9 @@ async def process_voice(
         user_stock_ref=user_stock_ref,
         user_udhaar_ref=user_udhaar_ref,
         user_orders_ref=user_orders_ref,
+        recent_customer=recent_customer,
+        recent_modifier=recent_modifier,
+        recent_order_id=recent_order_id,
     )
 
     # Save to history in background (non-blocking)

@@ -507,6 +507,25 @@
             </div>
           </div>
         </div>
+
+        <!-- Clear Dues Modal -->
+        <div id="ledger-clear-modal" class="modal-overlay">
+          <div class="modal-card" style="text-align:left;">
+            <h3 class="modal-title">Clear Dues</h3>
+            <p class="ledger-clear-summary">
+              <span id="ledger-clear-name">Customer</span> ka baaki: <strong id="ledger-clear-due">₹0</strong>
+            </p>
+            <div class="field-group">
+              <label class="field-label">Amount received (₹)</label>
+              <input type="number" id="ledger-clear-amount" min="1" placeholder="0" inputmode="numeric" />
+              <div class="ledger-clear-hint">Full amount settles the account. Enter less for a partial clear.</div>
+            </div>
+            <div class="modal-actions" style="margin-top:16px;">
+              <button id="ledger-clear-cancel" class="btn btn-outline">Cancel</button>
+              <button id="ledger-clear-confirm" class="btn btn-accent">Clear Dues</button>
+            </div>
+          </div>
+        </div>
       </div>
 
 

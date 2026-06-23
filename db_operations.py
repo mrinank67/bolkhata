@@ -46,6 +46,68 @@ def _match_supplier(raw_name: str, existing_suppliers: list[str]) -> str:
     return normalized
 
 
+def apply_payment(user_udhaar_ref, customer_name: str, customer_modifier: str, amount) -> tuple:
+    """Apply a payment of `amount` against a customer's udhaar dues.
+
+    Used by both the voice "payment" operation and the manual "Clear Dues"
+    button so the two stay in lockstep.
+
+    - Full settle (amount >= total owed): every matching entry is deleted,
+      including unpriced item rows, so the customer drops off the ledger.
+    - Partial: oldest debts are reduced first (FIFO); fully-paid entries are
+      deleted, partially-paid entries keep their original timestamp and record
+      the payment time in `last_payment_at`.
+
+    Returns (matched_count, total_owed, paid, remaining). matched_count == 0
+    means the customer had no dues at all.
+    """
+    customer_name = (customer_name or "").lower()
+    customer_modifier = (customer_modifier or "").lower()
+    amount = _to_number(amount)
+
+    matching = []
+    for doc in user_udhaar_ref.where(
+        filter=FieldFilter("customer_name", "==", customer_name)
+    ).stream():
+        data = doc.to_dict()
+        if customer_modifier and customer_modifier != (data.get("customer_modifier") or "").lower():
+            continue
+        matching.append((doc, data))
+
+    if not matching:
+        return 0, 0, 0, 0
+
+    total_owed = sum((d.get("amount", 0) or 0) for _, d in matching)
+    paid = min(amount, total_owed)
+
+    # Full settle (also covers the all-unpriced case where total_owed == 0)
+    if paid >= total_owed:
+        for doc, _ in matching:
+            doc.reference.delete()
+        return len(matching), total_owed, total_owed, 0
+
+    # Partial: reduce oldest debts first.
+    payment_left = paid
+    matching.sort(key=lambda x: x[1].get("timestamp") or _EPOCH_MIN)
+    for doc, data in matching:
+        entry_amount = data.get("amount", 0) or 0
+        if entry_amount <= 0:
+            continue
+        reduction = min(payment_left, entry_amount)
+        if entry_amount - reduction <= 0:
+            doc.reference.delete()
+        else:
+            doc.reference.update({
+                "amount": entry_amount - reduction,
+                "last_payment_at": firestore.SERVER_TIMESTAMP,
+            })
+        payment_left -= reduction
+        if payment_left <= 0:
+            break
+
+    return len(matching), total_owed, paid, total_owed - paid
+
+
 def process_transactions(
     transactions: list,
     uid: str,
@@ -53,9 +115,16 @@ def process_transactions(
     user_stock_ref,
     user_udhaar_ref,
     user_orders_ref,
+    recent_customer: str = "",
+    recent_modifier: str = "",
+    recent_order_id: str = "",
 ) -> tuple:
     """
     Process a list of parsed transactions and update the database.
+
+    When recent_order_id is supplied, items sold to recent_customer in this call
+    append to that existing order (the "add to the same order within a timeframe"
+    feature) instead of starting a new order card.
 
     Returns:
         (result_list, errors) — structured result groups and error messages.
@@ -78,6 +147,13 @@ def process_transactions(
     # One order "session" id per customer per voice call, so all items spoken in
     # a single command for the same customer group into one order on the Orders page.
     order_session_ids = {}
+
+    # Seed the recent customer's session with their last order's id so a follow-up
+    # command within the recent-context window appends to that same order card
+    # rather than creating a new one.
+    if recent_order_id and recent_customer:
+        recent_ckey = f"{recent_customer.lower()}|{(recent_modifier or '').lower()}"
+        order_session_ids[recent_ckey] = recent_order_id
 
     def _order_id_for(ckey):
         if ckey not in order_session_ids:
@@ -372,47 +448,14 @@ def process_transactions(
             title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
             group_key = f"payment_{customer_name}_{customer_modifier}"
 
-            docs = list(user_udhaar_ref.where(
-                filter=FieldFilter("customer_name", "==", customer_name)
-            ).stream())
+            matched, total_owed, payment, remaining = apply_payment(
+                user_udhaar_ref, customer_name, customer_modifier, txn_amount
+            )
 
-            matching = []
-            for doc in docs:
-                data = doc.to_dict()
-                if customer_modifier and customer_modifier.lower() != data.get("customer_modifier", "").lower():
-                    continue
-                matching.append((doc, data))
-
-            if not matching:
+            if not matched:
                 group = get_group(group_key, f"Payment — {title_name}", "💰", ["Customer", "Status"])
                 group["empty_message"] = f"{title_name} ka koi baaki hisaab nahi hai."
                 continue
-
-            total_owed = sum(d.get("amount", 0) or 0 for _, d in matching)
-            payment = min(txn_amount, total_owed)
-            remaining = total_owed - payment
-
-            # Apply payment FIFO (oldest debt first). Fully-paid entries are
-            # deleted so the ledger reads as settled; partially-paid entries
-            # keep their original timestamp (FIFO order) and record the
-            # payment time separately.
-            payment_left = payment
-            matching.sort(key=lambda x: x[1].get("timestamp") or _EPOCH_MIN)
-            for doc, data in matching:
-                entry_amount = data.get("amount", 0) or 0
-                if entry_amount <= 0:
-                    continue
-                reduction = min(payment_left, entry_amount)
-                if entry_amount - reduction <= 0:
-                    doc.reference.delete()
-                else:
-                    doc.reference.update({
-                        "amount": entry_amount - reduction,
-                        "last_payment_at": firestore.SERVER_TIMESTAMP,
-                    })
-                payment_left -= reduction
-                if payment_left <= 0:
-                    break
 
             paid_display = f"₹{payment:,.0f}"
             if txn_amount > total_owed:

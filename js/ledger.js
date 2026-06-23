@@ -121,6 +121,9 @@ function renderLedgerCustomers() {
       </div>
       <div class="ledger-card-details">
         ${itemsHtml}
+        <div class="ledger-clear-section">
+          <button class="btn btn-outline ledger-clear-btn" data-customer="${escapeHtml(c.customer_name)}" data-modifier="${escapeHtml(c.customer_modifier || '')}" data-due="${c.total_due || 0}">💰 Clear / Settle Dues</button>
+        </div>
         <div class="whatsapp-section">
           <div class="whatsapp-section-label">WHATSAPP NUMBER</div>
           <div class="whatsapp-input wa-split-input">
@@ -141,6 +144,14 @@ function renderLedgerCustomers() {
     });
   });
 
+  // Wire up Clear Dues buttons
+  listEl.querySelectorAll('.ledger-clear-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openClearDuesModal(btn.dataset.customer, btn.dataset.modifier, Number(btn.dataset.due));
+    });
+  });
+
   // Wire up WhatsApp reminder buttons
   listEl.querySelectorAll('.wa-remind-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -153,6 +164,13 @@ function renderLedgerCustomers() {
       if (!num || num.length !== 10) { showToast('❌ Please enter a valid 10-digit WhatsApp number.'); return; }
       const waNumber = code + num;
 
+      // Persist the number first so it stays on file even if we can't send the
+      // reminder right now (nothing due, or UPI ID not configured yet).
+      saveWhatsAppNumber(btn.dataset.customer, btn.dataset.modifier, waNumber);
+
+      const due = Number(btn.dataset.due);
+      if (!due || due <= 0) { showToast('✅ Is customer ka koi baaki hisaab nahi hai.'); return; }
+
       let upiId = '';
       try {
         const token = await auth.currentUser.getIdToken();
@@ -163,10 +181,7 @@ function renderLedgerCustomers() {
 
       if (!upiId) { showToast('❌ Pehle Account Settings mein apna UPI ID set karein.'); return; }
 
-      saveWhatsAppNumber(btn.dataset.customer, btn.dataset.modifier, waNumber);
-
       const customerName = capitalize(btn.dataset.customer);
-      const due = Number(btn.dataset.due);
       const dueStr = due.toLocaleString('en-IN');
 
       let payToken;
@@ -277,5 +292,71 @@ $('ledger-modal-save').addEventListener('click', async () => {
   } finally {
     btn.textContent = 'Add Entry';
     btn.disabled = false;
+  }
+});
+
+// ── Clear Dues Modal (full settle or partial clear) ──
+let pendingClear = null;
+
+function openClearDuesModal(customer, modifier, due) {
+  if (!due || due <= 0) {
+    showToast('✅ Is customer ka koi baaki hisaab nahi hai.');
+    return;
+  }
+  pendingClear = { customer, modifier, due };
+  const displayName = modifier ? `${capitalize(customer)} (${modifier})` : capitalize(customer);
+  $('ledger-clear-name').textContent = displayName;
+  $('ledger-clear-due').textContent = `₹${due.toLocaleString('en-IN')}`;
+  const amountInput = $('ledger-clear-amount');
+  amountInput.value = due;
+  $('ledger-clear-modal').classList.add('open');
+  setTimeout(() => amountInput.select(), 100);
+}
+
+// Don't let the entered amount exceed what's owed — the rest is auto-settled anyway
+$('ledger-clear-amount').addEventListener('input', () => {
+  const input = $('ledger-clear-amount');
+  if (pendingClear && Number(input.value) > pendingClear.due) input.value = pendingClear.due;
+});
+
+$('ledger-clear-cancel').addEventListener('click', () => {
+  pendingClear = null;
+  $('ledger-clear-modal').classList.remove('open');
+});
+
+$('ledger-clear-confirm').addEventListener('click', async () => {
+  if (!pendingClear) return;
+  const amount = parseFloat($('ledger-clear-amount').value);
+  if (!amount || amount <= 0) { showToast('❌ Sahi amount daalein.'); return; }
+
+  const btn = $('ledger-clear-confirm');
+  btn.innerHTML = '<div class="spinner"></div>';
+  btn.disabled = true;
+
+  try {
+    const token = await auth.currentUser.getIdToken();
+    const res = await fetch(`${API}/ledger/clear`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        customer_name: pendingClear.customer,
+        customer_modifier: pendingClear.modifier,
+        amount: amount,
+      })
+    });
+    const data = await res.json();
+    if (data.status === 'success') {
+      showToast('✅ ' + data.message);
+      $('ledger-clear-modal').classList.remove('open');
+      loadLedgerCustomers();
+    } else {
+      showToast('❌ ' + (data.detail || 'Could not clear dues.'));
+    }
+  } catch {
+    showToast('❌ Could not connect to server.');
+  } finally {
+    btn.textContent = 'Clear Dues';
+    btn.disabled = false;
+    pendingClear = null;
   }
 });

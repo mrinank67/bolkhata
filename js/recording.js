@@ -3,7 +3,7 @@
  */
 
 import { $, auth, API, getToken, setCurrentAuth, signOut } from "./config.js";
-import { renderResults, showToast } from "./ui.js";
+import { renderResults, showToast, getCurrentPage } from "./ui.js";
 
 let mediaRecorder, audioChunks = [], activeStream, isPressed = false;
 const recordBtn = $("recordBtn");
@@ -172,10 +172,14 @@ recordBtn.addEventListener("touchstart", startRecording, { passive: false });
 recordBtn.addEventListener("touchend", stopRecording);
 recordBtn.addEventListener("touchcancel", stopRecording);
 
-// Spacebar to Record (Desktop)
+// Spacebar to Record (Desktop) — only on the voice page. The mic button is
+// hidden on other pages, but the spacebar listener is global, so without this
+// guard pressing space on the ledger/suppliers page would silently record
+// (no visible feedback, no page refresh) and still hit the server.
 const appView = $("app-view");
+const onVoicePage = () => !appView.classList.contains("hidden") && getCurrentPage() === "voice";
 window.addEventListener("keydown", e => {
-  if (e.code === "Space" && !appView.classList.contains("hidden")) {
+  if (e.code === "Space" && onVoicePage()) {
     if (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA") return;
     e.preventDefault();
     if (!recordBtn.classList.contains("recording")) {
@@ -184,7 +188,7 @@ window.addEventListener("keydown", e => {
   }
 });
 window.addEventListener("keyup", e => {
-  if (e.code === "Space" && !appView.classList.contains("hidden")) {
+  if (e.code === "Space" && onVoicePage()) {
     if (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA") return;
     e.preventDefault();
     stopRecording(e);
