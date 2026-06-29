@@ -63,6 +63,18 @@ async function generateBill(orderId) {
   return data;
 }
 
+// Flip an order card into "bill ready" state so later clicks re-open the saved
+// PDF instead of regenerating it.
+function markBillGenerated(card, pdfUrl) {
+  card.dataset.billUrl = pdfUrl;
+  card.dataset.billFresh = '1';
+  const genBtn = card.querySelector('.order-generate-bill-btn');
+  if (genBtn) {
+    genBtn.dataset.mode = 'show';
+    genBtn.innerHTML = '📄 Show Bill';
+  }
+}
+
 // Pending modal state
 let orderEditState = null;           // { mode:'edit'|'add', itemId, orderId, customerName, customerModifier }
 let orderDeleteState = null;         // { type:'item'|'order', id, label }
@@ -145,6 +157,14 @@ function renderOrders() {
     const lastOrder = o.last_order ? `Last order ${formatOrderDate(o.last_order)}` : '';
     const waNum = ledgerNumbers[`${o.customer_name}|${o.customer_modifier || ''}`] || '';
 
+    // Bill state: a fresh (non-stale) bill lets the button just re-open the saved
+    // PDF ("Show Bill"); otherwise it generates one ("Generate Bill").
+    const bill = o.bill || null;
+    const billFresh = !!(bill && bill.pdf_url && !bill.stale);
+    const billUrl = (bill && bill.pdf_url) || '';
+    const genLabel = billFresh ? '📄 Show Bill' : '🧾 Generate Bill';
+    const genMode = billFresh ? 'show' : 'generate';
+
     let itemsHtml = '';
     for (const item of (o.items || [])) {
       const qty = item.quantity || 0;
@@ -164,7 +184,9 @@ function renderOrders() {
     html += `<div class="ledger-customer-card order-card"
         data-order-id="${escapeHtml(o.order_id)}"
         data-customer="${escapeHtml(o.customer_name)}"
-        data-modifier="${escapeHtml(o.customer_modifier || '')}">
+        data-modifier="${escapeHtml(o.customer_modifier || '')}"
+        data-bill-url="${escapeHtml(billUrl)}"
+        data-bill-fresh="${billFresh ? '1' : ''}">
       <div class="ledger-card-header" onclick="this.parentElement.classList.toggle('expanded')">
         <div class="ledger-card-info">
           <div class="ledger-card-name">${escapeHtml(displayName)}</div>
@@ -188,7 +210,7 @@ function renderOrders() {
           </div>
         </div>
         <div class="order-bill-actions">
-          <button class="btn btn-primary order-generate-bill-btn">🧾 Generate Bill</button>
+          <button class="btn btn-primary order-generate-bill-btn" data-mode="${genMode}">${genLabel}</button>
           <button class="btn btn-whatsapp order-send-bill-btn">${WA_SVG}Send Bill on WhatsApp</button>
         </div>
       </div>
@@ -254,10 +276,20 @@ function wireOrderCards(listEl) {
     });
   });
 
-  // Generate Bill — create/refresh the PDF and open it.
+  // Generate Bill → create the PDF once, then flip to "Show Bill" (re-opens the
+  // saved PDF without regenerating). Order edits mark the bill stale server-side,
+  // which reverts the button to "Generate Bill" on the next load.
   listEl.querySelectorAll('.order-generate-bill-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const orderId = btn.closest('.order-card').dataset.orderId;
+      const card = btn.closest('.order-card');
+      const orderId = card.dataset.orderId;
+
+      // Bill already generated and current — just re-open the saved PDF.
+      if (btn.dataset.mode === 'show' && card.dataset.billUrl) {
+        window.open(card.dataset.billUrl, '_blank');
+        return;
+      }
+
       const label = btn.innerHTML;
       btn.innerHTML = '<div class="spinner"></div>';
       btn.disabled = true;
@@ -265,10 +297,11 @@ function wireOrderCards(listEl) {
         const { bill_number, pdf_url } = await generateBill(orderId);
         window.open(pdf_url, '_blank');
         showToast(`✅ Bill ${bill_number} generated`);
+        markBillGenerated(card, pdf_url);
       } catch (e) {
         showToast('❌ ' + (e.message || 'Could not generate bill.'));
-      } finally {
         btn.innerHTML = label;
+      } finally {
         btn.disabled = false;
       }
     });
@@ -294,7 +327,12 @@ function wireOrderCards(listEl) {
       btn.disabled = true;
       try {
         saveWhatsAppNumber(card.dataset.customer, card.dataset.modifier, waNumber);
-        const { pdf_url } = await generateBill(orderId);
+        // Reuse the already-generated bill if it's current; otherwise generate now.
+        let pdf_url = (card.dataset.billFresh && card.dataset.billUrl) ? card.dataset.billUrl : '';
+        if (!pdf_url) {
+          ({ pdf_url } = await generateBill(orderId));
+          markBillGenerated(card, pdf_url);
+        }
         const phone = waNumber.startsWith('+') ? waNumber.substring(1)
           : (waNumber.length === 10 ? '91' + waNumber : waNumber);
         const message = `Namaste ${customer} ji,\n\nAapka bill yahan dekhein:\n${pdf_url}\n\nDhanyavaad,\nBolKhata`;

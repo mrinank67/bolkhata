@@ -8,11 +8,13 @@ inventory stock; inventory reconciliation is deferred to the (future) bill
 generation flow so editing an order doesn't trigger unnecessary stock writes.
 """
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, HTTPException, Header
 from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from auth import verify_token
+from auth import verify_token, get_bucket
 from models import OrderCreateRequest, OrderItemAddRequest, OrderItemUpdate
 
 router = APIRouter()
@@ -28,12 +30,67 @@ def _display_price(data: dict) -> float:
     return (amount / qty) if qty else 0
 
 
+def _order_id_for_doc(data: dict) -> str:
+    """Grouping key for a line-item doc: its order_id, else the legacy synthetic key."""
+    oid = data.get("order_id")
+    if oid:
+        return oid
+    cname = data.get("customer_name", "unknown")
+    cmod = data.get("customer_modifier", "")
+    ts_obj = data.get("timestamp")
+    try:
+        day = ts_obj.date().isoformat() if ts_obj else "unknown"
+    except AttributeError:
+        day = "unknown"
+    return f"legacy|{cname}|{cmod}|{day}"
+
+
+def _mark_bill_stale(user_ref, order_id: str) -> None:
+    """Flag an order's bill as out-of-date so the UI re-generates it on next view.
+    Best-effort: a missing bill (or any error) is silently ignored."""
+    try:
+        bill_ref = user_ref.collection("bills").document(order_id)
+        if bill_ref.get().exists:
+            bill_ref.update({"stale": True})
+    except Exception:
+        pass
+
+
+def _attach_bills(user_ref, order_list: list) -> None:
+    """Decorate each order with its generated-bill metadata (if any) so the UI can
+    offer "Show Bill" (re-open the saved PDF) instead of regenerating every click."""
+    try:
+        bill_docs = {d.id: (d.to_dict() or {}) for d in user_ref.collection("bills").stream()}
+    except Exception:
+        return
+    if not bill_docs:
+        return
+    try:
+        bucket_name = get_bucket().name
+    except Exception:
+        return
+    for o in order_list:
+        bd = bill_docs.get(o["order_id"])
+        if not bd or not bd.get("download_token") or not bd.get("storage_path"):
+            continue
+        path = quote(bd["storage_path"], safe="")
+        o["bill"] = {
+            "bill_number": f"BK-{int(bd.get('bill_number') or 0):03d}",
+            "pdf_url": (
+                f"https://firebasestorage.googleapis.com/v0/b/{bucket_name}/o/{path}"
+                f"?alt=media&token={bd['download_token']}"
+            ),
+            "stale": bool(bd.get("stale", False)),
+        }
+
+
 @router.get("/orders")
 async def get_orders(authorization: str = Header(None)):
     from main import db
 
     uid = verify_token(authorization)
-    orders_ref = db.collection("users").document(uid).collection("orders")
+    user_ref = db.collection("users").document(uid)
+    orders_ref = user_ref.collection("orders")
     docs = orders_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
 
     orders = {}
@@ -82,6 +139,7 @@ async def get_orders(authorization: str = Header(None)):
         total_value += amount
 
     order_list = list(orders.values())
+    _attach_bills(user_ref, order_list)
 
     return {
         "orders": order_list,
@@ -163,6 +221,7 @@ async def add_order_item(order_id: str, req: OrderItemAddRequest, authorization:
         "timestamp": firestore.SERVER_TIMESTAMP,
     })
 
+    _mark_bill_stale(orders_ref.parent, order_id)
     return {"status": "success", "message": "Item added to order."}
 
 
@@ -179,25 +238,34 @@ async def update_order_item(item_id: str, req: OrderItemUpdate, authorization: s
         raise HTTPException(status_code=404, detail="Order item not found.")
 
     data = doc.to_dict()
-    update_data = {}
 
-    if req.item is not None:
-        update_data["item"] = req.item.strip().lower()
-    new_qty = req.quantity if req.quantity is not None else data.get("quantity", 0)
-    new_price = req.price if req.price is not None else _display_price(data)
-    if req.quantity is not None:
-        update_data["quantity"] = new_qty
-    if req.price is not None:
-        update_data["price"] = new_price
-    # Keep amount consistent whenever quantity or price changed.
-    if req.quantity is not None or req.price is not None:
-        update_data["amount"] = round((new_price or 0) * (new_qty or 0), 2)
+    # Effective new values (fall back to existing ones for fields not supplied).
+    old_item = data.get("item", "")
+    old_qty = data.get("quantity", 0) or 0
+    old_price = _display_price(data)
+    new_item = req.item.strip().lower() if req.item is not None else old_item
+    new_qty = req.quantity if req.quantity is not None else old_qty
+    new_price = req.price if req.price is not None else old_price
+
+    # Only write (and invalidate the bill) when something the bill shows actually
+    # changed — re-saving identical values is a no-op, so the saved bill stays fresh.
+    changed = (
+        new_item != old_item
+        or (new_qty or 0) != (old_qty or 0)
+        or round(new_price or 0, 2) != round(old_price or 0, 2)
+    )
 
     # Do NOT touch `timestamp` here. Orders without an order_id group by
     # customer + day (see get_orders), so re-dating an edited item would move it
     # into another day's order — merging two separate orders for the same person.
-    if update_data:
-        doc_ref.update(update_data)
+    if changed:
+        doc_ref.update({
+            "item": new_item,
+            "quantity": new_qty,
+            "price": new_price,
+            "amount": round((new_price or 0) * (new_qty or 0), 2),
+        })
+        _mark_bill_stale(orders_ref.parent, _order_id_for_doc(data))
 
     return {"status": "success", "message": "Order item updated."}
 
@@ -210,10 +278,13 @@ async def delete_order_item(item_id: str, authorization: str = Header(None)):
     orders_ref = db.collection("users").document(uid).collection("orders")
     doc_ref = orders_ref.document(item_id)
 
-    if not doc_ref.get().exists:
+    snap = doc_ref.get()
+    if not snap.exists:
         raise HTTPException(status_code=404, detail="Order item not found.")
 
+    order_id = _order_id_for_doc(snap.to_dict())
     doc_ref.delete()
+    _mark_bill_stale(orders_ref.parent, order_id)
     return {"status": "success", "message": "Order item removed."}
 
 
@@ -251,5 +322,11 @@ async def delete_order(order_id: str, authorization: str = Header(None)):
 
     for doc in docs:
         doc.reference.delete()
+
+    # The order is gone, so its saved bill metadata is no longer meaningful.
+    try:
+        orders_ref.parent.collection("bills").document(order_id).delete()
+    except Exception:
+        pass
 
     return {"status": "success", "message": "Order deleted.", "deleted_items": len(docs)}

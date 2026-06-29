@@ -162,6 +162,9 @@ async def generate_bill(order_id: str, authorization: str = Header(None)):
     blob.metadata = {"firebaseStorageDownloadTokens": download_token}
     blob.upload_from_string(pdf_bytes, content_type="application/pdf")
 
+    # Mark the saved bill current — clears any stale flag set by later order edits.
+    bill_ref.set({"stale": False, "generated_at": firestore.SERVER_TIMESTAMP}, merge=True)
+
     # 6. Build the non-expiring, read-only download URL.
     path = quote(blob.name, safe="")
     pdf_url = (
