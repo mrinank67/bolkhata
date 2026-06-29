@@ -14,6 +14,7 @@ __pycache__/
 .env
 .envnew
 bolkhata-prod-firebase-adminsdk-fbsvc-842a3ee7ed.json
+bolkhata-app-firebase-adminsdk-fbsvc-c2ffa955ec.json
 
 # Claude Code
 CLAUDE.md
