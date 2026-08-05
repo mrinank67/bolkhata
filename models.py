@@ -6,9 +6,14 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 
-# Shared bounds: quantities up to 1 lakh units, amounts up to ₹1 crore
-_MAX_QTY = 100_000
-_MAX_AMOUNT = 10_000_000
+# Shared bounds: quantities up to 1 lakh units, amounts up to ₹1 crore.
+# Public names exist because multipart endpoints take Form(...) fields, which get
+# no Pydantic validation — routes/inventory.py re-asserts these bounds by hand.
+MAX_QTY = 100_000
+MAX_AMOUNT = 10_000_000
+
+_MAX_QTY = MAX_QTY
+_MAX_AMOUNT = MAX_AMOUNT
 
 
 class InventoryItemUpdate(BaseModel):

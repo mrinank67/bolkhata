@@ -9,8 +9,8 @@ To upgrade plans, simply change the values in GROQ_LIMITS / SARVAM_LIMITS below.
 
 import time
 import datetime
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from dataclasses import dataclass, replace
+from typing import Tuple
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -63,6 +63,50 @@ USER_COOLDOWN_SECONDS = 2
 # (open signup + global limits = one abuser can lock out everyone).
 # A busy shop doing a sale every 2 minutes for 12 hours is ~360 requests.
 USER_DAILY_LIMIT = 400
+
+
+# ── Item image uploads ──
+# These spend Firebase Storage bytes and egress, not an LLM quota, so they get
+# their own budget rather than sharing the voice cooldown document.
+IMAGE_UPLOAD_RPM = RateLimitConfig(
+    name="Item image upload",
+    max_requests=60,         # onboarding is bursty: ~10 shops adding items at once
+    window_seconds=60,
+    firestore_key="image_upload_rpm",
+)
+
+IMAGE_UPLOAD_RPD = RateLimitConfig(
+    name="Item image upload (daily)",
+    max_requests=2000,       # ~2000 x 150 KB ≈ 300 MB/day worst case
+    window_seconds=86400,
+    firestore_key="image_upload_rpd",
+)
+
+
+@dataclass
+class UserLimitConfig:
+    """Per-user cooldown + daily cap, scoped to its own _meta document so one
+    feature's budget can never eat another's."""
+    doc: str                    # users/{uid}/_meta/{doc}
+    cooldown_seconds: float
+    daily_limit: int
+
+
+VOICE_USER_LIMIT = UserLimitConfig(
+    doc="voice_cooldown",                    # unchanged path — existing docs keep working
+    cooldown_seconds=USER_COOLDOWN_SECONDS,
+    daily_limit=USER_DAILY_LIMIT,
+)
+
+# Photographing a product and typing its name and price is >= 10s of human work,
+# so a 3s cooldown never blocks a real shopkeeper but stops a scripted loop cold.
+# 100/day catalogues a 500-SKU shop in a week while capping one account's storage
+# growth at roughly 15 MB/day.
+IMAGE_USER_LIMIT = UserLimitConfig(
+    doc="image_upload_limit",
+    cooldown_seconds=3,
+    daily_limit=100,
+)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -176,37 +220,41 @@ def _check_daily_rate_limit(
 
 
 
-def check_user_cooldown(
-    db, uid: str, cooldown_seconds: float = USER_COOLDOWN_SECONDS
-) -> Tuple[bool, float]:
+def check_user_limit(db, uid: str, config: UserLimitConfig) -> Tuple[bool, float]:
     """
-    Check per-user cooldown and daily request cap.
+    Check one feature's per-user cooldown and daily request cap.
+
+    Each feature gets its own users/{uid}/_meta/{doc} document, so an image
+    upload can't consume the shopkeeper's voice quota (or vice versa). The field
+    names inside the document are unchanged, so existing voice_cooldown docs
+    keep working.
 
     Returns:
         (allowed, retry_after)
     """
-    doc_ref = (
-        db.collection("users")
-        .document(uid)
-        .collection("_meta")
-        .document("voice_cooldown")
-    )
     now = time.time()
     today = datetime.date.today().isoformat()
 
     try:
+        # Inside the try so the fail-open guarantee below covers every step.
+        doc_ref = (
+            db.collection("users")
+            .document(uid)
+            .collection("_meta")
+            .document(config.doc)
+        )
         doc = doc_ref.get()
         data = doc.to_dict() if doc.exists else {}
 
         last_request = data.get("last_request_at", 0)
         elapsed = now - last_request
-        if elapsed < cooldown_seconds:
-            retry_after = round(cooldown_seconds - elapsed, 1)
+        if elapsed < config.cooldown_seconds:
+            retry_after = round(config.cooldown_seconds - elapsed, 1)
             return False, max(retry_after, 0.1)
 
         # Daily cap — counter resets when the date changes
         daily_count = data.get("daily_count", 0) if data.get("daily_date") == today else 0
-        if daily_count >= USER_DAILY_LIMIT:
+        if daily_count >= config.daily_limit:
             now_dt = datetime.datetime.now()
             midnight = datetime.datetime.combine(
                 now_dt.date() + datetime.timedelta(days=1), datetime.time.min
@@ -220,8 +268,26 @@ def check_user_cooldown(
         })
         return True, 0.0
     except Exception as e:
-        print(f"⚠️ User cooldown check failed: {e}")
+        print(f"⚠️ User limit check failed ({config.doc}): {e}")
         return True, 0.0
+
+
+def check_user_cooldown(
+    db, uid: str, cooldown_seconds: float = USER_COOLDOWN_SECONDS
+) -> Tuple[bool, float]:
+    """
+    Check the voice path's per-user cooldown and daily request cap.
+
+    Thin wrapper over check_user_limit() kept for call-site compatibility;
+    behaviour is unchanged.
+
+    Returns:
+        (allowed, retry_after)
+    """
+    config = VOICE_USER_LIMIT
+    if cooldown_seconds != USER_COOLDOWN_SECONDS:
+        config = replace(config, cooldown_seconds=cooldown_seconds)
+    return check_user_limit(db, uid, config)
 
 
 def record_rate_limit_hit(db, config: RateLimitConfig):

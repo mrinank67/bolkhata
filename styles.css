@@ -1661,7 +1661,9 @@ input::placeholder {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 10px;
-  padding: 0 4px 16px;
+  /* Bottom padding clears the 56px FAB + its 20px inset, so the last row and
+     the item count aren't trapped underneath it. */
+  padding: 0 4px 88px;
 }
 
 .inventory-tile {
@@ -1688,6 +1690,31 @@ input::placeholder {
 .inventory-tile:active {
   transform: scale(0.97);
   box-shadow: none;
+}
+
+/* Product thumbnail. Most items predate the add-item feature (voice and
+   supplier purchases never set a photo), so the placeholder is the common
+   case, not the exception. The <img> carries the same background as the
+   placeholder so a failed load degrades to a neutral tile — no onerror needed. */
+.inventory-tile-thumb,
+.inventory-tile-thumb-empty {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  display: block;
+}
+
+.inventory-tile-thumb {
+  object-fit: cover;
+}
+
+.inventory-tile-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  opacity: 0.45;
 }
 
 .inventory-tile-name {
@@ -2841,6 +2868,92 @@ input[type="number"] {
 
 .modal-overlay.open .modal-card {
   transform: scale(1);
+}
+
+/* The add-item form is far taller than the 3-field edit modal, and .modal-card
+   has no height constraint — without this it overflows a 640px-tall phone. */
+.modal-card-scroll {
+  max-height: 88dvh;
+  max-width: 340px;
+  overflow-y: auto;
+}
+
+/* ══════════════════════════════════════
+   FLOATING ADD BUTTON (INVENTORY PAGE)
+   ══════════════════════════════════════ */
+/* Absolute, not fixed: #app-view is a .card (position:relative), so this
+   anchors to the 420px app card rather than the corner of a wide desktop
+   viewport, and doesn't scroll away with #page-inventory. */
+.fab {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  z-index: 5;            /* above tiles; below .modal-overlay (200) and .toast (300) */
+  width: 56px;
+  height: 56px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 1.9rem;
+  font-weight: 400;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(99,102,241,0.4);
+  transition: transform var(--transition), box-shadow var(--transition);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px rgba(99,102,241,0.5);
+}
+
+.fab:active {
+  transform: scale(0.94);
+}
+
+/* ══════════════════════════════════════
+   IMAGE PICKER (ADD ITEM MODAL)
+   ══════════════════════════════════════ */
+.image-picker {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.image-picker-preview,
+.image-picker-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Rear camera must NOT be mirrored — only a front-facing fallback would be. */
+.image-picker-video {
+  background: #000;
+}
+
+.image-picker-placeholder {
+  text-align: center;
+  font-size: 0.8rem;
+  line-height: 1.9;
+  color: var(--text-tertiary);
+}
+
+.image-picker-actions {
+  margin-top: 8px;
 }
 
 .modal-title {

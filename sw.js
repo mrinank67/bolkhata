@@ -1,4 +1,4 @@
-const CACHE_VERSION = "bolkhata-v15";
+const CACHE_VERSION = "bolkhata-v16";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
@@ -11,6 +11,8 @@ const STATIC_ASSETS = [
   "/js/recording.js",
   "/js/ui.js",
   "/js/dashboard.js",
+  "/js/camera.js",
+  "/js/image-compress.js",
   "/js/history.js",
   "/js/suppliers.js",
   "/js/ledger.js",
@@ -50,6 +52,12 @@ self.addEventListener("fetch", e => {
 
   // Skip non-GET requests and API endpoints entirely (let browser handle them)
   if (e.request.method !== "GET") return;
+
+  // Item photos are served immutable with a 1-year max-age, so the HTTP cache
+  // already handles them. Caching them here too would double the storage used
+  // on the device AND force every thumbnail to re-download on each version bump.
+  if (url.hostname === "firebasestorage.googleapis.com") return;
+
   if (
     url.pathname.startsWith("/process_voice") ||
     url.pathname.startsWith("/voice") ||

@@ -276,6 +276,92 @@
           <div class="inventory-empty">Loading inventory…</div>
         </div>
 
+        <!-- Floating "Add Item" button. Absolute, not fixed: #app-view is a
+             .card (position:relative), so this anchors to the app card instead
+             of the viewport corner on desktop, and stays put while the grid
+             scrolls. Living inside #page-inventory means it disappears with the
+             page via .hidden — no per-page show/hide logic needed. -->
+        <button id="inventory-add-btn" class="fab" type="button" aria-label="Add item">+</button>
+
+        <!-- Add Inventory Item Modal -->
+        <div id="inventory-add-modal" class="modal-overlay">
+          <div class="modal-card modal-card-scroll" style="text-align:left;">
+            <h3 class="modal-title">Add Item</h3>
+
+            <div class="field-group">
+              <label class="field-label">Photo</label>
+              <div class="image-picker">
+                <!-- playsinline keeps iOS Safari from forcing fullscreen;
+                     muted is required for autoplay to be allowed at all. -->
+                <video id="inventory-add-video" class="image-picker-video hidden"
+                       playsinline muted autoplay></video>
+                <img id="inventory-add-preview" class="image-picker-preview hidden" alt="Item photo preview" />
+                <div id="inventory-add-placeholder" class="image-picker-placeholder">📷<br />Add a photo</div>
+              </div>
+
+              <div class="form-row image-picker-actions" id="inventory-add-pick-actions">
+                <button type="button" id="inventory-add-camera-btn" class="btn btn-outline field-half">📷 Camera</button>
+                <button type="button" id="inventory-add-gallery-btn" class="btn btn-outline field-half">🖼️ Gallery</button>
+              </div>
+              <div class="form-row image-picker-actions hidden" id="inventory-add-shoot-actions">
+                <button type="button" id="inventory-add-cancel-shot" class="btn btn-outline field-half">Cancel</button>
+                <button type="button" id="inventory-add-shutter" class="btn btn-accent field-half">Capture</button>
+              </div>
+              <div class="form-row image-picker-actions hidden" id="inventory-add-retake-actions">
+                <button type="button" id="inventory-add-retake" class="btn btn-outline field-half">Retake</button>
+                <button type="button" id="inventory-add-remove-photo" class="btn btn-outline field-half">Remove</button>
+              </div>
+
+              <!-- No `capture` attribute anywhere: it forces the OS camera app,
+                   which writes the photo to the device gallery. The in-app
+                   camera above exists precisely to avoid that. -->
+              <input type="file" id="inventory-add-file"
+                     accept="image/jpeg,image/png,image/webp" class="hidden" />
+            </div>
+
+            <div class="field-group">
+              <label class="field-label">Item Name *</label>
+              <input type="text" id="inventory-add-name" placeholder="e.g. Parle-G" maxlength="100" />
+            </div>
+
+            <div class="form-row">
+              <div class="field-group field-half">
+                <label class="field-label">Sell Price (₹) *</label>
+                <input type="number" id="inventory-add-price" placeholder="0" min="0" step="0.01" inputmode="decimal" />
+              </div>
+              <div class="field-group field-half">
+                <label class="field-label">Cost Price (₹)</label>
+                <input type="number" id="inventory-add-cost" placeholder="0" min="0" step="0.01" inputmode="decimal" />
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="field-group field-half">
+                <label class="field-label">Unit</label>
+                <select id="inventory-add-unit" class="inventory-sort-select" style="width:100%;">
+                  <option value="pcs">PCS</option>
+                  <option value="box">Box</option>
+                  <option value="pack">Pack</option>
+                </select>
+              </div>
+              <div class="field-group field-half">
+                <label class="field-label">Opening Stock</label>
+                <input type="number" id="inventory-add-qty" placeholder="0" min="0" inputmode="numeric" />
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label class="field-label">Category</label>
+              <input type="text" id="inventory-add-category" placeholder="e.g. Biscuits" maxlength="50" />
+            </div>
+
+            <div class="modal-actions" style="margin-top:16px;">
+              <button id="inventory-add-cancel" class="btn btn-outline">Cancel</button>
+              <button id="inventory-add-save" class="btn btn-accent">Save</button>
+            </div>
+          </div>
+        </div>
+
         <!-- Edit Inventory Item Modal -->
         <div id="inventory-edit-modal" class="modal-overlay">
           <div class="modal-card" style="text-align:left;">
