@@ -34,18 +34,12 @@ Examples:
 - "2 maggi in Ramesh from Delhi's account" → subtract, maggi, qty=2, ramesh, delhi, is_credit=true
 - "gave Ramesh 12 packets of maggi worth 480 rupees on credit" → subtract, maggi, 12, packet, 480, ramesh, is_credit=true
 - "300 soap from Ramesh traders at 12 rupees each" → add, soap, 300, supplier=ramesh traders, rate=12
-- "sold 2 soap to Raj at 15 rupees each" → subtract, soap, 2, raj, rate=15
 - "sell 10 maggi to Sujal at 10 rupees" → subtract, maggi, 10, sujal, rate=10, amount=0 (per-unit "se", total = 100 computed by server)
 - "add 100 pieces of samosa to inventory at 10 rupees" → add, samosa, 100, pieces, rate=10, amount=0
 - "36 curly extensions and 24 dozen combs from Khan beauty supply for 6250" → TWO txns, target=stock, add, supplier=khan beauty supply
 - "add Ramesh Traders as a supplier" → target=supplier, add, supplier_name=ramesh traders, item="", qty=0 (registering, NO goods)
-- "remove Khan beauty from my suppliers" → target=supplier, clear, supplier_name=khan beauty
-- "Ramesh traders se kitna maal liya" → target=supplier, read, supplier_name=ramesh traders, item="", qty=0
-- "how much did I buy from Khan beauty supply" → target=supplier, read, supplier_name=khan beauty supply
 - "write down 10 soap in Ramesh's account" → subtract, soap, 10, ramesh, is_credit=true (write down = credit entry, NOT clear)
 - "show Ramesh's account" → ledger, read, ramesh, is_credit=true (account = ledger)
-- "remind Suresh from Delhi about payment" → ledger, send_reminder, suresh, delhi
 - "Suresh has 800 rupees credit" → ledger, subtract, item="", qty=0, amount=800, suresh, is_credit=true (recording credit, NOT a read)
-- "Suresh gave 400 rupees" → ledger, payment, item="", qty=0, amount=400, suresh, is_credit=true
-- "received 500 from Meera" → ledger, payment, amount=500, meera, is_credit=true (money received = payment, NOT supplier)
+- "received 500 from Meera" → ledger, payment, item="", qty=0, amount=500, meera, is_credit=true (money received = payment, NOT supplier)
 - "Suresh gave 400 out of 1000, rest on credit" → ledger, payment, amount=400, suresh, is_credit=true (only the PAID amount, remaining is auto-calculated)"""
