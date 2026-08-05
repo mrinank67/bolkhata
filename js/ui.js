@@ -265,6 +265,9 @@ document.querySelectorAll(".home-shortcut").forEach(btn => {
   btn.addEventListener("click", () => navigateTo(btn.dataset.page));
 });
 
+// Brand in the topbar returns to the voice page from anywhere
+$("brand-home")?.addEventListener("click", () => navigateTo("voice"));
+
 // ═══════ DRAWER CONTROLS ═══════
 const drawerOverlay = $("drawer-overlay");
 

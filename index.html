@@ -218,10 +218,10 @@
         <button id="menu-btn" class="hamburger-btn" aria-label="Menu">
           <span></span><span></span><span></span>
         </button>
-        <div class="brand">
-          <div class="brand-icon"><img src="/icons/icon-192.png" alt="BolKhata" style="width:100%;height:100%;border-radius:inherit;object-fit:cover;" /></div>
-          <div class="brand-name">BolKhata</div>
-        </div>
+        <button id="brand-home" class="brand brand-home" type="button" aria-label="Go to voice home">
+          <span class="brand-icon"><img src="/icons/icon-192.png" alt="" style="width:100%;height:100%;border-radius:inherit;object-fit:cover;" /></span>
+          <span class="brand-name">BolKhata</span>
+        </button>
         <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle light/dark mode" title="Switch theme">
           <span class="theme-toggle-icon">🌙</span>
         </button>
@@ -238,6 +238,13 @@
           <div id="status" class="mic-hint">Hold to speak</div>
         </div>
 
+        <div class="result-area">
+          <div class="result-label">Response</div>
+          <div id="result" class="result-container">
+            <div class="result-placeholder">Tap and hold the mic, then speak naturally — e.g. "Saara stock dikhao" or "10 soap bech diya"</div>
+          </div>
+        </div>
+
         <div class="home-shortcuts">
           <button class="home-shortcut" data-page="orders" type="button">
             <span class="home-shortcut-icon">📦</span>
@@ -247,13 +254,6 @@
             <span class="home-shortcut-icon">📒</span>
             <span class="home-shortcut-label">Ledger</span>
           </button>
-        </div>
-
-        <div class="result-area">
-          <div class="result-label">Response</div>
-          <div id="result" class="result-container">
-            <div class="result-placeholder">Tap and hold the mic, then speak naturally — e.g. "Saara stock dikhao" or "10 soap bech diya"</div>
-          </div>
         </div>
       </div>
 
