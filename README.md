@@ -26,8 +26,11 @@ By leveraging extreme low-latency processing, BolKhata allows shopkeepers to spe
 ### 2. Real-Time Smart Inventory
 
 * **Fuzzy Match Engine:** Uses dynamic fuzzy matching (thefuzz) to automatically resolve spoken slang, variations, or typos (e.g., "magi" -> "Maggi") to standard stored item IDs.
-* **Visual Stock Grid:** A responsive dashboard displaying inventory tiles color-coded by stock level (out-of-stock, low stock, healthy stock).
-* **Manual Overrides:** Edit, rename, or delete items and adjust stock quantities directly from the visual dashboard.
+* **Add Item with Photo:** A floating + button on the Inventory page opens a form to catalogue a product in seconds — take a photo, type the name and selling price, save. Cost price, unit (PCS/Box/Pack), opening stock, and category are optional; the photo is optional too. Items created here are immediately available to both voice and manual billing.
+* **In-App Camera:** Product photos are captured through a live preview *inside the page*, not by handing off to the device camera app — so nothing is written to the phone's gallery or storage. Existing photos can still be picked from the gallery.
+* **Visual Stock Grid:** A responsive dashboard displaying inventory tiles color-coded by stock level (out-of-stock, low stock, healthy stock), each showing its product thumbnail with a neutral placeholder for items added by voice.
+* **Two-Stage Image Compression:** Photos are downscaled in the browser before upload (a ~20x reduction — a 3.5 MB phone photo uploads as ~170 KB) and then re-encoded server-side into a 1024px WebP plus a 256px grid thumbnail, roughly 140 KB of storage per item. Both are served with immutable cache headers so repeat views of the inventory grid cost no Firebase egress.
+* **Manual Overrides:** Edit, rename, or delete items and adjust stock quantities directly from the visual dashboard. Renaming an item keeps its photo, and deleting one reclaims its storage.
 
 ### 3. Customer Credit Ledger (Udhaar Panel)
 
@@ -90,8 +93,9 @@ Speak naturally in Hindi or Hinglish, and BolKhata will instantly map the correc
 * **Frontend:** Modular Single Page App (SPA) built using native HTML5, CSS3, and JavaScript. No build step.
 * **PWA Engine:** Service Worker (sw.js) and Web App Manifest (manifest.json) for offline asset caching, standalone launcher capability, and responsive layout scaling.
 * **Backend:** FastAPI (Python) optimized for extremely low routing overhead. Deployed as a Vercel Python serverless function.
-* **Database & Auth:** Google Firebase (Firestore Database, Firebase Authentication, Firebase Storage for archived bill PDFs).
+* **Database & Auth:** Google Firebase (Firestore Database, Firebase Authentication, Firebase Storage for archived bill PDFs and product photos).
 * **Bill Rendering:** Server-side A4 PDF invoices generated with ReportLab and uploaded to Firebase Storage with a permanent download token.
+* **Image Pipeline:** Browser-side canvas downscaling for transport, then Pillow sanitization and WebP re-encoding server-side. The in-app camera uses `getUserMedia`, which requires a secure (HTTPS) origin.
 * **Language Engines:** Sarvam AI (Speech-to-Text & Native Translation), Groq Cloud (Llama 3.1 LLM for structure extraction).
 
 ---
@@ -105,7 +109,8 @@ BolKhata uses a clean REST API structure. All endpoints except `/config` and `/p
 | `/config` | `GET` | Fetches client Firebase keys dynamically |
 | `/process_voice` | `POST` | Primary entry point. Processes audio binary data and commits intents to Firestore |
 | `/voice/resolve` | `POST` | Completes a transaction after the user picks a customer in a disambiguation prompt |
-| `/inventory` | `GET` | Lists all active stock names, quantities, and prices |
+| `/inventory` | `GET` | Lists all active stock names, quantities, prices, optional metadata, and product image URLs |
+| `/inventory` | `POST` | Creates a stock item from a `multipart/form-data` submission (name + price required; product photo, cost price, unit, opening stock, and category optional) |
 | `/inventory/{item_id}` | `PUT` | Renames an item or updates its price/stock levels in-place |
 | `/inventory/{item_id}` | `DELETE` | Removes a single item from the active database |
 | `/confirm_clear_inventory` | `POST` | Deletes the entire stock collection (requires UI verification) |
@@ -136,16 +141,18 @@ BolKhata uses a clean REST API structure. All endpoints except `/config` and `/p
 
 ## Security & Rate Limiting
 
-* **Siloed Databases:** All subcollections (stock, udhaar, orders, bills, history, suppliers, suppliers_purchases) are uniquely locked under their authenticated Firebase uid path, preventing cross-shop data leaks.
+* **Siloed Databases:** All subcollections (stock, udhaar, orders, bills, history, suppliers, suppliers_purchases) and all Storage objects (bills, item photos) are uniquely locked under their authenticated Firebase uid path, preventing cross-shop data leaks. The uid always comes from the verified token, never from the request.
 * **Deny-All Firestore Rules:** `firestore.rules` blocks all direct client access; only the backend's Admin SDK touches data. Deploy with `npx firebase-tools deploy --only firestore:rules`.
-* **Per-User Bill Storage:** Generated bill PDFs are written to Firebase Storage under `users/{uid}/bills/` and exposed only through unguessable, per-bill download tokens — never via a public listing.
+* **Per-User File Storage:** Generated bill PDFs (`users/{uid}/bills/`) and product photos (`users/{uid}/items/`) are exposed only through unguessable download tokens — never via a public listing. Deleting an item or clearing inventory also deletes its photos, and renaming an item carries its photo across; an orphaned blob would otherwise be billed indefinitely.
+* **Hardened Image Uploads:** Product photos are identified by magic bytes (JPEG, PNG, and WebP only — the client's `Content-Type` and filename are ignored entirely), capped at 3 MB before any decoding, and rejected above 40 megapixels so a small file cannot expand into a decompression bomb. Every accepted image is then **fully re-encoded from decoded pixels**, which strips EXIF/GPS metadata (these are photos taken inside a named shop) and discards any appended polyglot payload — no client-supplied bytes ever reach Storage. Storage paths are server-generated UUIDs, so a hostile filename cannot escape the caller's own directory.
 * **Signed Payment Links:** `/pay` tokens are signed with `PAY_LINK_SECRET` (required; the app refuses to mint links without it) and expire after 24 hours. The payee UPI ID is always read from the authenticated shopkeeper's settings, never from the request.
-* **Rate Limits Imposed:**
+* **Rate Limits Imposed:** Each feature holds its own per-user budget, so uploading photos can never consume a shopkeeper's voice quota.
   * **User Cooldown:** One voice request per 2 seconds per user to prevent audio button spamming.
   * **Per-User Daily Cap:** 400 voice requests per user per day, so a single account cannot exhaust the shared quota.
+  * **Image Uploads:** A 3-second per-user cooldown and 100 uploads per user per day, plus global ceilings of 60/minute and 2,000/day to bound Firebase Storage growth. Signup is open, so the global cap is the layer that holds even against mass account creation. Creating an item without a photo doesn't spend this budget.
   * **Sarvam STT Global Limits:** Firestore-backed sliding window to stay within plan quotas.
   * **Groq RPM/RPD Limits:** Monitored to gracefully handle Groq Cloud rate-limit policies and return a user-friendly wait message ("Thoda ruko!").
-* **Input Validation:** All write endpoints enforce bounds (non-negative quantities/amounts, length caps, UPI VPA format) via Pydantic models.
+* **Input Validation:** All write endpoints enforce bounds (non-negative quantities/amounts, length caps, UPI VPA format) via Pydantic models. Multipart endpoints get no Pydantic validation, so `POST /inventory` re-asserts the same bounds by hand and additionally validates the item name as a Firestore document ID.
 * **Hardened Frontend:** All user-derived strings are HTML-escaped before rendering; CORS is restricted to local development origins plus an optional `ALLOWED_ORIGINS` allowlist.
 * **Privacy:** Voice transcripts and parsed intents are only logged when `DEBUG_LOGS=1`; production logs contain timings only.
 
