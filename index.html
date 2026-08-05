@@ -135,9 +135,9 @@
             <span class="nav-icon">🎙️</span>
             <span class="nav-label">Voice</span>
           </button>
-          <button class="nav-item" data-page="dashboard">
+          <button class="nav-item" data-page="inventory">
             <span class="nav-icon">📊</span>
-            <span class="nav-label">Dashboard</span>
+            <span class="nav-label">Inventory</span>
           </button>
           <button class="nav-item" data-page="history">
             <span class="nav-icon">📜</span>
@@ -238,6 +238,17 @@
           <div id="status" class="mic-hint">Hold to speak</div>
         </div>
 
+        <div class="home-shortcuts">
+          <button class="home-shortcut" data-page="orders" type="button">
+            <span class="home-shortcut-icon">📦</span>
+            <span class="home-shortcut-label">Orders</span>
+          </button>
+          <button class="home-shortcut" data-page="ledger" type="button">
+            <span class="home-shortcut-icon">📒</span>
+            <span class="home-shortcut-label">Ledger</span>
+          </button>
+        </div>
+
         <div class="result-area">
           <div class="result-label">Response</div>
           <div id="result" class="result-container">
@@ -246,8 +257,8 @@
         </div>
       </div>
 
-      <!-- PAGE: Dashboard -->
-      <div id="page-dashboard" class="page-container hidden">
+      <!-- PAGE: Inventory -->
+      <div id="page-inventory" class="page-container hidden">
         <div class="dashboard-header">
           <h2 class="dashboard-title">📊 Live Inventory</h2>
           <div class="dashboard-actions">

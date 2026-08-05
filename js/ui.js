@@ -227,7 +227,7 @@ export function renderResults(results, errors) {
 
 // ═══════ PAGE NAVIGATION ═══════
 let currentPage = "voice";
-const pages = ["voice", "dashboard", "history", "suppliers", "ledger", "orders"];
+const pages = ["voice", "inventory", "history", "suppliers", "ledger", "orders"];
 export function navigateTo(page) {
   if (!pages.includes(page)) return;
   currentPage = page;
@@ -247,7 +247,7 @@ export function navigateTo(page) {
   closeDrawer();
 
   // Load data for the target page
-  if (page === "dashboard") loadDashboardInventory();
+  if (page === "inventory") loadDashboardInventory();
   if (page === "history") loadHistory();
   if (page === "suppliers") { loadSuppliers(); loadSavedSuppliers(); }
   if (page === "ledger") loadLedgerCustomers();
@@ -256,6 +256,12 @@ export function navigateTo(page) {
 
 // Wire nav items
 document.querySelectorAll(".nav-item").forEach(btn => {
+  btn.addEventListener("click", () => navigateTo(btn.dataset.page));
+});
+
+// Home screen quick-access shortcuts — a separate class from .nav-item so they
+// don't pick up the drawer's .active styling toggled in navigateTo().
+document.querySelectorAll(".home-shortcut").forEach(btn => {
   btn.addEventListener("click", () => navigateTo(btn.dataset.page));
 });
 

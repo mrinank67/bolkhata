@@ -13,8 +13,8 @@ Schema:
 - item: English name, strip units. "ALL" for full inventory. "" if N/A
 - qty: number (fractions like 2.5 allowed). 0 for read/clear
 - unit: "packet"/"kilo"/"bars"/"pieces"/"box"/etc. "" if unmentioned
-- amount: total price in ₹ ("500 rupees worth"→500). 0 if none
-- rate: per-unit price ("at 12 rupees each"→12). 0 if none
+- amount: TOTAL for the whole line ("500 rupees worth", "X rupay ka/ke", "for a total of X"). 0 if none
+- rate: PER-UNIT price ("at 12 rupees each", "per piece/kilo/packet", "at the rate of X", and Hindi "X rupay se"/"ke hisaab se" which ALWAYS mean per-unit). 0 if none
 - customer_name: buyer name, apply to ALL items in utterance. Use context if implied. "" for cash sale
 - customer_modifier: descriptor ("from delhi"). "" if none
 - supplier_name: vendor name, ONLY when shop is buying/receiving goods. Strip suffixes (supplier/wholesale/traders/distributor/supply) — "crazy girl supplier"→"crazy girl". "" if not supplier purchase
@@ -24,6 +24,7 @@ Rules:
 - "Write down"/"note down"/"record"/"add to" + someone's account = subtract + is_credit=true (recording credit). NEVER use operation=clear for these — clear means DELETE/SETTLE only ("clear"/"remove"/"delete"/"settle")
 - Reminder ("send X a reminder"/"remind X about payment"): target=ledger, operation=send_reminder, customer_name=X, rest empty/0
 - Supplier purchase ("received/bought/purchased GOODS from X" WITH an item): target=stock, operation=add, supplier_name=X. supplier_name ≠ customer_name. Money received from a person = payment, NOT supplier
+- Price: "se"/"ke hisaab se"/"each"/"per <unit>"/"at the rate of" = rate (PER-UNIT). "worth"/"ka"/"ke"/"for a total of" = amount (TOTAL). NEVER put a per-unit price in amount. If the phrasing is per-unit, set rate and leave amount=0 — the server computes the total
 - Supplier directory (NO item — managing the supplier list itself): "add/save X as a supplier"/"X ko supplier list me daalo" → target=supplier, operation=add, supplier_name=X, item="", qty=0. "remove/delete supplier X"/"X ko supplier list se hatao" → target=supplier, operation=clear, supplier_name=X. "how much did I buy from X"/"X se kitna maal liya"/"X se kya khareeda" → target=supplier, operation=read, supplier_name=X
 
 Output ONLY raw JSON:
@@ -34,6 +35,8 @@ Examples:
 - "gave Ramesh 12 packets of maggi worth 480 rupees on credit" → subtract, maggi, 12, packet, 480, ramesh, is_credit=true
 - "300 soap from Ramesh traders at 12 rupees each" → add, soap, 300, supplier=ramesh traders, rate=12
 - "sold 2 soap to Raj at 15 rupees each" → subtract, soap, 2, raj, rate=15
+- "sell 10 maggi to Sujal at 10 rupees" → subtract, maggi, 10, sujal, rate=10, amount=0 (per-unit "se", total = 100 computed by server)
+- "add 100 pieces of samosa to inventory at 10 rupees" → add, samosa, 100, pieces, rate=10, amount=0
 - "36 curly extensions and 24 dozen combs from Khan beauty supply for 6250" → TWO txns, target=stock, add, supplier=khan beauty supply
 - "add Ramesh Traders as a supplier" → target=supplier, add, supplier_name=ramesh traders, item="", qty=0 (registering, NO goods)
 - "remove Khan beauty from my suppliers" → target=supplier, clear, supplier_name=khan beauty

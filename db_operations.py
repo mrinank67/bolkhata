@@ -604,7 +604,7 @@ def process_transactions(
                 "udhaar_sale",
                 "Credit Sale (Udhaar)",
                 "📒",
-                ["Customer", "Item", "Qty", "Unit", "Amount", "Total Owed", "Stock"],
+                ["Customer", "Item", "Qty", "Unit", "Rate", "Amount", "Total Owed", "Stock"],
             )
 
             # Log each lump credit as its own entry; the running "Total Owed"
@@ -638,6 +638,7 @@ def process_transactions(
                 "Item": "General",
                 "Qty": "-",
                 "Unit": "-",
+                "Rate": "-",
                 "Amount": f"₹{txn_amount:,.0f}",
                 "Total Owed": f"₹{total_owed_amount:,.0f}",
                 "Stock": "-",
@@ -689,6 +690,14 @@ def process_transactions(
         else:
             qty = _to_number(raw_qty, default=1)
 
+        # The LLM sometimes lands a per-unit price in `amount` ("10 maggi 10 rupay se"
+        # → amount=10 instead of rate=10). Only correct this when the item has a stored
+        # unit price to compare against, so a genuine bulk total is never rewritten.
+        if txn_rate == 0 and txn_amount > 0 and db_price > 0 and qty > 1:
+            if abs(txn_amount - db_price) < abs((txn_amount / qty) - db_price):
+                txn_rate = txn_amount
+                txn_amount = 0  # recomputed as rate * qty by the block below
+
         # Calculate txn_amount — rate is unambiguous (per-unit), so it always wins.
         # The stored retail price only applies to sales; using it for restocks
         # would fabricate a purchase cost in supplier records.
@@ -711,7 +720,13 @@ def process_transactions(
         }
         if not stock_doc.exists:
             update_data["created_at"] = firestore.SERVER_TIMESTAMP
-            
+
+        # A rate spoken on a plain inventory add is the shop's SELLING price.
+        # A rate spoken on a supplier purchase is a COST price — writing that to
+        # stock.price would make every later sale bill at wholesale cost.
+        if txn_rate > 0 and operation == "add" and not supplier_name:
+            update_data["price"] = txn_rate
+
         stock_doc_ref.set(update_data, merge=True)
         title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize() if customer_name else ""
 
@@ -721,7 +736,7 @@ def process_transactions(
                 "udhaar_sale",
                 "Credit Sale (Udhaar)",
                 "📒",
-                ["Customer", "Item", "Qty", "Unit", "Amount", "Total Owed", "Stock"],
+                ["Customer", "Item", "Qty", "Unit", "Rate", "Amount", "Total Owed", "Stock"],
             )
 
             # Log every credit sale as its own entry (a transaction record),
@@ -742,6 +757,7 @@ def process_transactions(
                 "item": standard_item,
                 "quantity": qty,
                 "amount": txn_amount or 0,
+                "price": txn_rate or ((txn_amount / qty) if (txn_amount and qty) else (db_price or 0)),
                 "unit": txn_unit or "",
                 "whatsapp_number": "",
                 "reminder_schedule": "",
@@ -759,7 +775,7 @@ def process_transactions(
                     "item": standard_item,
                     "quantity": qty,
                     "amount": txn_amount or 0,
-                    "price": (txn_amount / qty) if (txn_amount and qty) else (db_price or 0),
+                    "price": txn_rate or ((txn_amount / qty) if (txn_amount and qty) else (db_price or 0)),
                     "order_id": _order_id_for(f"{customer_name}|{customer_modifier}"),
                     "timestamp": firestore.SERVER_TIMESTAMP,
                 })
@@ -771,6 +787,7 @@ def process_transactions(
                 "Item": standard_item.capitalize(),
                 "Qty": qty,
                 "Unit": txn_unit or "-",
+                "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
                 "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
                 "Total Owed": f"₹{total_owed_amount:,.0f}" if total_owed_amount else "-",
                 "Stock": new_qty,
@@ -780,7 +797,7 @@ def process_transactions(
                 "order_sale",
                 "Customer Order",
                 "🛍️",
-                ["Customer", "Item", "Qty", "Amount", "Total Ordered", "Stock"]
+                ["Customer", "Item", "Qty", "Rate", "Amount", "Total Ordered", "Stock"]
             )
 
             # Log every sale as its own order entry (a transaction record),
@@ -802,7 +819,7 @@ def process_transactions(
                     "item": standard_item,
                     "quantity": qty,
                     "amount": txn_amount or 0,
-                    "price": (txn_amount / qty) if (txn_amount and qty) else (db_price or 0),
+                    "price": txn_rate or ((txn_amount / qty) if (txn_amount and qty) else (db_price or 0)),
                     "order_id": _order_id_for(f"{customer_name}|{customer_modifier}"),
                     "timestamp": firestore.SERVER_TIMESTAMP,
                 }
@@ -813,6 +830,7 @@ def process_transactions(
                 "Customer": title_name,
                 "Item": standard_item.capitalize(),
                 "Qty": qty,
+                "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
                 "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
                 "Total Ordered": f"₹{total_order_amount:,.0f}" if total_order_amount else "-",
                 "Stock": new_qty,
@@ -845,6 +863,7 @@ def process_transactions(
                     "item_name": standard_item,
                     "quantity": qty,
                     "amount": txn_amount or 0,
+                    "rate": txn_rate or 0,  # cost price — distinct from stock.price (retail)
                     "proof_image_url": "",
                     "timestamp": firestore.SERVER_TIMESTAMP,
                 })

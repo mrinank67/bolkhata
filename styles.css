@@ -583,9 +583,9 @@ input::placeholder {
   overflow: hidden;
 }
 
-/* Voice page: mic top half, results bottom half */
+/* Voice page: mic top, quick shortcuts, results bottom */
 #page-voice {
-  grid-template-rows: 1fr 1fr;
+  grid-template-rows: 1fr auto 1fr;
 }
 
 #page-voice .mic-area {
@@ -597,6 +597,50 @@ input::placeholder {
   margin: 0;
 }
 
+/* Home screen quick-access shortcuts (Orders / Ledger) */
+.home-shortcuts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 0 0 16px;
+}
+
+.home-shortcut {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 12px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.home-shortcut:hover {
+  background: var(--accent-soft);
+  border-color: var(--border-focus);
+}
+
+.home-shortcut:active {
+  transform: scale(0.97);
+}
+
+.home-shortcut-icon {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.home-shortcut-label {
+  white-space: nowrap;
+}
+
 #page-voice .result-area {
   overflow-y: auto;
   margin-top: 0;
@@ -605,8 +649,8 @@ input::placeholder {
   padding-right: 10px;
 }
 
-/* Dashboard page: scrollable */
-#page-dashboard {
+/* Inventory page: scrollable */
+#page-inventory {
   grid-template-rows: auto 1fr;
   overflow-y: auto;
 }
