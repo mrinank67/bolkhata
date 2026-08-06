@@ -13,6 +13,17 @@ import { compressImage } from "./image-compress.js";
 let currentInventory = [];
 let currentSort = 'name-asc';
 
+// Pack units: quantity counts packs and price is per pack, so a dozen item is
+// "5 dozen @ ₹100" — never 60 pieces at ₹8.33. "" and "pcs" are the plain
+// per-piece case and keep the original wording ("₹100/item", bare qty).
+const UNIT_ONE = { dozen: 'dozen', box: 'box', pack: 'pack' };
+const UNIT_MANY = { dozen: 'dozen', box: 'boxes', pack: 'packs' };
+
+function packUnit(unit) {
+  const u = (unit || '').toLowerCase();
+  return UNIT_ONE[u] ? u : '';
+}
+
 export async function loadDashboardInventory() {
   const inventoryGrid = $("inventory-grid");
   inventoryGrid.innerHTML = '<div class="inventory-empty">Loading inventory…</div>';
@@ -57,9 +68,13 @@ function renderDashboardInventory() {
     if (qty === 0) qtyClass = 'out-of-stock';
     else if (qty <= 5) qtyClass = 'low-stock';
 
+    // The stock value is qty × price in both cases: for a pack unit that is
+    // packs × price-per-pack, so no ÷12 anywhere.
+    const unit = packUnit(item.unit);
     const priceHtml = price > 0
-      ? `<div class="inventory-tile-price">Total: ₹${(qty * price).toLocaleString('en-IN')} <span style="font-weight: 500; font-size: 0.85em; opacity: 0.8;">(₹${price.toLocaleString('en-IN')}/item)</span></div>`
+      ? `<div class="inventory-tile-price">Total: ₹${(qty * price).toLocaleString('en-IN')} <span style="font-weight: 500; font-size: 0.85em; opacity: 0.8;">(₹${price.toLocaleString('en-IN')}/${unit ? UNIT_ONE[unit] : 'item'})</span></div>`
       : '';
+    const unitChip = unit ? `<span class="inventory-tile-unit">${UNIT_MANY[unit]}</span>` : '';
 
     // loading="lazy" matters here — a 300-item grid would otherwise fire 300
     // parallel requests on page load.
@@ -67,10 +82,10 @@ function renderDashboardInventory() {
       ? `<img class="inventory-tile-thumb" src="${escapeHtml(item.thumb_url)}" alt="" loading="lazy" decoding="async" />`
       : '<div class="inventory-tile-thumb-empty">📦</div>';
 
-    html += `<div class="inventory-tile" data-item-id="${escapeHtml(item.item)}" data-item-qty="${qty}" data-item-price="${price}">
+    html += `<div class="inventory-tile" data-item-id="${escapeHtml(item.item)}" data-item-qty="${qty}" data-item-price="${price}" data-item-unit="${escapeHtml(unit)}">
       ${thumb}
       <div class="inventory-tile-name">${escapeHtml(item.item)}</div>
-      <div class="inventory-tile-qty ${qtyClass}">${qty}</div>
+      <div class="inventory-tile-qty ${qtyClass}">${qty}${unitChip}</div>
       ${priceHtml}
       <div class="inventory-tile-edit-hint">Tap to edit</div>
     </div>`;
@@ -84,18 +99,24 @@ function renderDashboardInventory() {
       openInventoryEditModal(
         tile.dataset.itemId,
         parseInt(tile.dataset.itemQty) || 0,
-        parseFloat(tile.dataset.itemPrice) || 0
+        parseFloat(tile.dataset.itemPrice) || 0,
+        tile.dataset.itemUnit
       );
     });
   });
 }
 
 // ── Inventory Edit Modal ──
-function openInventoryEditModal(itemId, qty, price) {
+function openInventoryEditModal(itemId, qty, price, unit) {
   $("inventory-edit-original-id").value = itemId;
   $("inventory-edit-name").value = itemId;
   $("inventory-edit-qty").value = qty;
   $("inventory-edit-price").value = price || '';
+  // Name the unit in the labels — editing "12" on a dozen item means 12 dozen,
+  // and the shopkeeper should see that before typing.
+  const u = packUnit(unit);
+  $("inventory-edit-qty-label").textContent = u ? `Quantity (${UNIT_MANY[u]})` : 'Quantity';
+  $("inventory-edit-price-label").textContent = u ? `Price (₹ per ${UNIT_ONE[u]})` : 'Price (₹)';
   $("inventory-edit-modal").classList.add("open");
   setTimeout(() => $("inventory-edit-name").focus(), 100);
 }
@@ -251,10 +272,24 @@ function closeAddModal() {
   $("inventory-add-modal").classList.remove("open");
 }
 
+// Retitle the price/stock fields for the chosen unit, so "Dozen" asks for the
+// price of one dozen (₹100 for a dozen apples) and stock counts dozens.
+function syncAddUnitLabels() {
+  const u = packUnit($("inventory-add-unit").value);
+  const per = u ? ` per ${UNIT_ONE[u]}` : "";
+  $("inventory-add-price-label").textContent = `Sell Price${per} (₹) *`;
+  $("inventory-add-cost-label").textContent = `Cost Price${per} (₹)`;
+  $("inventory-add-qty-label").textContent =
+    u ? `Opening Stock (${UNIT_MANY[u]})` : "Opening Stock";
+}
+
+$("inventory-add-unit").addEventListener("change", syncAddUnitLabels);
+
 function openInventoryAddModal() {
   ["inventory-add-name", "inventory-add-price", "inventory-add-cost",
    "inventory-add-qty", "inventory-add-category"].forEach(id => { $(id).value = ""; });
   $("inventory-add-unit").value = "pcs";
+  syncAddUnitLabels();
   clearAddPhoto();
   setPickerState("empty");
   $("inventory-add-modal").classList.add("open");

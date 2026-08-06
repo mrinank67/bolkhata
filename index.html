@@ -326,11 +326,14 @@
 
             <div class="form-row">
               <div class="field-group field-half">
-                <label class="field-label">Sell Price (₹) *</label>
+                <!-- These three labels are rewritten by dashboard.js when the unit
+                     changes ("Sell Price per dozen"), so the shopkeeper enters a
+                     per-dozen price instead of guessing. -->
+                <label class="field-label" id="inventory-add-price-label">Sell Price (₹) *</label>
                 <input type="number" id="inventory-add-price" placeholder="0" min="0" step="0.01" inputmode="decimal" />
               </div>
               <div class="field-group field-half">
-                <label class="field-label">Cost Price (₹)</label>
+                <label class="field-label" id="inventory-add-cost-label">Cost Price (₹)</label>
                 <input type="number" id="inventory-add-cost" placeholder="0" min="0" step="0.01" inputmode="decimal" />
               </div>
             </div>
@@ -340,12 +343,13 @@
                 <label class="field-label">Unit</label>
                 <select id="inventory-add-unit" class="inventory-sort-select" style="width:100%;">
                   <option value="pcs">PCS</option>
+                  <option value="dozen">Dozen</option>
                   <option value="box">Box</option>
                   <option value="pack">Pack</option>
                 </select>
               </div>
               <div class="field-group field-half">
-                <label class="field-label">Opening Stock</label>
+                <label class="field-label" id="inventory-add-qty-label">Opening Stock</label>
                 <input type="number" id="inventory-add-qty" placeholder="0" min="0" inputmode="numeric" />
               </div>
             </div>
@@ -373,11 +377,11 @@
             </div>
             <div class="form-row">
               <div class="field-group field-half">
-                <label class="field-label">Quantity</label>
+                <label class="field-label" id="inventory-edit-qty-label">Quantity</label>
                 <input type="number" id="inventory-edit-qty" placeholder="0" min="0" inputmode="numeric" />
               </div>
               <div class="field-group field-half">
-                <label class="field-label">Price (₹)</label>
+                <label class="field-label" id="inventory-edit-price-label">Price (₹)</label>
                 <input type="number" id="inventory-edit-price" placeholder="0" min="0" inputmode="decimal" />
               </div>
             </div>

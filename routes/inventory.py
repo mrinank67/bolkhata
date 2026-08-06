@@ -29,7 +29,9 @@ router = APIRouter()
 # cost, and per-request storage cost — all of which hold on any host.
 MAX_UPLOAD_BYTES = 3 * 1024 * 1024
 
-ALLOWED_UNITS = {"", "pcs", "box", "pack"}
+# A pack unit is a counting unit, not a conversion factor: a "dozen" item holds
+# a quantity of dozens and a price per dozen, never 12 pieces at price/12.
+ALLOWED_UNITS = {"", "pcs", "dozen", "box", "pack"}
 MAX_CATEGORY_LEN = 50
 
 # Fields carried across a rename. The doc id IS the item name, so renaming means
@@ -258,7 +260,7 @@ async def create_inventory_item(
         raise HTTPException(status_code=400, detail="Opening stock is out of range.")
     unit = (unit or "").strip().lower()
     if unit not in ALLOWED_UNITS:
-        raise HTTPException(status_code=400, detail="Unit must be PCS, Box or Pack.")
+        raise HTTPException(status_code=400, detail="Unit must be PCS, Dozen, Box or Pack.")
     category = (category or "").strip()[:MAX_CATEGORY_LEN]
 
     user_stock_ref = db.collection("users").document(uid).collection("stock")
