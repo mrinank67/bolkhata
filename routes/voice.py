@@ -32,6 +32,11 @@ router = APIRouter()
 _groq_client = None
 _sarvam_api_key = None
 
+# Intent-extraction model. gpt-oss-20b is a reasoning model; the shop floor cares
+# about latency far more than deliberation, so reasoning effort is pinned low.
+GROQ_MODEL = "openai/gpt-oss-20b"
+GROQ_REASONING_EFFORT = "low"
+
 
 def _get_groq_client():
     global _groq_client
@@ -265,9 +270,10 @@ async def process_voice(
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Text to process: '{hindi_text}'"},
                 ],
-                model="llama-3.1-8b-instant",
+                model=GROQ_MODEL,
                 response_format={"type": "json_object"},
                 temperature=0.0,
+                reasoning_effort=GROQ_REASONING_EFFORT,
             )
         except Exception as groq_err:
             # Retry once on Groq 429 (rate limit from their side)
@@ -281,16 +287,17 @@ async def process_voice(
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"Text to process: '{hindi_text}'"},
                     ],
-                    model="llama-3.1-8b-instant",
+                    model=GROQ_MODEL,
                     response_format={"type": "json_object"},
                     temperature=0.0,
+                    reasoning_effort=GROQ_REASONING_EFFORT,
                 )
             else:
                 raise groq_err
 
         json_str = chat_completion.choices[0].message.content
         intent = json.loads(json_str)
-        print(f"⏱️ LLM (Groq Llama3): {time.time() - t2:.2f}s")
+        print(f"⏱️ LLM (Groq {GROQ_MODEL}): {time.time() - t2:.2f}s")
         if _debug_logs():
             print(f"Understood Intent: {intent}")
 

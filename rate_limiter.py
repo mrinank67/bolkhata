@@ -27,8 +27,10 @@ class RateLimitConfig:
 
 
 # ── Groq Free Tier ──
-# Actual limits: 30 RPM, 14,400 RPD
-# We use 80% to leave headroom
+# Quotas are PER MODEL, so these must be re-checked whenever routes/voice.py
+# changes GROQ_MODEL. For openai/gpt-oss-20b: 30 RPM, 1,000 RPD, 8,000 TPM
+# (read off the x-ratelimit-* response headers).
+# We use 80% to leave headroom.
 GROQ_RPM = RateLimitConfig(
     name="Groq LLM",
     max_requests=24,         # 80% of 30 RPM
@@ -38,7 +40,7 @@ GROQ_RPM = RateLimitConfig(
 
 GROQ_RPD = RateLimitConfig(
     name="Groq LLM (daily)",
-    max_requests=11500,      # 80% of 14,400 RPD
+    max_requests=800,        # 80% of 1,000 RPD
     window_seconds=86400,
     firestore_key="groq_rpd",
 )
