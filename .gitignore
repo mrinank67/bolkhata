@@ -14,6 +14,16 @@ __pycache__/
 .env
 bolkhata-app-firebase-adminsdk-fbsvc-c2ffa955ec.json
 
+# Node (dev-only lint tooling -- not deployed, see .vercelignore)
+node_modules/
+
+# Test & lint artifacts
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
 # Claude Code
 .claude/
 graphify-out/

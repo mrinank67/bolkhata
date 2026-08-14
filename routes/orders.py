@@ -10,11 +10,11 @@ generation flow so editing an order doesn't trigger unnecessary stock writes.
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, Header, HTTPException
 from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from auth import verify_token, get_bucket
+from auth import get_bucket, verify_token
 from models import OrderCreateRequest, OrderItemAddRequest, OrderItemUpdate
 
 router = APIRouter()

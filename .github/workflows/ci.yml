@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+    branches: [main, development]
+
+# A new push to the same branch cancels the in-flight run for it. `main` is
+# excluded so the record of what passed on the default branch stays complete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python (lint + tests)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is the realistic Vercel serverless runtime; 3.14 is what the repo
+        # is developed against locally. Testing both catches a version-specific
+        # break in either direction rather than only where it happened to be run.
+        python-version: ["3.12", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check --output-format=github .
+
+      - name: Check formatting of test code
+        # Only tests/ is format-gated. The application code predates this
+        # pipeline and reformatting it wholesale would bury real changes in
+        # 1,200+ lines of whitespace churn; the pre-commit hook formats
+        # application files incrementally as they are edited instead.
+        run: ruff format --check tests/
+
+      - name: Tests
+        run: pytest --cov=. --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          retention-days: 14
+
+  frontend:
+    name: Frontend (eslint)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint JS
+        run: npx eslint .
+
+  config:
+    name: Config validity
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate JSON configs
+        # A malformed vercel.json breaks the deploy with no local signal at all.
+        run: |
+          for f in vercel.json manifest.json firebase.json package.json; do
+            python -c "import json,sys; json.load(open(sys.argv[1]))" "$f" \
+              && echo "ok: $f" \
+              || { echo "INVALID JSON: $f"; exit 1; }
+          done
+
+      - name: Check Firebase rules files are present
+        run: |
+          test -f firestore.rules || { echo "firestore.rules is missing"; exit 1; }
+          test -f storage.rules   || { echo "storage.rules is missing"; exit 1; }
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks needs full history to scan past commits
+
+      - name: Assert no credential files are tracked
+        # Belt-and-braces alongside .gitignore: a `git add -f` of the Firebase
+        # Admin service-account key would hand over full database access.
+        run: |
+          tracked=$(git ls-files | grep -E '(^|/)\.env$|firebase-adminsdk.*\.json$|serviceAccount.*\.json$' || true)
+          if [ -n "$tracked" ]; then
+            echo "Credential file(s) are tracked in git:"
+            echo "$tracked"
+            exit 1
+          fi
+          echo "ok: no credential files tracked"
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -3,15 +3,22 @@ Customer ledger endpoints — all /ledger/* routes
 """
 
 import os
-from fastapi import APIRouter, HTTPException, Header, Query
+
+from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
-from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from auth import verify_token
 from db_operations import apply_payment
-from models import LedgerEntryRequest, ClearDuesRequest, WhatsAppReminderRequest, UserSettingsRequest, PayLinkRequest
+from models import (
+    ClearDuesRequest,
+    LedgerEntryRequest,
+    PayLinkRequest,
+    UserSettingsRequest,
+    WhatsAppReminderRequest,
+)
 
 # Lazy-initialized: this module is imported before main.py runs load_dotenv(),
 # and a hardcoded fallback secret would let anyone forge payment links.
@@ -331,6 +338,7 @@ async def get_settings(authorization: str = Header(None)):
 @router.put("/settings")
 async def update_settings(req: UserSettingsRequest, authorization: str = Header(None)):
     import re
+
     from main import db
 
     uid = verify_token(authorization)

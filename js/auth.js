@@ -178,7 +178,7 @@ const otpDigits = document.querySelectorAll(".otp-digit");
 
 otpDigits.forEach((input, idx) => {
   // Only allow single digit
-  input.addEventListener("input", e => {
+  input.addEventListener("input", () => {
     const val = input.value.replace(/[^0-9]/g, "");
     input.value = val.slice(0, 1);
 

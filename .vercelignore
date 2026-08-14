@@ -1,0 +1,25 @@
+# Keep the deployed bundle identical to what it was before CI was added.
+# Everything here is dev tooling and must never reach the serverless function.
+
+node_modules
+package.json
+package-lock.json
+eslint.config.js
+
+ruff.toml
+pytest.ini
+requirements-dev.txt
+tests
+.pre-commit-config.yaml
+
+.github
+.claude
+graphify-out
+.venv
+env
+__pycache__
+*.pyc
+
+.env.example
+README.md
+PRODUCT_USAGE.md

@@ -4,7 +4,7 @@ Supplier endpoints — all /suppliers/* routes
 
 import datetime
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, Header, HTTPException
 from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
