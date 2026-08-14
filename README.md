@@ -97,6 +97,7 @@ Speak naturally in Hindi or Hinglish, and BolKhata will instantly map the correc
 * **Bill Rendering:** Server-side A4 PDF invoices generated with ReportLab and uploaded to Firebase Storage with a permanent download token.
 * **Image Pipeline:** Browser-side canvas downscaling for transport, then Pillow sanitization and WebP re-encoding server-side. The in-app camera uses `getUserMedia`, which requires a secure (HTTPS) origin.
 * **Language Engines:** Sarvam AI (Speech-to-Text & Native Translation), Groq Cloud (GPT-OSS 20B LLM for structure extraction).
+* **Testing & CI:** pytest against an in-memory Firestore double, Ruff and ESLint for linting, and GitHub Actions gating every pull request. See [Automated Quality Checks](#automated-quality-checks).
 
 ---
 
@@ -155,6 +156,22 @@ BolKhata uses a clean REST API structure. All endpoints except `/config` and `/p
 * **Input Validation:** All write endpoints enforce bounds (non-negative quantities/amounts, length caps, UPI VPA format) via Pydantic models. Multipart endpoints get no Pydantic validation, so `POST /inventory` re-asserts the same bounds by hand and additionally validates the item name as a Firestore document ID.
 * **Hardened Frontend:** All user-derived strings are HTML-escaped before rendering; CORS is restricted to local development origins plus an optional `ALLOWED_ORIGINS` allowlist.
 * **Privacy:** Voice transcripts and parsed intents are only logged when `DEBUG_LOGS=1`; production logs contain timings only.
+
+---
+
+## Automated Quality Checks
+
+Every push and pull request runs a CI pipeline before anything can reach production. `main` is protected — all checks must pass before a merge is allowed.
+
+* **Test Suite:** 408 automated tests covering the ledger math, rate limiting, image sanitization, token verification, and every API route. They run against an in-memory database double with all external services stubbed, so no test spends an API quota or touches live shop data.
+* **Route Coverage:** `vercel.json` lists every API path by hand, and auth is enforced inside each route handler rather than centrally. Two tests catch a new endpoint that was added without a deploy route (which would 404 only in production) or without an auth check (which would expose another shop's data).
+* **Config Drift:** Every environment variable the code reads must be documented in `.env.example`, and the deployment configs must parse — a malformed `vercel.json` otherwise breaks the deploy with no earlier warning.
+* **Secret Scanning:** Full git history is scanned for leaked credentials on every run, with an explicit check that the Firebase Admin key and `.env` are never committed.
+* **Linting:** Ruff on the Python backend and ESLint on the frontend modules, on Python 3.12 and 3.14.
+
+The same checks run locally as Git hooks, so problems surface before a push rather than after.
+
+Browser behaviour, live Firebase rules, and real speech recognition are still verified by hand — CI covers the logic, not the experience.
 
 ---
 
