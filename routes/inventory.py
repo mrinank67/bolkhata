@@ -7,13 +7,13 @@ from typing import Optional
 from urllib.parse import quote
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Header, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from firebase_admin import firestore
 
-from auth import verify_token, get_bucket
+from auth import get_bucket, verify_token
 from image_utils import ImageRejected, process_item_image
-from models import InventoryItemUpdate, MAX_AMOUNT, MAX_QTY
+from models import MAX_AMOUNT, MAX_QTY, InventoryItemUpdate
 from rate_limiter import (
     IMAGE_UPLOAD_RPD,
     IMAGE_UPLOAD_RPM,

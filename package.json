@@ -1,0 +1,15 @@
+{
+  "name": "bolkhata-frontend-tooling",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev-only lint tooling for the BolKhata PWA. The frontend has no build step -- the browser loads js/*.js as native ES modules. Nothing here is deployed; see .vercelignore.",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
+  },
+  "devDependencies": {
+    "eslint": "^9.20.0",
+    "globals": "^15.14.0"
+  }
+}

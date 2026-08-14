@@ -1,0 +1,11 @@
+# Development-only dependencies. Kept out of requirements.txt so the Vercel
+# serverless bundle stays lean -- @vercel/python installs requirements.txt only.
+#
+# Install locally with:
+#   pip install -r requirements.txt -r requirements-dev.txt
+
+pytest==8.3.4
+pytest-cov==6.0.0
+httpx==0.28.1          # required by fastapi.testclient.TestClient
+ruff==0.9.6
+pre-commit==4.1.0

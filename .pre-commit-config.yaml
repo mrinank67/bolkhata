@@ -1,0 +1,57 @@
+# Local checks mirroring CI. One-time setup per machine:
+#
+#   pip install pre-commit
+#   pre-commit install --install-hooks -t pre-commit -t pre-push
+#
+# Commit-stage hooks are fast (lint, format, secrets). The test suite runs at
+# push time instead — a full suite on every commit is the kind of friction people
+# route around with `--no-verify`, which is worse than not having the hook.
+
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-json
+        # vercel.json / manifest.json / firebase.json breaking the deploy is
+        # otherwise invisible until Vercel rejects the build.
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: detect-private-key
+      - id: check-case-conflict
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+        # Runs on staged files only, so application code gets formatted
+        # incrementally as it is touched rather than in one 1,200-line sweep.
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.23.3
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint
+        entry: npx eslint --fix
+        language: system
+        files: \.js$
+        exclude: ^(node_modules/|graphify-out/)
+        pass_filenames: true
+
+      - id: pytest
+        name: pytest (pre-push)
+        entry: python -m pytest -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
