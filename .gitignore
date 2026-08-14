@@ -15,5 +15,5 @@ __pycache__/
 bolkhata-app-firebase-adminsdk-fbsvc-c2ffa955ec.json
 
 # Claude Code
-CLAUDE.md
 .claude/
+graphify-out/
