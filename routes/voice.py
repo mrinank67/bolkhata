@@ -2,28 +2,28 @@
 Voice processing endpoint — POST /process_voice
 """
 
-import time
+import datetime
 import json
 import os
-import datetime
-import requests
+import time
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Header, BackgroundTasks
+import requests
+from fastapi import APIRouter, BackgroundTasks, File, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
-from groq import Groq
 from firebase_admin import firestore
+from groq import Groq
 
 from auth import verify_token
-from prompts import get_system_prompt
 from db_operations import process_transactions
 from models import ResolveTransactionRequest
+from prompts import get_system_prompt
 from rate_limiter import (
-    check_user_cooldown,
-    check_global_rate_limit,
-    record_rate_limit_hit,
-    GROQ_RPM,
     GROQ_RPD,
+    GROQ_RPM,
     SARVAM_RPM,
+    check_global_rate_limit,
+    check_user_cooldown,
+    record_rate_limit_hit,
 )
 
 router = APIRouter()
@@ -246,7 +246,7 @@ async def process_voice(
             print(f"Heard: {hindi_text}")
 
     except Exception as e:
-        print(f"❌ SARVAM STT ERROR: {str(e)}")
+        print(f"❌ SARVAM STT ERROR: {e!s}")
         if hasattr(e, 'response') and e.response is not None:
             print(f"Response: {e.response.text}")
         # Don't leak internal error details to the client
@@ -302,7 +302,7 @@ async def process_voice(
             print(f"Understood Intent: {intent}")
 
     except Exception as e:
-        print(f"❌ GROQ LLM ERROR: {str(e)}")
+        print(f"❌ GROQ LLM ERROR: {e!s}")
         # If it's still a 429 after retry, return proper 429 to client
         err_status = getattr(e, 'status_code', None)
         if err_status == 429:

@@ -6,18 +6,18 @@ This is the main entry point. All route logic is in the routes/ package.
 
 import os
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 
 from auth import init_firebase
-from routes.voice import router as voice_router
-from routes.inventory import router as inventory_router
+from routes.bills import router as bills_router
 from routes.history import router as history_router
-from routes.suppliers import router as suppliers_router
+from routes.inventory import router as inventory_router
 from routes.ledger import router as ledger_router
 from routes.orders import router as orders_router
-from routes.bills import router as bills_router
+from routes.suppliers import router as suppliers_router
+from routes.voice import router as voice_router
 
 load_dotenv()
 

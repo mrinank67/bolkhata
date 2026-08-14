@@ -7,10 +7,9 @@ and updating Firestore (stock, udhaar, orders collections).
 
 import datetime
 
-from thefuzz import process
 from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
-
+from thefuzz import process
 
 SUPPLIER_SUFFIXES = {"supplier", "suppliers", "wholesale", "distributor", "distributors", "traders", "supply", "supplies", "vendor", "vendors"}
 

@@ -1,0 +1,60 @@
+# Ruff config lives here rather than in pyproject.toml on purpose: adding a
+# pyproject.toml to the repo root would give @vercel/python a packaging manifest
+# to reinterpret at build time. requirements.txt stays the single build input.
+
+line-length = 100
+
+# Deliberately conservative. The Vercel Python runtime version for this project
+# is not pinned anywhere in the repo, so the linter must not assume a floor
+# higher than the code already requires. py39 keeps `Optional[X]` and
+# `Tuple[...]` valid instead of rewriting them to 3.10-only `X | None` syntax —
+# a language-version bump is a deployment decision, not a lint autofix.
+# Raise this only after confirming the runtime in Vercel project settings.
+target-version = "py39"
+
+exclude = [
+    ".venv",
+    "env",
+    "graphify-out",
+    "node_modules",
+    "__pycache__",
+]
+
+[lint]
+# Bug-finding rules only. `UP` (pyupgrade) is intentionally NOT enabled: its
+# autofixes rewrite working production code into newer syntax, which is churn at
+# best and a runtime-version break at worst. This set is about catching errors.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (undefined names, unused imports, f-string mistakes)
+    "I",   # import sorting
+    "B",   # flake8-bugbear (mutable defaults, loop-variable capture, ...)
+    "RUF", # ruff-specific correctness checks
+]
+ignore = [
+    "E501",    # line length is handled by the formatter, not the linter
+    "RUF001",  # ambiguous unicode in strings: this app is bilingual (Hindi/English)
+    "RUF002",
+    "RUF003",
+    # B008 flags function calls in default arguments. That is precisely how
+    # FastAPI declares Header/Query/File/Form/Depends parameters, so every hit
+    # in this codebase is a false positive.
+    "B008",
+    # B904 wants `raise ... from e` inside an except block. The 7 sites in this
+    # codebase deliberately raise a generic HTTPException so upstream error text
+    # (which can contain API keys) never reaches the client; a bare raise still
+    # keeps the original exception in __context__ for server-side logs. Adding
+    # `from None` would silence the rule but lose that debugging context, so
+    # this stays off rather than being "fixed" the wrong way.
+    "B904",
+]
+
+[lint.per-file-ignores]
+# prompts.py is one long LLM system prompt; wrapping it would change the prompt.
+"prompts.py" = ["E501"]
+# Tests intentionally poke at private helpers and use assert-heavy style.
+"tests/**" = ["B011"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

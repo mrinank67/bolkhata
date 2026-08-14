@@ -2,9 +2,9 @@
 Pydantic request/response models for BolKhata API.
 """
 
-from pydantic import BaseModel, Field
 from typing import Optional
 
+from pydantic import BaseModel, Field
 
 # Shared bounds: quantities up to 1 lakh units, amounts up to ₹1 crore.
 # Public names exist because multipart endpoints take Form(...) fields, which get
