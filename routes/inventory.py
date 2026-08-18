@@ -3,7 +3,7 @@ Inventory endpoints — GET/POST/PUT/DELETE /inventory, POST /confirm_clear_inve
 """
 
 import re
-from typing import Optional
+from typing import Annotated, Optional
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -36,15 +36,8 @@ MAX_CATEGORY_LEN = 50
 
 # Fields carried across a rename. The doc id IS the item name, so renaming means
 # delete + recreate; anything missing from this list is silently destroyed.
-_CARRY_ON_RENAME = (
-    "cost_price",
-    "unit",
-    "category",
-    "image_id",
-    "image_path",
-    "image_thumb_path",
-    "image_token",
-)
+_IMAGE_FIELDS = ("image_id", "image_path", "image_thumb_path", "image_token")
+_CARRY_ON_RENAME = ("cost_price", "unit", "category", *_IMAGE_FIELDS)
 
 _RESERVED_ID = re.compile(r"^__.*__$")
 _ILLEGAL_ID_CHARS = re.compile(r"[/\x00-\x1f\x7f]")
@@ -227,7 +220,10 @@ async def create_inventory_item(
 ):
     """Create a stock item, optionally with a product photo (multipart/form-data).
 
-    A multipart body can't use a Pydantic model, so the bounds from
+    Fields are declared one by one rather than as a Form model (the PUT route
+    does use one) so every rejection is a 400 carrying a sentence the shopkeeper
+    can read — the PWA prints `detail` verbatim, and a 422 hands it a list of
+    Pydantic error objects instead. The cost is that the bounds from
     models.InventoryItemUpdate are re-asserted by hand below — keep them in sync.
     """
     from main import db
@@ -356,9 +352,17 @@ async def create_inventory_item(
 
 @router.put("/inventory/{item_id}")
 async def update_inventory_item(
-    item_id: str, req: InventoryItemUpdate, authorization: str = Header(None)
+    item_id: str,
+    req: Annotated[InventoryItemUpdate, Form()],
+    authorization: str = Header(None),
 ):
-    """Update an inventory item's name, quantity, and/or price."""
+    """Update an item's name, quantity, price and/or photo (multipart/form-data).
+
+    Multipart rather than JSON so the edit sheet can attach a photo exactly the
+    way the add sheet does. Unlike the create route the bounds are NOT restated
+    here: FastAPI validates the form against InventoryItemUpdate, so models.py
+    stays the single source of truth for this endpoint.
+    """
     from main import db
 
     uid = verify_token(authorization)
@@ -369,20 +373,68 @@ async def update_inventory_item(
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Item not found in inventory.")
 
+    old_data = doc.to_dict() or {}
     new_name = _normalize_item_id(req.item) if req.item else None
     new_quantity = req.quantity
     new_price = req.price
 
+    # Name conflicts are settled before any image work, so a doomed rename never
+    # spends the upload budget or leaves a blob behind.
+    if new_name and new_name != item_id and user_stock_ref.document(new_name).get().exists:
+        raise HTTPException(status_code=400, detail=f"An item named '{new_name}' already exists.")
+
+    # Photo. `image` wins over `remove_image` — sending both means "replace".
+    # `stale` is whatever the doc pointed at before, deleted only once the
+    # Firestore write has landed, so a failed write can't strand a live item
+    # with no photo.
+    image_fields, stale = {}, {}
+    if req.image is not None or req.remove_image:
+        stale = {k: old_data.get(k) for k in ("image_path", "image_thumb_path")}
+
+    if req.image is not None:
+        allowed, retry_after = check_user_limit(db, uid, IMAGE_USER_LIMIT)
+        if not allowed:
+            message = (
+                "Aaj ki photo limit khatam ho gayi. Kal phir try karein."
+                if retry_after > 60
+                else f"Thoda ruko! Try again in {int(retry_after) + 1}s."
+            )
+            return _rate_limited(message, retry_after)
+
+        for config in (IMAGE_UPLOAD_RPM, IMAGE_UPLOAD_RPD):
+            allowed, retry_after = check_global_rate_limit(db, config)
+            if not allowed:
+                print(f"⚠️ {config.name} rate limit hit — retry_after={retry_after}s")
+                return _rate_limited(
+                    f"Server busy. Please try again in {int(retry_after) + 1} seconds.",
+                    retry_after,
+                )
+
+        raw = await _read_capped(req.image, MAX_UPLOAD_BYTES)
+        try:
+            main_bytes, thumb_bytes, _, _ = process_item_image(raw)
+        except ImageRejected as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # A fresh uuid every time, never the old image_id: overwriting the old
+        # path would be served stale for a year by the immutable cache header.
+        image_id = uuid4().hex
+        token = str(uuid4())
+        bucket = get_bucket()
+        paths = {
+            "image_path": f"users/{uid}/items/{image_id}.webp",
+            "image_thumb_path": f"users/{uid}/items/{image_id}_thumb.webp",
+        }
+        _put_image(bucket, paths["image_path"], main_bytes, token)
+        _put_image(bucket, paths["image_thumb_path"], thumb_bytes, token)
+        image_fields = {"image_id": image_id, "image_token": token, **paths}
+    elif req.remove_image:
+        # Nulled rather than deleted: every reader already treats a falsy
+        # image_path as "no photo", and a rename copies fields by key.
+        image_fields = dict.fromkeys(_IMAGE_FIELDS, None)
+
     # If renaming: delete old doc, create new one
     if new_name and new_name != item_id:
-        # Check if target name already exists
-        target_doc = user_stock_ref.document(new_name).get()
-        if target_doc.exists:
-            raise HTTPException(
-                status_code=400, detail=f"An item named '{new_name}' already exists."
-            )
-
-        old_data = doc.to_dict()
         new_data = {
             "item": new_name,
             "quantity": new_quantity if new_quantity is not None else old_data.get("quantity", 0),
@@ -397,27 +449,40 @@ async def update_inventory_item(
         for key in _CARRY_ON_RENAME:
             if key in old_data:
                 new_data[key] = old_data[key]
+        new_data.update(image_fields)  # a replaced/removed photo beats the carry-over
 
         user_stock_ref.document(new_name).set(new_data)
         doc_ref.delete()
-        return {
+        _delete_item_images(stale)
+        response = {
             "status": "success",
             "message": f"Item renamed from '{item_id}' to '{new_name}' and updated.",
             "item": new_name,
         }
     else:
         # Update in place
-        update_data = {"updated_at": firestore.SERVER_TIMESTAMP}
+        update_data = {"updated_at": firestore.SERVER_TIMESTAMP, **image_fields}
         if new_quantity is not None:
             update_data["quantity"] = new_quantity
         if new_price is not None:
             update_data["price"] = new_price
         doc_ref.update(update_data)
-        return {
+        _delete_item_images(stale)
+        response = {
             "status": "success",
             "message": f"Item '{item_id}' updated.",
             "item": item_id,
         }
+
+    if image_fields.get("image_path"):
+        bucket_name = get_bucket().name
+        response["image_url"] = _image_url(
+            bucket_name, image_fields["image_path"], image_fields["image_token"]
+        )
+        response["thumb_url"] = _image_url(
+            bucket_name, image_fields["image_thumb_path"], image_fields["image_token"]
+        )
+    return response
 
 
 @router.delete("/inventory/{item_id}")

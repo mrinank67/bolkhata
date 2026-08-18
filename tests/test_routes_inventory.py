@@ -204,26 +204,152 @@ class TestCreateItemWithPhoto:
 
 
 class TestUpdateAndDelete:
+    """PUT is multipart, not JSON, so the edit sheet can attach a photo the same
+    way the add sheet does — hence `data=`/`files=` throughout."""
+
     def test_update_quantity(self, authed_client, fake_db):
         fake_db.seed(f"{STOCK}/rice", {"item": "rice", "quantity": 10, "price": 50})
 
-        resp = authed_client.put("/inventory/rice", json={"quantity": 25})
+        resp = authed_client.put("/inventory/rice", data={"quantity": 25})
 
         assert resp.status_code == 200
         assert fake_db.docs[f"{STOCK}/rice"]["quantity"] == 25
 
     def test_update_unknown_item_is_404(self, authed_client, fake_db):
-        assert authed_client.put("/inventory/nope", json={"quantity": 1}).status_code == 404
+        assert authed_client.put("/inventory/nope", data={"quantity": 1}).status_code == 404
 
     def test_cannot_update_another_users_item(self, authed_client, fake_db):
         fake_db.seed("users/someone-else/stock/rice", {"item": "rice", "quantity": 10})
 
-        assert authed_client.put("/inventory/rice", json={"quantity": 999}).status_code == 404
+        assert authed_client.put("/inventory/rice", data={"quantity": 999}).status_code == 404
         assert fake_db.docs["users/someone-else/stock/rice"]["quantity"] == 10
 
     def test_negative_quantity_is_422(self, authed_client, fake_db):
         fake_db.seed(f"{STOCK}/rice", {"item": "rice", "quantity": 10})
-        assert authed_client.put("/inventory/rice", json={"quantity": -5}).status_code == 422
+        assert authed_client.put("/inventory/rice", data={"quantity": -5}).status_code == 422
+
+    def test_photoless_update_never_touches_storage(self, authed_client, fake_db, fake_bucket):
+        fake_db.seed(f"{STOCK}/rice", {"item": "rice", "quantity": 10})
+
+        authed_client.put("/inventory/rice", data={"quantity": 11})
+
+        fake_bucket.blob.assert_not_called()
+
+    def test_adding_a_photo_stores_both_sizes(self, authed_client, fake_db, fake_bucket):
+        fake_db.seed(f"{STOCK}/rice", {"item": "rice", "quantity": 10})
+
+        resp = authed_client.put(
+            "/inventory/rice", files={"image": ("p.jpg", make_photo(), "image/jpeg")}
+        )
+
+        assert resp.status_code == 200, resp.text
+        doc = fake_db.docs[f"{STOCK}/rice"]
+        assert len(fake_bucket.blobs) == 2
+        assert set(fake_bucket.blobs) == {doc["image_path"], doc["image_thumb_path"]}
+        assert resp.json()["image_url"].startswith("https://firebasestorage.googleapis.com/")
+
+    def test_replacing_a_photo_writes_a_new_path_and_drops_the_old(
+        self, authed_client, fake_db, fake_bucket
+    ):
+        fake_db.seed(
+            f"{STOCK}/rice",
+            {
+                "item": "rice",
+                "image_id": "old",
+                "image_token": "tok",
+                "image_path": f"users/{UID}/items/old.webp",
+                "image_thumb_path": f"users/{UID}/items/old_thumb.webp",
+            },
+        )
+
+        resp = authed_client.put(
+            "/inventory/rice", files={"image": ("p.jpg", make_photo(), "image/jpeg")}
+        )
+
+        assert resp.status_code == 200, resp.text
+        doc = fake_db.docs[f"{STOCK}/rice"]
+        # A fresh uuid path, never a rewrite of the old one — the uploaded bytes
+        # are cached immutably for a year.
+        assert doc["image_id"] != "old"
+        assert "old.webp" not in doc["image_path"]
+        deleted = [c.args[0] for c in fake_bucket.blob.call_args_list]
+        assert f"users/{UID}/items/old.webp" in deleted
+
+    def test_remove_image_clears_the_fields(self, authed_client, fake_db, fake_bucket):
+        fake_db.seed(
+            f"{STOCK}/rice",
+            {
+                "item": "rice",
+                "image_id": "old",
+                "image_token": "tok",
+                "image_path": f"users/{UID}/items/old.webp",
+                "image_thumb_path": f"users/{UID}/items/old_thumb.webp",
+            },
+        )
+
+        resp = authed_client.put("/inventory/rice", data={"remove_image": "true"})
+
+        assert resp.status_code == 200, resp.text
+        doc = fake_db.docs[f"{STOCK}/rice"]
+        assert not doc["image_path"] and not doc["image_thumb_path"]
+        assert authed_client.get("/inventory").json()["inventory"][0].get("thumb_url") is None
+
+    def test_rename_carries_the_photo_over(self, authed_client, fake_db):
+        fake_db.seed(
+            f"{STOCK}/rice",
+            {
+                "item": "rice",
+                "quantity": 4,
+                "image_id": "old",
+                "image_token": "tok",
+                "image_path": f"users/{UID}/items/old.webp",
+                "image_thumb_path": f"users/{UID}/items/old_thumb.webp",
+            },
+        )
+
+        resp = authed_client.put("/inventory/rice", data={"item": "basmati rice"})
+
+        assert resp.status_code == 200, resp.text
+        assert f"{STOCK}/rice" not in fake_db.docs
+        assert fake_db.docs[f"{STOCK}/basmati rice"]["image_path"].endswith("old.webp")
+
+    def test_rename_with_a_new_photo_keeps_the_new_one(self, authed_client, fake_db, fake_bucket):
+        fake_db.seed(
+            f"{STOCK}/rice",
+            {
+                "item": "rice",
+                "image_id": "old",
+                "image_token": "tok",
+                "image_path": f"users/{UID}/items/old.webp",
+                "image_thumb_path": f"users/{UID}/items/old_thumb.webp",
+            },
+        )
+
+        resp = authed_client.put(
+            "/inventory/rice",
+            data={"item": "basmati rice"},
+            files={"image": ("p.jpg", make_photo(), "image/jpeg")},
+        )
+
+        assert resp.status_code == 200, resp.text
+        moved = fake_db.docs[f"{STOCK}/basmati rice"]
+        assert moved["image_id"] != "old"
+        assert moved["image_path"] in fake_bucket.blobs
+
+    def test_rename_onto_an_existing_name_uploads_nothing(
+        self, authed_client, fake_db, fake_bucket
+    ):
+        fake_db.seed(f"{STOCK}/rice", {"item": "rice"})
+        fake_db.seed(f"{STOCK}/dal", {"item": "dal"})
+
+        resp = authed_client.put(
+            "/inventory/rice",
+            data={"item": "dal"},
+            files={"image": ("p.jpg", make_photo(), "image/jpeg")},
+        )
+
+        assert resp.status_code == 400
+        assert fake_bucket.blobs == {}
 
     def test_delete_removes_the_item(self, authed_client, fake_db):
         fake_db.seed(f"{STOCK}/rice", {"item": "rice", "quantity": 10})

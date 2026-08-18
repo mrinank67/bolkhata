@@ -2882,8 +2882,9 @@ input[type="number"] {
   transform: scale(1);
 }
 
-/* The add-item form is far taller than the 3-field edit modal, and .modal-card
-   has no height constraint — without this it overflows a 640px-tall phone. */
+/* The add/edit item forms are far taller than a plain confirm dialog, and
+   .modal-card has no height constraint — without this they overflow a
+   640px-tall phone. */
 .modal-card-scroll {
   max-height: 88dvh;
   max-width: 340px;
@@ -2929,7 +2930,7 @@ input[type="number"] {
 }
 
 /* ══════════════════════════════════════
-   IMAGE PICKER (ADD ITEM MODAL)
+   IMAGE PICKER (ADD / EDIT ITEM MODAL)
    ══════════════════════════════════════ */
 .image-picker {
   position: relative;

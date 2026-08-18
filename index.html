@@ -368,12 +368,45 @@
 
         <!-- Edit Inventory Item Modal -->
         <div id="inventory-edit-modal" class="modal-overlay">
-          <div class="modal-card" style="text-align:left;">
+          <div class="modal-card modal-card-scroll" style="text-align:left;">
             <h3 class="modal-title">Edit Item</h3>
             <input type="hidden" id="inventory-edit-original-id" />
+
+            <!-- Same picker as the add modal, id-for-id: dashboard.js drives both
+                 through createImagePicker(), which addresses every part by the
+                 "inventory-edit-" / "inventory-add-" prefix. -->
+            <div class="field-group">
+              <label class="field-label">Photo</label>
+              <div class="image-picker">
+                <video id="inventory-edit-video" class="image-picker-video hidden"
+                       playsinline muted autoplay></video>
+                <img id="inventory-edit-preview" class="image-picker-preview hidden" alt="Item photo preview" />
+                <div id="inventory-edit-placeholder" class="image-picker-placeholder">📷<br />Add a photo</div>
+              </div>
+
+              <div class="form-row image-picker-actions" id="inventory-edit-pick-actions">
+                <button type="button" id="inventory-edit-camera-btn" class="btn btn-outline field-half">📷 Camera</button>
+                <button type="button" id="inventory-edit-gallery-btn" class="btn btn-outline field-half">🖼️ Gallery</button>
+              </div>
+              <div class="form-row image-picker-actions hidden" id="inventory-edit-shoot-actions">
+                <button type="button" id="inventory-edit-cancel-shot" class="btn btn-outline field-half">Cancel</button>
+                <button type="button" id="inventory-edit-shutter" class="btn btn-accent field-half">Capture</button>
+              </div>
+              <div class="form-row image-picker-actions hidden" id="inventory-edit-retake-actions">
+                <button type="button" id="inventory-edit-retake" class="btn btn-outline field-half">Retake</button>
+                <button type="button" id="inventory-edit-remove-photo" class="btn btn-outline field-half">Remove</button>
+              </div>
+
+              <input type="file" id="inventory-edit-file"
+                     accept="image/jpeg,image/png,image/webp" class="hidden" />
+            </div>
+
             <div class="field-group">
               <label class="field-label">Item Name</label>
-              <input type="text" id="inventory-edit-name" placeholder="e.g. Soap" />
+              <!-- maxlength mirrors the add sheet and InventoryItemUpdate: a longer
+                   name comes back as a 422 whose `detail` is a list, which the
+                   toast cannot render. -->
+              <input type="text" id="inventory-edit-name" placeholder="e.g. Soap" maxlength="100" />
             </div>
             <div class="form-row">
               <div class="field-group field-half">
@@ -382,7 +415,7 @@
               </div>
               <div class="field-group field-half">
                 <label class="field-label" id="inventory-edit-price-label">Price (₹)</label>
-                <input type="number" id="inventory-edit-price" placeholder="0" min="0" inputmode="decimal" />
+                <input type="number" id="inventory-edit-price" placeholder="0" min="0" step="0.01" inputmode="decimal" />
               </div>
             </div>
             <div class="modal-actions" style="margin-top:16px;">
