@@ -37,8 +37,13 @@ MAX_CATEGORY_LEN = 50
 # Fields carried across a rename. The doc id IS the item name, so renaming means
 # delete + recreate; anything missing from this list is silently destroyed.
 _CARRY_ON_RENAME = (
-    "cost_price", "unit", "category",
-    "image_id", "image_path", "image_thumb_path", "image_token",
+    "cost_price",
+    "unit",
+    "category",
+    "image_id",
+    "image_path",
+    "image_thumb_path",
+    "image_token",
 )
 
 _RESERVED_ID = re.compile(r"^__.*__$")
@@ -153,7 +158,11 @@ async def confirm_clear_inventory(authorization: str = Header(None)):
     except Exception as e:
         print(f"⚠️ Item image cleanup failed during inventory clear: {e}")
 
-    return {"status": "success", "message": f"✅ Cleared {len(all_docs)} items from inventory.", "deleted_count": len(all_docs)}
+    return {
+        "status": "success",
+        "message": f"✅ Cleared {len(all_docs)} items from inventory.",
+        "deleted_count": len(all_docs),
+    }
 
 
 @router.get("/inventory")
@@ -198,8 +207,7 @@ async def get_inventory(authorization: str = Header(None)):
         token, path = data.get("image_token"), data.get("image_path")
         if bucket_name and token and path:
             row["image_url"] = _image_url(bucket_name, path, token)
-            row["thumb_url"] = _image_url(
-                bucket_name, data.get("image_thumb_path") or path, token)
+            row["thumb_url"] = _image_url(bucket_name, data.get("image_thumb_path") or path, token)
 
         inventory.append(row)
     return {"inventory": inventory}
@@ -305,17 +313,20 @@ async def create_inventory_item(
         doc_ref = user_stock_ref.document(item_id)
         if doc_ref.get(transaction=txn).exists:
             return False
-        txn.set(doc_ref, {
-            "item": item_id,
-            "quantity": quantity,
-            "price": price,
-            "cost_price": cost_price,
-            "unit": unit,
-            "category": category,
-            "created_at": firestore.SERVER_TIMESTAMP,
-            "updated_at": firestore.SERVER_TIMESTAMP,
-            **image_fields,
-        })
+        txn.set(
+            doc_ref,
+            {
+                "item": item_id,
+                "quantity": quantity,
+                "price": price,
+                "cost_price": cost_price,
+                "unit": unit,
+                "category": category,
+                "created_at": firestore.SERVER_TIMESTAMP,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+                **image_fields,
+            },
+        )
         return True
 
     if not _create(db.transaction()):
@@ -333,14 +344,18 @@ async def create_inventory_item(
     if image_fields:
         bucket_name = get_bucket().name
         response["image_url"] = _image_url(
-            bucket_name, image_fields["image_path"], image_fields["image_token"])
+            bucket_name, image_fields["image_path"], image_fields["image_token"]
+        )
         response["thumb_url"] = _image_url(
-            bucket_name, image_fields["image_thumb_path"], image_fields["image_token"])
+            bucket_name, image_fields["image_thumb_path"], image_fields["image_token"]
+        )
     return response
 
 
 @router.put("/inventory/{item_id}")
-async def update_inventory_item(item_id: str, req: InventoryItemUpdate, authorization: str = Header(None)):
+async def update_inventory_item(
+    item_id: str, req: InventoryItemUpdate, authorization: str = Header(None)
+):
     """Update an inventory item's name, quantity, and/or price."""
     from main import db
 
@@ -361,7 +376,9 @@ async def update_inventory_item(item_id: str, req: InventoryItemUpdate, authoriz
         # Check if target name already exists
         target_doc = user_stock_ref.document(new_name).get()
         if target_doc.exists:
-            raise HTTPException(status_code=400, detail=f"An item named '{new_name}' already exists.")
+            raise HTTPException(
+                status_code=400, detail=f"An item named '{new_name}' already exists."
+            )
 
         old_data = doc.to_dict()
         new_data = {
