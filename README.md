@@ -22,13 +22,14 @@ By leveraging extreme low-latency processing, BolKhata allows shopkeepers to spe
 * **Groq GPT-OSS Intent Parsing:** Extracts item names, quantities (including fractions like 2.5 kilo), unit types, transactional amounts, per-unit rates, customer/supplier names, and credit modifiers from spoken sentences.
 * **Contextual Auto-Fill:** Automatically remembers the current active customer context for 5 minutes. If a shopkeeper says "do packet aur de do" right after making a sale, the app automatically credits the correct customer.
 * **Customer Disambiguation:** When two customers share a name (e.g. two Sureshes), the app prompts the shopkeeper to pick the right one before applying credit sales, payments, settlements, or reminders.
+* **Transactions Only — Setup Is Manual:** Voice records what happens day to day (sales, credit, payments, restocks, supplier purchases, queries). It never creates an inventory item or a supplier. Those are catalogued once through the Add Item and Add Supplier forms, which capture the details speech cannot carry — selling price, cost price, unit, category, photo, mobile, GST. Speaking about an item that isn't catalogued returns "*item* inventory mein nahi hai. Pehle app mein add karein." instead of creating a half-filled record, so every voice transaction resolves against a complete catalogue.
 
 ### 2. Real-Time Smart Inventory
 
 * **Fuzzy Match Engine:** Uses dynamic fuzzy matching (thefuzz) to automatically resolve spoken slang, variations, or typos (e.g., "magi" -> "Maggi") to standard stored item IDs.
-* **Add Item with Photo:** A floating + button on the Inventory page opens a form to catalogue a product in seconds — take a photo, type the name and selling price, save. Cost price, unit (PCS/Box/Pack), opening stock, and category are optional; the photo is optional too. Items created here are immediately available to both voice and manual billing.
+* **Add Item with Photo:** A floating + button on the Inventory page opens a form to catalogue a product in seconds — take a photo, type the name and selling price, save. Cost price, unit (PCS/Box/Pack), opening stock, and category are optional; the photo is optional too. This is the **only** way an item enters the catalogue, and items created here are immediately available to both voice and manual billing.
 * **In-App Camera:** Product photos are captured through a live preview *inside the page*, not by handing off to the device camera app — so nothing is written to the phone's gallery or storage. Existing photos can still be picked from the gallery.
-* **Visual Stock Grid:** A responsive dashboard displaying inventory tiles color-coded by stock level (out-of-stock, low stock, healthy stock), each showing its product thumbnail with a neutral placeholder for items added by voice.
+* **Visual Stock Grid:** A responsive dashboard displaying inventory tiles color-coded by stock level (out-of-stock, low stock, healthy stock), each showing its product thumbnail with a neutral placeholder for items saved without a photo.
 * **Two-Stage Image Compression:** Photos are downscaled in the browser before upload (a ~20x reduction — a 3.5 MB phone photo uploads as ~170 KB) and then re-encoded server-side into a 1024px WebP plus a 256px grid thumbnail, roughly 140 KB of storage per item. Both are served with immutable cache headers so repeat views of the inventory grid cost no Firebase egress.
 * **Manual Overrides:** Edit, rename, or delete items and adjust stock quantities directly from the visual dashboard. Renaming an item keeps its photo, and deleting one reclaims its storage.
 
@@ -45,7 +46,7 @@ By leveraging extreme low-latency processing, BolKhata allows shopkeepers to spe
 
 * **Automatic Restocking:** Logging supplier purchases (e.g., "Asha Wholesale se 10 packet Surf Excel mangwaya") automatically increments stock counts in your live inventory.
 * **Supplier Name Normalization:** Spoken supplier names are normalized (suffixes like "wholesale", "traders" stripped) and fuzzy-matched against the existing directory to avoid duplicates.
-* **Supplier Directory:** Add, edit, and save primary wholesale vendors, mobile numbers, and GST details in a clean directory (duplicate names are rejected on rename).
+* **Supplier Directory:** Add, edit, and save primary wholesale vendors, mobile numbers, and GST details in a clean directory (duplicate names are rejected on rename). The directory is managed from the Suppliers page only — voice cannot register or remove a vendor, since a spoken name carries no mobile or GST and a mis-transcribed one must never delete an entry. Purchases are still recorded by voice, including from a vendor not yet saved.
 * **Invoice Uploads:** Keep digital receipts of wholesale purchases for easier auditing (simulated image upload placeholder).
 
 ### 5. Customer Orders & Bill Generation
@@ -69,7 +70,7 @@ By leveraging extreme low-latency processing, BolKhata allows shopkeepers to spe
 
 ## Example Voice Commands
 
-Speak naturally in Hindi or Hinglish, and BolKhata will instantly map the correct transaction:
+Speak naturally in Hindi or Hinglish, and BolKhata will instantly map the correct transaction. Every command below acts on an item or supplier that already exists — catalogue those once through the Add Item and Add Supplier forms, then run the shop by voice.
 
 | Transaction Type | Example Spoken Hindi Command | Extracted Intent |
 | :--- | :--- | :--- |
@@ -84,7 +85,9 @@ Speak naturally in Hindi or Hinglish, and BolKhata will instantly map the correc
 | **Order History Inquiry** | *"Nehru apartment wale Sharma ji ke orders dikhao."* | Filters and lists all orders for that specific customer |
 | **Send Reminder** | *"Suresh ko payment ka reminder bhejo."* | Builds a WhatsApp reminder with a UPI payment link |
 | **Settle Credit** | *"Ramesh ka khata clear kar do."* | Wipes all credit dues for Ramesh |
+| **Supplier Purchase Inquiry** | *"Parle distributor se kitna maal liya?"* | Lists recent purchases and the total spent with that supplier |
 | **Clear Inventory** | *"Saara stock delete kar do."* | Requires button confirmation before clearing stock |
+| **Uncatalogued Item** | *"Sau samosa add karo."* (samosa not in inventory) | Returns an error asking you to add the item in the app first — voice never creates items |
 
 ---
 

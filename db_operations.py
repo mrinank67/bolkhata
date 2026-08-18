@@ -11,7 +11,18 @@ from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from thefuzz import process
 
-SUPPLIER_SUFFIXES = {"supplier", "suppliers", "wholesale", "distributor", "distributors", "traders", "supply", "supplies", "vendor", "vendors"}
+SUPPLIER_SUFFIXES = {
+    "supplier",
+    "suppliers",
+    "wholesale",
+    "distributor",
+    "distributors",
+    "traders",
+    "supply",
+    "supplies",
+    "vendor",
+    "vendors",
+}
 
 # Sort fallback for udhaar docs missing a timestamp (must be tz-aware to compare
 # with Firestore timestamps)
@@ -122,10 +133,12 @@ def apply_payment(user_udhaar_ref, customer_name: str, customer_modifier: str, a
         if entry_amount - reduction <= 0:
             doc.reference.delete()
         else:
-            doc.reference.update({
-                "amount": entry_amount - reduction,
-                "last_payment_at": firestore.SERVER_TIMESTAMP,
-            })
+            doc.reference.update(
+                {
+                    "amount": entry_amount - reduction,
+                    "last_payment_at": firestore.SERVER_TIMESTAMP,
+                }
+            )
         payment_left -= reduction
         if payment_left <= 0:
             break
@@ -162,15 +175,14 @@ def process_transactions(
     # names canonicalize to one identity. Directory entries win for display;
     # past purchases fill in suppliers not yet saved to the directory.
     suppliers_ref = db.collection("users").document(uid).collection("suppliers")
-    purchases_collection_ref = db.collection("users").document(uid).collection("suppliers_purchases")
+    purchases_collection_ref = (
+        db.collection("users").document(uid).collection("suppliers_purchases")
+    )
     supplier_display_map = {}
-    supplier_dir_keys = set()
     for doc in suppliers_ref.stream():
         name = (doc.to_dict().get("name") or "").strip()
         if name:
-            key = _normalize_supplier_name(name)
-            supplier_display_map.setdefault(key, name)
-            supplier_dir_keys.add(key)
+            supplier_display_map.setdefault(_normalize_supplier_name(name), name)
     for doc in purchases_collection_ref.stream():
         name = (doc.to_dict().get("supplier_name") or "").strip()
         if name:
@@ -236,7 +248,9 @@ def process_transactions(
             # Distinct customers are identified by modifier only — entries for the
             # same person can have mixed whatsapp_number values ("" on new entries).
             seen = {}
-            for doc in user_udhaar_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).stream():
+            for doc in user_udhaar_ref.where(
+                filter=FieldFilter("customer_name", "==", customer_name)
+            ).stream():
                 data = doc.to_dict()
                 mod = (data.get("customer_modifier") or "").lower()
                 phone = data.get("whatsapp_number", "")
@@ -265,50 +279,18 @@ def process_transactions(
                 errors.append("Kaunsa supplier? (Please specify a supplier name).")
                 continue
 
-            # Add a supplier to the directory (registration only — no goods received).
-            # Dedupe on the raw normalized key (not fuzzy) so a genuinely new
-            # supplier isn't collapsed into a similarly-named existing one.
-            if operation == "add":
-                key = _normalize_supplier_name(raw_supplier)
-                display = raw_supplier.strip().title()
-                group = get_group("supplier_add", "Supplier Added", "🏪", ["Supplier", "Status"])
-                if key in supplier_dir_keys:
-                    group["rows"].append({
-                        "Supplier": supplier_display_map.get(key, display),
-                        "Status": "ℹ️ Already in your suppliers",
-                    })
-                else:
-                    suppliers_ref.add({
-                        "name": display,
-                        "name_lower": display.lower(),
-                        "mobile": "",
-                        "gst_number": "",
-                        "created_at": firestore.SERVER_TIMESTAMP,
-                    })
-                    supplier_dir_keys.add(key)
-                    supplier_display_map.setdefault(key, display)
-                    group["rows"].append({"Supplier": display, "Status": "✅ Added"})
-                continue
-
-            # Remove a supplier from the directory. Purchase history is kept —
-            # deleting financial records by voice is too risky to do silently.
-            if operation == "clear":
-                key = _normalize_supplier_name(supplier_name)
-                group = get_group("supplier_delete", "Supplier Removed", "🏪", ["Supplier", "Status"])
-                removed_name = ""
-                for doc in suppliers_ref.stream():
-                    dname = (doc.to_dict().get("name") or "").strip()
-                    if dname and _normalize_supplier_name(dname) == key:
-                        doc.reference.delete()
-                        removed_name = dname
-                if removed_name:
-                    group["rows"].append({
-                        "Supplier": removed_name,
-                        "Status": "✅ Removed (purchase history kept)",
-                    })
-                else:
-                    not_found = supplier_display_map.get(key) or raw_supplier.strip().title()
-                    group["empty_message"] = f"{not_found} aapke suppliers mein nahi mila."
+            # The supplier directory is managed manually in the app only. Voice
+            # never creates or deletes a directory entry: a spoken name carries
+            # no mobile/GST, and a mis-transcribed one would delete the wrong
+            # supplier. Voice keeps recording purchases against suppliers.
+            if operation != "read":
+                display = (
+                    supplier_display_map.get(_normalize_supplier_name(raw_supplier))
+                    or raw_supplier.strip().title()
+                )
+                errors.append(
+                    f"{display} ko voice se add/remove nahi kar sakte — Suppliers page se karein."
+                )
                 continue
 
             # Query purchases from a supplier ("Ramesh traders se kitna maal liya")
@@ -316,7 +298,9 @@ def process_transactions(
                 key = _normalize_supplier_name(supplier_name)
                 display = supplier_display_map.get(key) or raw_supplier.strip().title()
                 group_key = f"supplier_purchases_{key}"
-                group = get_group(group_key, f"{display} — Purchases", "🏪", ["Item", "Qty", "Amount", "When"])
+                group = get_group(
+                    group_key, f"{display} — Purchases", "🏪", ["Item", "Qty", "Amount", "When"]
+                )
 
                 matching = []
                 for doc in purchases_collection_ref.stream():
@@ -333,17 +317,24 @@ def process_transactions(
                 total_amount = sum((d.get("amount", 0) or 0) for d in matching)
                 for data in matching[:10]:
                     amt = data.get("amount", 0) or 0
-                    group["rows"].append({
-                        "Item": (data.get("item_name") or "—").capitalize(),
-                        "Qty": data.get("quantity", 0),
-                        "Amount": f"₹{amt:,.0f}" if amt else "-",
-                        "When": _format_purchase_date(data.get("timestamp")),
-                    })
+                    group["rows"].append(
+                        {
+                            "Item": (data.get("item_name") or "—").capitalize(),
+                            "Qty": data.get("quantity", 0),
+                            "Amount": f"₹{amt:,.0f}" if amt else "-",
+                            "When": _format_purchase_date(data.get("timestamp")),
+                        }
+                    )
                 if len(matching) > 1:
                     label = "Total" if len(matching) <= 10 else f"Total ({len(matching)} purchases)"
-                    group["rows"].append({
-                        "Item": label, "Qty": "", "Amount": f"₹{total_amount:,.0f}", "When": "",
-                    })
+                    group["rows"].append(
+                        {
+                            "Item": label,
+                            "Qty": "",
+                            "Amount": f"₹{total_amount:,.0f}",
+                            "When": "",
+                        }
+                    )
                 continue
 
             # Unrecognized supplier operation — nothing to do
@@ -356,26 +347,37 @@ def process_transactions(
                 continue
 
             group_key = f"order_inquiry_{customer_name}_{customer_modifier}"
-            title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
+            title_name = (
+                f"{customer_name.capitalize()} ({customer_modifier})"
+                if customer_modifier
+                else customer_name.capitalize()
+            )
             group = get_group(group_key, f"{title_name}'s Orders", "🛍️", ["Item", "Qty", "Amount"])
 
             local_orders_ref = db.collection("users").document(uid).collection("orders")
-            docs = local_orders_ref.where(filter=FieldFilter("customer_name", "==", customer_name)).stream()
+            docs = local_orders_ref.where(
+                filter=FieldFilter("customer_name", "==", customer_name)
+            ).stream()
 
             orders_found = False
             for doc in docs:
                 data = doc.to_dict()
-                if customer_modifier and customer_modifier.lower() != data.get("customer_modifier", "").lower():
+                if (
+                    customer_modifier
+                    and customer_modifier.lower() != data.get("customer_modifier", "").lower()
+                ):
                     continue
                 orders_found = True
                 item_name = data.get("item", "unknown")
                 qty = data.get("quantity", 0)
                 amt = data.get("amount", 0)
-                group["rows"].append({
-                    "Item": item_name.capitalize(),
-                    "Qty": qty,
-                    "Amount": f"₹{amt:,.0f}" if amt else "-",
-                })
+                group["rows"].append(
+                    {
+                        "Item": item_name.capitalize(),
+                        "Qty": qty,
+                        "Amount": f"₹{amt:,.0f}" if amt else "-",
+                    }
+                )
 
             if not orders_found:
                 group["empty_message"] = f"No orders found for {title_name}."
@@ -383,9 +385,7 @@ def process_transactions(
 
         # --- Handle Full Inventory ---
         if target == "stock" and operation == "read" and raw_item == "ALL":
-            group = get_group(
-                "full_inventory", "Full Inventory", "📦", ["#", "Item", "Stock"]
-            )
+            group = get_group("full_inventory", "Full Inventory", "📦", ["#", "Item", "Stock"])
             all_docs = user_stock_ref.stream()
             idx = 1
             for doc in all_docs:
@@ -415,11 +415,11 @@ def process_transactions(
                     {"Action": "Delete ALL inventory", "Items": f"{item_count} items"}
                 )
                 group["requires_confirmation"] = True
-                group["confirmation_message"] = f"Are you sure you want to delete all {item_count} items from your inventory? This action cannot be undone."
-            else:
-                group = get_group(
-                    "clear_inventory", "Inventory Cleared", "🗑️", ["Action", "Status"]
+                group["confirmation_message"] = (
+                    f"Are you sure you want to delete all {item_count} items from your inventory? This action cannot be undone."
                 )
+            else:
+                group = get_group("clear_inventory", "Inventory Cleared", "🗑️", ["Action", "Status"])
                 group["empty_message"] = "Inventory is already empty."
             continue
 
@@ -430,7 +430,11 @@ def process_transactions(
                 continue
 
             group_key = f"ledger_inquiry_{customer_name}_{customer_modifier}"
-            title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
+            title_name = (
+                f"{customer_name.capitalize()} ({customer_modifier})"
+                if customer_modifier
+                else customer_name.capitalize()
+            )
             group = get_group(
                 group_key,
                 f"{title_name}'s Ledger",
@@ -445,32 +449,37 @@ def process_transactions(
             amount_map = {}
             for doc in docs:
                 data = doc.to_dict()
-                if customer_modifier and customer_modifier.lower() != data.get("customer_modifier", "").lower():
+                if (
+                    customer_modifier
+                    and customer_modifier.lower() != data.get("customer_modifier", "").lower()
+                ):
                     continue
                 item_name = data.get("item", "unknown")
                 dues_map[item_name] = dues_map.get(item_name, 0) + data.get("quantity", 0)
                 amount_map[item_name] = amount_map.get(item_name, 0) + data.get("amount", 0)
 
             if not dues_map:
-                group["empty_message"] = (
-                    f"{title_name} ka khaata clear hai. No dues!"
-                )
+                group["empty_message"] = f"{title_name} ka khaata clear hai. No dues!"
             else:
                 total_amount = 0
                 for item, qty in dues_map.items():
                     amt = amount_map.get(item, 0)
                     total_amount += amt
-                    group["rows"].append({
-                        "Item": item.capitalize(),
-                        "Qty Owed": qty,
-                        "Amount Owed": f"₹{amt:,.0f}" if amt else "-",
-                    })
+                    group["rows"].append(
+                        {
+                            "Item": item.capitalize(),
+                            "Qty Owed": qty,
+                            "Amount Owed": f"₹{amt:,.0f}" if amt else "-",
+                        }
+                    )
                 if len(dues_map) > 1 and total_amount:
-                    group["rows"].append({
-                        "Item": "Total",
-                        "Qty Owed": "",
-                        "Amount Owed": f"₹{total_amount:,.0f}",
-                    })
+                    group["rows"].append(
+                        {
+                            "Item": "Total",
+                            "Qty Owed": "",
+                            "Amount Owed": f"₹{total_amount:,.0f}",
+                        }
+                    )
             continue
 
         # --- Handle Clearing Ledgers ---
@@ -480,8 +489,17 @@ def process_transactions(
                 continue
 
             group_key = f"clear_ledger_{customer_name}_{customer_modifier}"
-            title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
-            group = get_group(group_key, "Ledger Cleared", "💰", ["Customer", "Entries", "Amount Cleared", "Status"])
+            title_name = (
+                f"{customer_name.capitalize()} ({customer_modifier})"
+                if customer_modifier
+                else customer_name.capitalize()
+            )
+            group = get_group(
+                group_key,
+                "Ledger Cleared",
+                "💰",
+                ["Customer", "Entries", "Amount Cleared", "Status"],
+            )
 
             docs = list(
                 user_udhaar_ref.where(
@@ -493,7 +511,10 @@ def process_transactions(
             cleared_amount = 0
             for doc in docs:
                 data = doc.to_dict()
-                if customer_modifier and customer_modifier.lower() != data.get("customer_modifier", "").lower():
+                if (
+                    customer_modifier
+                    and customer_modifier.lower() != data.get("customer_modifier", "").lower()
+                ):
                     continue
                 docs_to_delete.append(doc)
                 cleared_amount += data.get("amount", 0)
@@ -501,19 +522,23 @@ def process_transactions(
             if docs_to_delete:
                 for doc in docs_to_delete:
                     doc.reference.delete()
-                group["rows"].append({
-                    "Customer": title_name,
-                    "Entries": len(docs_to_delete),
-                    "Amount Cleared": f"₹{cleared_amount:,.0f}" if cleared_amount else "-",
-                    "Status": "✅ Settled",
-                })
+                group["rows"].append(
+                    {
+                        "Customer": title_name,
+                        "Entries": len(docs_to_delete),
+                        "Amount Cleared": f"₹{cleared_amount:,.0f}" if cleared_amount else "-",
+                        "Status": "✅ Settled",
+                    }
+                )
             else:
-                group["rows"].append({
-                    "Customer": title_name,
-                    "Entries": 0,
-                    "Amount Cleared": "-",
-                    "Status": "ℹ️ No dues found",
-                })
+                group["rows"].append(
+                    {
+                        "Customer": title_name,
+                        "Entries": 0,
+                        "Amount Cleared": "-",
+                        "Status": "ℹ️ No dues found",
+                    }
+                )
             continue
 
         # --- Handle Send Reminder ---
@@ -537,14 +562,19 @@ def process_transactions(
             wa_number = ""
             for doc in docs:
                 data = doc.to_dict()
-                if customer_modifier and customer_modifier.lower() != data.get("customer_modifier", "").lower():
+                if (
+                    customer_modifier
+                    and customer_modifier.lower() != data.get("customer_modifier", "").lower()
+                ):
                     continue
                 total_due += data.get("amount", 0)
                 if data.get("whatsapp_number"):
                     wa_number = data["whatsapp_number"]
 
             if total_due <= 0:
-                group = get_group(group_key, f"Reminder — {title_name}", "🔔", ["Customer", "Status"])
+                group = get_group(
+                    group_key, f"Reminder — {title_name}", "🔔", ["Customer", "Status"]
+                )
                 group["empty_message"] = f"{title_name} ka koi baaki hisaab nahi hai."
                 continue
 
@@ -571,7 +601,11 @@ def process_transactions(
                 errors.append("Kitna payment hua? (Please specify an amount).")
                 continue
 
-            title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
+            title_name = (
+                f"{customer_name.capitalize()} ({customer_modifier})"
+                if customer_modifier
+                else customer_name.capitalize()
+            )
             group_key = f"payment_{customer_name}_{customer_modifier}"
 
             matched, total_owed, payment, remaining = apply_payment(
@@ -579,26 +613,38 @@ def process_transactions(
             )
 
             if not matched:
-                group = get_group(group_key, f"Payment — {title_name}", "💰", ["Customer", "Status"])
+                group = get_group(
+                    group_key, f"Payment — {title_name}", "💰", ["Customer", "Status"]
+                )
                 group["empty_message"] = f"{title_name} ka koi baaki hisaab nahi hai."
                 continue
 
             paid_display = f"₹{payment:,.0f}"
             if txn_amount > total_owed:
                 paid_display = f"₹{payment:,.0f} (of ₹{txn_amount:,.0f} — only dues recorded)"
-            group = get_group(group_key, f"Payment — {title_name}", "💰",
-                              ["Customer", "Paid", "Previous Due", "Remaining"])
-            group["rows"].append({
-                "Customer": title_name,
-                "Paid": paid_display,
-                "Previous Due": f"₹{total_owed:,.0f}",
-                "Remaining": f"₹{remaining:,.0f}" if remaining > 0 else "✅ Settled",
-            })
+            group = get_group(
+                group_key,
+                f"Payment — {title_name}",
+                "💰",
+                ["Customer", "Paid", "Previous Due", "Remaining"],
+            )
+            group["rows"].append(
+                {
+                    "Customer": title_name,
+                    "Paid": paid_display,
+                    "Previous Due": f"₹{total_owed:,.0f}",
+                    "Remaining": f"₹{remaining:,.0f}" if remaining > 0 else "✅ Settled",
+                }
+            )
             continue
 
         # --- Handle amount-only credit entry (no item, e.g. "Suresh pe 800 ka udhaar") ---
         if is_credit and customer_name and txn_amount and not raw_item:
-            title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize()
+            title_name = (
+                f"{customer_name.capitalize()} ({customer_modifier})"
+                if customer_modifier
+                else customer_name.capitalize()
+            )
             group = get_group(
                 "udhaar_sale",
                 "Credit Sale (Udhaar)",
@@ -609,39 +655,43 @@ def process_transactions(
             # Log each lump credit as its own entry; the running "Total Owed"
             # sums prior matching "general" entries plus this one.
             prior_owed = 0
-            for doc in user_udhaar_ref.where(
-                filter=FieldFilter("customer_name", "==", customer_name)
-            ).where(
-                filter=FieldFilter("item", "==", "general")
-            ).stream():
+            for doc in (
+                user_udhaar_ref.where(filter=FieldFilter("customer_name", "==", customer_name))
+                .where(filter=FieldFilter("item", "==", "general"))
+                .stream()
+            ):
                 if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
                     prior_owed += doc.to_dict().get("amount", 0) or 0
 
-            user_udhaar_ref.add({
-                "customer_name": customer_name,
-                "customer_modifier": customer_modifier,
-                "item": "general",
-                "quantity": 0,
-                "amount": txn_amount,
-                "unit": "",
-                "whatsapp_number": "",
-                "reminder_schedule": "",
-                "reminder_sent": False,
-                "due_note": "",
-                "timestamp": firestore.SERVER_TIMESTAMP,
-            })
+            user_udhaar_ref.add(
+                {
+                    "customer_name": customer_name,
+                    "customer_modifier": customer_modifier,
+                    "item": "general",
+                    "quantity": 0,
+                    "amount": txn_amount,
+                    "unit": "",
+                    "whatsapp_number": "",
+                    "reminder_schedule": "",
+                    "reminder_sent": False,
+                    "due_note": "",
+                    "timestamp": firestore.SERVER_TIMESTAMP,
+                }
+            )
             total_owed_amount = prior_owed + txn_amount
 
-            group["rows"].append({
-                "Customer": title_name,
-                "Item": "General",
-                "Qty": "-",
-                "Unit": "-",
-                "Rate": "-",
-                "Amount": f"₹{txn_amount:,.0f}",
-                "Total Owed": f"₹{total_owed_amount:,.0f}",
-                "Stock": "-",
-            })
+            group["rows"].append(
+                {
+                    "Customer": title_name,
+                    "Item": "General",
+                    "Qty": "-",
+                    "Unit": "-",
+                    "Rate": "-",
+                    "Amount": f"₹{txn_amount:,.0f}",
+                    "Total Owed": f"₹{total_owed_amount:,.0f}",
+                    "Stock": "-",
+                }
+            )
             continue
 
         # --- Normal Stock Processing ---
@@ -663,24 +713,23 @@ def process_transactions(
         stock_doc_ref = user_stock_ref.document(standard_item)
         stock_doc = stock_doc_ref.get()
 
+        # Items are created manually only. A voice restock of an unknown item
+        # used to create the stock doc with just a name and quantity — no sell
+        # price, cost price, unit or category — leaving a half-formed record
+        # every later screen had to defend against. Now voice only ever moves
+        # stock that already exists (the fuzzy match above is the sole gate).
         if not stock_doc.exists:
-            if operation == "add":
-                current_qty = 0
-                db_price = 0
-            else:
-                errors.append(f"{standard_item} not found in inventory.")
-                continue
-        else:
-            stock_data = stock_doc.to_dict()
-            current_qty = stock_data.get("quantity", 0)
-            db_price = stock_data.get("price", 0)
+            errors.append(f"{standard_item} inventory mein nahi hai. Pehle app mein add karein.")
+            continue
+
+        stock_data = stock_doc.to_dict()
+        current_qty = stock_data.get("quantity", 0)
+        db_price = stock_data.get("price", 0)
 
         # Inquiry
         if target == "stock" and operation == "read":
             group = get_group("inquiry", "Stock Check", "🔍", ["Item", "Current Stock"])
-            group["rows"].append(
-                {"Item": standard_item.capitalize(), "Current Stock": current_qty}
-            )
+            group["rows"].append({"Item": standard_item.capitalize(), "Current Stock": current_qty})
             continue
 
         # Quantity — keep fractional values ("2.5 kilo") instead of collapsing to 1
@@ -710,15 +759,13 @@ def process_transactions(
             new_qty = max(0, current_qty - qty)
         else:
             new_qty = current_qty + qty
-            
+
         # Update Stock DB
         update_data = {
-            "quantity": new_qty, 
+            "quantity": new_qty,
             "item": standard_item,
-            "updated_at": firestore.SERVER_TIMESTAMP
+            "updated_at": firestore.SERVER_TIMESTAMP,
         }
-        if not stock_doc.exists:
-            update_data["created_at"] = firestore.SERVER_TIMESTAMP
 
         # A rate spoken on a plain inventory add is the shop's SELLING price.
         # A rate spoken on a supplier purchase is a COST price — writing that to
@@ -727,7 +774,13 @@ def process_transactions(
             update_data["price"] = txn_rate
 
         stock_doc_ref.set(update_data, merge=True)
-        title_name = f"{customer_name.capitalize()} ({customer_modifier})" if customer_modifier else customer_name.capitalize() if customer_name else ""
+        title_name = (
+            f"{customer_name.capitalize()} ({customer_modifier})"
+            if customer_modifier
+            else customer_name.capitalize()
+            if customer_name
+            else ""
+        )
 
         # Build result row
         if operation == "subtract" and is_credit and customer_name:
@@ -742,72 +795,80 @@ def process_transactions(
             # rather than merging into the customer's existing item entry. The
             # running "Total Owed" is computed by summing prior matching entries.
             prior_owed = 0
-            for doc in user_udhaar_ref.where(
-                filter=FieldFilter("customer_name", "==", customer_name)
-            ).where(
-                filter=FieldFilter("item", "==", standard_item)
-            ).stream():
+            for doc in (
+                user_udhaar_ref.where(filter=FieldFilter("customer_name", "==", customer_name))
+                .where(filter=FieldFilter("item", "==", standard_item))
+                .stream()
+            ):
                 if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
                     prior_owed += doc.to_dict().get("amount", 0) or 0
 
-            user_udhaar_ref.add({
-                "customer_name": customer_name,
-                "customer_modifier": customer_modifier,
-                "item": standard_item,
-                "quantity": qty,
-                "amount": txn_amount or 0,
-                "price": txn_rate or ((txn_amount / qty) if (txn_amount and qty) else (db_price or 0)),
-                "unit": txn_unit or "",
-                "whatsapp_number": "",
-                "reminder_schedule": "",
-                "reminder_sent": False,
-                "due_note": "",
-                "timestamp": firestore.SERVER_TIMESTAMP,
-            })
-            total_owed_amount = prior_owed + (txn_amount or 0)
-
-            # Dual-write: also log a matching order record (credit sale = goods left the shop)
-            try:
-                user_orders_ref.add({
+            user_udhaar_ref.add(
+                {
                     "customer_name": customer_name,
                     "customer_modifier": customer_modifier,
                     "item": standard_item,
                     "quantity": qty,
                     "amount": txn_amount or 0,
-                    "price": txn_rate or ((txn_amount / qty) if (txn_amount and qty) else (db_price or 0)),
-                    "order_id": _order_id_for(f"{customer_name}|{customer_modifier}"),
+                    "price": txn_rate
+                    or ((txn_amount / qty) if (txn_amount and qty) else (db_price or 0)),
+                    "unit": txn_unit or "",
+                    "whatsapp_number": "",
+                    "reminder_schedule": "",
+                    "reminder_sent": False,
+                    "due_note": "",
                     "timestamp": firestore.SERVER_TIMESTAMP,
-                })
+                }
+            )
+            total_owed_amount = prior_owed + (txn_amount or 0)
+
+            # Dual-write: also log a matching order record (credit sale = goods left the shop)
+            try:
+                user_orders_ref.add(
+                    {
+                        "customer_name": customer_name,
+                        "customer_modifier": customer_modifier,
+                        "item": standard_item,
+                        "quantity": qty,
+                        "amount": txn_amount or 0,
+                        "price": txn_rate
+                        or ((txn_amount / qty) if (txn_amount and qty) else (db_price or 0)),
+                        "order_id": _order_id_for(f"{customer_name}|{customer_modifier}"),
+                        "timestamp": firestore.SERVER_TIMESTAMP,
+                    }
+                )
             except Exception as e:
                 print(f"⚠️ Order dual-write failed for {customer_name}/{standard_item}: {e}")
 
-            group["rows"].append({
-                "Customer": title_name,
-                "Item": standard_item.capitalize(),
-                "Qty": qty,
-                "Unit": txn_unit or "-",
-                "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
-                "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
-                "Total Owed": f"₹{total_owed_amount:,.0f}" if total_owed_amount else "-",
-                "Stock": new_qty,
-            })
+            group["rows"].append(
+                {
+                    "Customer": title_name,
+                    "Item": standard_item.capitalize(),
+                    "Qty": qty,
+                    "Unit": txn_unit or "-",
+                    "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
+                    "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
+                    "Total Owed": f"₹{total_owed_amount:,.0f}" if total_owed_amount else "-",
+                    "Stock": new_qty,
+                }
+            )
         elif operation == "subtract" and customer_name:
             group = get_group(
                 "order_sale",
                 "Customer Order",
                 "🛍️",
-                ["Customer", "Item", "Qty", "Rate", "Amount", "Total Ordered", "Stock"]
+                ["Customer", "Item", "Qty", "Rate", "Amount", "Total Ordered", "Stock"],
             )
 
             # Log every sale as its own order entry (a transaction record),
             # rather than merging into the customer's existing item entry. The
             # running "Total Ordered" is computed by summing prior matching entries.
             prior_ordered = 0
-            for doc in user_orders_ref.where(
-                filter=FieldFilter("customer_name", "==", customer_name)
-            ).where(
-                filter=FieldFilter("item", "==", standard_item)
-            ).stream():
+            for doc in (
+                user_orders_ref.where(filter=FieldFilter("customer_name", "==", customer_name))
+                .where(filter=FieldFilter("item", "==", standard_item))
+                .stream()
+            ):
                 if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
                     prior_ordered += doc.to_dict().get("amount", 0) or 0
 
@@ -818,22 +879,25 @@ def process_transactions(
                     "item": standard_item,
                     "quantity": qty,
                     "amount": txn_amount or 0,
-                    "price": txn_rate or ((txn_amount / qty) if (txn_amount and qty) else (db_price or 0)),
+                    "price": txn_rate
+                    or ((txn_amount / qty) if (txn_amount and qty) else (db_price or 0)),
                     "order_id": _order_id_for(f"{customer_name}|{customer_modifier}"),
                     "timestamp": firestore.SERVER_TIMESTAMP,
                 }
             )
             total_order_amount = prior_ordered + (txn_amount or 0)
 
-            group["rows"].append({
-                "Customer": title_name,
-                "Item": standard_item.capitalize(),
-                "Qty": qty,
-                "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
-                "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
-                "Total Ordered": f"₹{total_order_amount:,.0f}" if total_order_amount else "-",
-                "Stock": new_qty,
-            })
+            group["rows"].append(
+                {
+                    "Customer": title_name,
+                    "Item": standard_item.capitalize(),
+                    "Qty": qty,
+                    "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
+                    "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
+                    "Total Ordered": f"₹{total_order_amount:,.0f}" if total_order_amount else "-",
+                    "Stock": new_qty,
+                }
+            )
         elif operation == "subtract":
             group = get_group(
                 "decrease", "Stock Sold", "🛒", ["Item", "Sold", "Amount", "Previous", "Current"]
@@ -856,25 +920,31 @@ def process_transactions(
                     "🏪",
                     ["Supplier", "Item", "Qty", "Unit", "Rate", "Amount", "Stock Now"],
                 )
-                purchases_ref = db.collection("users").document(uid).collection("suppliers_purchases")
-                purchases_ref.add({
-                    "supplier_name": supplier_name,
-                    "item_name": standard_item,
-                    "quantity": qty,
-                    "amount": txn_amount or 0,
-                    "rate": txn_rate or 0,  # cost price — distinct from stock.price (retail)
-                    "proof_image_url": "",
-                    "timestamp": firestore.SERVER_TIMESTAMP,
-                })
-                group["rows"].append({
-                    "Supplier": supplier_name.title(),
-                    "Item": standard_item.capitalize(),
-                    "Qty": qty,
-                    "Unit": txn_unit or "-",
-                    "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
-                    "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
-                    "Stock Now": new_qty,
-                })
+                purchases_ref = (
+                    db.collection("users").document(uid).collection("suppliers_purchases")
+                )
+                purchases_ref.add(
+                    {
+                        "supplier_name": supplier_name,
+                        "item_name": standard_item,
+                        "quantity": qty,
+                        "amount": txn_amount or 0,
+                        "rate": txn_rate or 0,  # cost price — distinct from stock.price (retail)
+                        "proof_image_url": "",
+                        "timestamp": firestore.SERVER_TIMESTAMP,
+                    }
+                )
+                group["rows"].append(
+                    {
+                        "Supplier": supplier_name.title(),
+                        "Item": standard_item.capitalize(),
+                        "Qty": qty,
+                        "Unit": txn_unit or "-",
+                        "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
+                        "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
+                        "Stock Now": new_qty,
+                    }
+                )
             else:
                 group = get_group(
                     "increase",

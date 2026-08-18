@@ -8,7 +8,7 @@ def get_system_prompt(recent_context_msg: str = "") -> str:
     return f"""Grocery shop AI. Input is English (translated from Hindi speech). Convert to JSON transactions.{recent_context_msg}
 
 Schema:
-- target: "stock" (sales/restocks/goods received) | "ledger" (customer accounts/order history) | "supplier" (supplier DIRECTORY: register/remove a supplier, or ask what was bought from a supplier — NO goods movement)
+- target: "stock" (sales/restocks/goods received) | "ledger" (customer accounts/order history) | "supplier" (READ-ONLY query: what was bought from a supplier — NO goods movement)
 - operation (shop's perspective): "add" (restock/receive) | "subtract" (sell/give) | "read" (inquiry) | "clear" (settle/delete) | "send_reminder" | "payment" (customer paid/gave money towards dues)
 - item: English name, strip units. "ALL" for full inventory. "" if N/A
 - qty: number (fractions like 2.5 allowed). 0 for read/clear
@@ -25,7 +25,7 @@ Rules:
 - Reminder ("send X a reminder"/"remind X about payment"): target=ledger, operation=send_reminder, customer_name=X, rest empty/0
 - Supplier purchase ("received/bought/purchased GOODS from X" WITH an item): target=stock, operation=add, supplier_name=X. supplier_name ≠ customer_name. Money received from a person = payment, NOT supplier
 - Price: "se"/"ke hisaab se"/"each"/"per <unit>"/"at the rate of" = rate (PER-UNIT). "worth"/"ka"/"ke"/"for a total of" = amount (TOTAL). NEVER put a per-unit price in amount. If the phrasing is per-unit, set rate and leave amount=0 — the server computes the total
-- Supplier directory (NO item — managing the supplier list itself): "add/save X as a supplier"/"X ko supplier list me daalo" → target=supplier, operation=add, supplier_name=X, item="", qty=0. "remove/delete supplier X"/"X ko supplier list se hatao" → target=supplier, operation=clear, supplier_name=X. "how much did I buy from X"/"X se kitna maal liya"/"X se kya khareeda" → target=supplier, operation=read, supplier_name=X
+- Supplier query (NO item): "how much did I buy from X"/"X se kitna maal liya"/"X se kya khareeda" → target=supplier, operation=read, supplier_name=X
 
 Output ONLY raw JSON:
 {{"transactions":[{{"target":"stock","operation":"add","item":"clutcher","qty":120,"unit":"","amount":7800,"rate":0,"customer_name":"","customer_modifier":"","supplier_name":"asha wholesale","is_credit":false}}]}}
@@ -37,7 +37,6 @@ Examples:
 - "sell 10 maggi to Sujal at 10 rupees" → subtract, maggi, 10, sujal, rate=10, amount=0 (per-unit "se", total = 100 computed by server)
 - "add 100 pieces of samosa to inventory at 10 rupees" → add, samosa, 100, pieces, rate=10, amount=0
 - "36 curly extensions and 24 dozen combs from Khan beauty supply for 6250" → TWO txns, target=stock, add, supplier=khan beauty supply
-- "add Ramesh Traders as a supplier" → target=supplier, add, supplier_name=ramesh traders, item="", qty=0 (registering, NO goods)
 - "write down 10 soap in Ramesh's account" → subtract, soap, 10, ramesh, is_credit=true (write down = credit entry, NOT clear)
 - "show Ramesh's account" → ledger, read, ramesh, is_credit=true (account = ledger)
 - "Suresh has 800 rupees credit" → ledger, subtract, item="", qty=0, amount=800, suresh, is_credit=true (recording credit, NOT a read)
