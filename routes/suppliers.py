@@ -105,10 +105,24 @@ async def add_supplier_purchase(req: PurchaseRequest, authorization: str = Heade
     if req.quantity <= 0:
         raise HTTPException(status_code=400, detail="Quantity must be greater than 0.")
 
+    # A purchase restocks an existing item; it never creates one. Creating here
+    # produced a stock doc with no price, unit or category. Check before writing
+    # the purchase so a rejected one leaves no orphan record behind.
+    stock_ref = db.collection("users").document(uid).collection("stock")
+    item_key = req.item_name.strip().lower()
+    stock_doc_ref = stock_ref.document(item_key)
+    stock_doc = stock_doc_ref.get()
+
+    if not stock_doc.exists:
+        raise HTTPException(
+            status_code=404,
+            detail=f"'{req.item_name.strip()}' is not in your inventory. Add the item first.",
+        )
+
     purchases_ref = db.collection("users").document(uid).collection("suppliers_purchases")
     purchase_data = {
         "supplier_name": req.supplier_name.strip(),
-        "item_name": req.item_name.strip().lower(),
+        "item_name": item_key,
         "quantity": req.quantity,
         "amount": req.amount,
         "proof_image_url": req.proof_image_url or "",
@@ -117,28 +131,13 @@ async def add_supplier_purchase(req: PurchaseRequest, authorization: str = Heade
     purchases_ref.add(purchase_data)
 
     # Auto-update stock inventory
-    stock_ref = db.collection("users").document(uid).collection("stock")
-    item_key = req.item_name.strip().lower()
-    stock_doc_ref = stock_ref.document(item_key)
-    stock_doc = stock_doc_ref.get()
-
-    if stock_doc.exists:
-        current_qty = stock_doc.to_dict().get("quantity", 0)
-        stock_doc_ref.update(
-            {
-                "quantity": current_qty + req.quantity,
-                "updated_at": firestore.SERVER_TIMESTAMP,
-            }
-        )
-    else:
-        stock_doc_ref.set(
-            {
-                "item": item_key,
-                "quantity": req.quantity,
-                "created_at": firestore.SERVER_TIMESTAMP,
-                "updated_at": firestore.SERVER_TIMESTAMP,
-            }
-        )
+    current_qty = stock_doc.to_dict().get("quantity", 0)
+    stock_doc_ref.update(
+        {
+            "quantity": current_qty + req.quantity,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+    )
 
     return {
         "status": "success",

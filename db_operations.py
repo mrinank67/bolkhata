@@ -179,13 +179,10 @@ def process_transactions(
         db.collection("users").document(uid).collection("suppliers_purchases")
     )
     supplier_display_map = {}
-    supplier_dir_keys = set()
     for doc in suppliers_ref.stream():
         name = (doc.to_dict().get("name") or "").strip()
         if name:
-            key = _normalize_supplier_name(name)
-            supplier_display_map.setdefault(key, name)
-            supplier_dir_keys.add(key)
+            supplier_display_map.setdefault(_normalize_supplier_name(name), name)
     for doc in purchases_collection_ref.stream():
         name = (doc.to_dict().get("supplier_name") or "").strip()
         if name:
@@ -282,58 +279,18 @@ def process_transactions(
                 errors.append("Kaunsa supplier? (Please specify a supplier name).")
                 continue
 
-            # Add a supplier to the directory (registration only — no goods received).
-            # Dedupe on the raw normalized key (not fuzzy) so a genuinely new
-            # supplier isn't collapsed into a similarly-named existing one.
-            if operation == "add":
-                key = _normalize_supplier_name(raw_supplier)
-                display = raw_supplier.strip().title()
-                group = get_group("supplier_add", "Supplier Added", "🏪", ["Supplier", "Status"])
-                if key in supplier_dir_keys:
-                    group["rows"].append(
-                        {
-                            "Supplier": supplier_display_map.get(key, display),
-                            "Status": "ℹ️ Already in your suppliers",
-                        }
-                    )
-                else:
-                    suppliers_ref.add(
-                        {
-                            "name": display,
-                            "name_lower": display.lower(),
-                            "mobile": "",
-                            "gst_number": "",
-                            "created_at": firestore.SERVER_TIMESTAMP,
-                        }
-                    )
-                    supplier_dir_keys.add(key)
-                    supplier_display_map.setdefault(key, display)
-                    group["rows"].append({"Supplier": display, "Status": "✅ Added"})
-                continue
-
-            # Remove a supplier from the directory. Purchase history is kept —
-            # deleting financial records by voice is too risky to do silently.
-            if operation == "clear":
-                key = _normalize_supplier_name(supplier_name)
-                group = get_group(
-                    "supplier_delete", "Supplier Removed", "🏪", ["Supplier", "Status"]
+            # The supplier directory is managed manually in the app only. Voice
+            # never creates or deletes a directory entry: a spoken name carries
+            # no mobile/GST, and a mis-transcribed one would delete the wrong
+            # supplier. Voice keeps recording purchases against suppliers.
+            if operation != "read":
+                display = (
+                    supplier_display_map.get(_normalize_supplier_name(raw_supplier))
+                    or raw_supplier.strip().title()
                 )
-                removed_name = ""
-                for doc in suppliers_ref.stream():
-                    dname = (doc.to_dict().get("name") or "").strip()
-                    if dname and _normalize_supplier_name(dname) == key:
-                        doc.reference.delete()
-                        removed_name = dname
-                if removed_name:
-                    group["rows"].append(
-                        {
-                            "Supplier": removed_name,
-                            "Status": "✅ Removed (purchase history kept)",
-                        }
-                    )
-                else:
-                    not_found = supplier_display_map.get(key) or raw_supplier.strip().title()
-                    group["empty_message"] = f"{not_found} aapke suppliers mein nahi mila."
+                errors.append(
+                    f"{display} ko voice se add/remove nahi kar sakte — Suppliers page se karein."
+                )
                 continue
 
             # Query purchases from a supplier ("Ramesh traders se kitna maal liya")
@@ -756,17 +713,18 @@ def process_transactions(
         stock_doc_ref = user_stock_ref.document(standard_item)
         stock_doc = stock_doc_ref.get()
 
+        # Items are created manually only. A voice restock of an unknown item
+        # used to create the stock doc with just a name and quantity — no sell
+        # price, cost price, unit or category — leaving a half-formed record
+        # every later screen had to defend against. Now voice only ever moves
+        # stock that already exists (the fuzzy match above is the sole gate).
         if not stock_doc.exists:
-            if operation == "add":
-                current_qty = 0
-                db_price = 0
-            else:
-                errors.append(f"{standard_item} not found in inventory.")
-                continue
-        else:
-            stock_data = stock_doc.to_dict()
-            current_qty = stock_data.get("quantity", 0)
-            db_price = stock_data.get("price", 0)
+            errors.append(f"{standard_item} inventory mein nahi hai. Pehle app mein add karein.")
+            continue
+
+        stock_data = stock_doc.to_dict()
+        current_qty = stock_data.get("quantity", 0)
+        db_price = stock_data.get("price", 0)
 
         # Inquiry
         if target == "stock" and operation == "read":
@@ -808,8 +766,6 @@ def process_transactions(
             "item": standard_item,
             "updated_at": firestore.SERVER_TIMESTAMP,
         }
-        if not stock_doc.exists:
-            update_data["created_at"] = firestore.SERVER_TIMESTAMP
 
         # A rate spoken on a plain inventory add is the shop's SELLING price.
         # A rate spoken on a supplier purchase is a COST price — writing that to

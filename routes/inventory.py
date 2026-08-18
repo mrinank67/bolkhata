@@ -192,8 +192,9 @@ async def get_inventory(authorization: str = Header(None)):
         except AttributeError:
             ts = 0
 
-        # Items created by voice or a supplier purchase have none of the fields
-        # below, so every one needs a default.
+        # Every item is now created here, with the full field set. These defaults
+        # are for legacy docs: voice and supplier purchases used to create bare
+        # stock rows carrying only a name and a quantity.
         row = {
             "item": doc.id,
             "quantity": data.get("quantity", 0),
@@ -306,8 +307,9 @@ async def create_inventory_item(
         _put_image(bucket, uploaded_paths["image_thumb_path"], thumb_bytes, token)
         image_fields = {"image_id": image_id, "image_token": token, **uploaded_paths}
 
-    # 7. Create transactionally so a voice "add" racing this request can't be
-    #    clobbered. If we lose, delete the blobs we just wrote.
+    # 7. Create transactionally so a concurrent create of the same name (double
+    #    tap, two devices) can't be clobbered — the stock doc id *is* the item
+    #    name. If we lose the race, delete the blobs we just wrote.
     @firestore.transactional
     def _create(txn):
         doc_ref = user_stock_ref.document(item_id)

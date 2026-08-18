@@ -16,7 +16,9 @@ from db_operations import (
     _normalize_supplier_name,
     _to_number,
     apply_payment,
+    process_transactions,
 )
+from tests.fakes import FakeFirestore
 
 IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
@@ -266,3 +268,181 @@ class TestApplyPayment:
 
         assert (matched, owed, paid, remaining) == (2, 200, 100, 100)
         assert fake_db.paths_under("users/u1/udhaar") == ["users/u1/udhaar/new"]
+
+
+class TestProcessTransactions:
+    """Voice records transactions; it never creates inventory items or suppliers.
+
+    Items and suppliers are set up once through the manual forms, which capture
+    price, cost price, unit, category, mobile and GST. A spoken command carries
+    none of that, so letting voice create a record produced a half-formed one
+    that every later screen had to defend against. These tests pin the boundary:
+    voice moves stock and money for things that already exist, and refuses the
+    rest with a message instead of writing.
+    """
+
+    UID = "u1"
+
+    def _refs(self, fake_db):
+        user = fake_db.collection("users").document(self.UID)
+        return {
+            "uid": self.UID,
+            "db": fake_db,
+            "user_stock_ref": user.collection("stock"),
+            "user_udhaar_ref": user.collection("udhaar"),
+            "user_orders_ref": user.collection("orders"),
+        }
+
+    def _run(self, fake_db, txn):
+        return process_transactions([txn], **self._refs(fake_db))
+
+    def _seed_item(self, fake_db, item="rice", quantity=10, price=50):
+        fake_db.seed(
+            f"users/{self.UID}/stock/{item}",
+            {"item": item, "quantity": quantity, "price": price, "unit": "pcs"},
+        )
+
+    def _txn(self, **overrides):
+        base = {
+            "target": "stock",
+            "operation": "add",
+            "item": "",
+            "qty": 0,
+            "unit": "",
+            "amount": 0,
+            "rate": 0,
+            "customer_name": "",
+            "customer_modifier": "",
+            "supplier_name": "",
+            "is_credit": False,
+        }
+        base.update(overrides)
+        return base
+
+    # --- creation is refused -------------------------------------------
+
+    def test_restock_of_unknown_item_errors_and_creates_nothing(self):
+        """The old behaviour silently created a stock doc with no price or unit."""
+        fake_db = FakeFirestore()
+        results, errors = self._run(fake_db, self._txn(item="samosa", qty=100, rate=10))
+
+        assert results == []
+        assert len(errors) == 1
+        assert "samosa" in errors[0]
+        assert fake_db.paths_under(f"users/{self.UID}/stock") == []
+
+    def test_sale_of_unknown_item_errors_and_creates_nothing(self):
+        fake_db = FakeFirestore()
+        results, errors = self._run(fake_db, self._txn(operation="subtract", item="samosa", qty=2))
+
+        assert results == []
+        assert len(errors) == 1
+        assert fake_db.paths_under(f"users/{self.UID}/stock") == []
+
+    def test_supplier_purchase_of_unknown_item_creates_nothing(self):
+        """A supplier purchase is still a restock — it cannot conjure the item."""
+        fake_db = FakeFirestore()
+        _, errors = self._run(
+            fake_db, self._txn(item="samosa", qty=50, supplier_name="ramesh traders")
+        )
+
+        assert len(errors) == 1
+        assert fake_db.paths_under(f"users/{self.UID}/stock") == []
+        assert fake_db.paths_under(f"users/{self.UID}/suppliers_purchases") == []
+
+    def test_supplier_add_errors_and_writes_no_directory_entry(self):
+        fake_db = FakeFirestore()
+        results, errors = self._run(
+            fake_db, self._txn(target="supplier", supplier_name="ramesh traders")
+        )
+
+        assert results == []
+        assert len(errors) == 1
+        assert "Ramesh Traders" in errors[0]
+        assert fake_db.paths_under(f"users/{self.UID}/suppliers") == []
+
+    def test_supplier_delete_errors_and_keeps_the_supplier(self):
+        """A mis-transcribed name must never delete a directory entry."""
+        fake_db = FakeFirestore()
+        fake_db.seed(
+            f"users/{self.UID}/suppliers/s1",
+            {"name": "Ramesh Traders", "name_lower": "ramesh traders"},
+        )
+        results, errors = self._run(
+            fake_db,
+            self._txn(target="supplier", operation="clear", supplier_name="ramesh traders"),
+        )
+
+        assert results == []
+        assert len(errors) == 1
+        assert fake_db.paths_under(f"users/{self.UID}/suppliers") == [
+            f"users/{self.UID}/suppliers/s1"
+        ]
+
+    # --- transactions still work ---------------------------------------
+
+    def test_restock_of_known_item_updates_quantity_and_price(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "rice", quantity=10, price=50)
+        results, errors = self._run(fake_db, self._txn(item="rice", qty=5, rate=60))
+
+        assert errors == []
+        stock = fake_db.docs[f"users/{self.UID}/stock/rice"]
+        assert stock["quantity"] == 15
+        assert stock["price"] == 60  # a rate on a plain restock is the sell price
+        assert stock["unit"] == "pcs"  # merge, so manual fields survive
+        assert results
+
+    def test_sale_of_known_item_reduces_stock_and_records_an_order(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "rice", quantity=10, price=50)
+        _, errors = self._run(
+            fake_db,
+            self._txn(operation="subtract", item="rice", qty=3, customer_name="sujal"),
+        )
+
+        assert errors == []
+        assert fake_db.docs[f"users/{self.UID}/stock/rice"]["quantity"] == 7
+        assert len(fake_db.paths_under(f"users/{self.UID}/orders")) == 1
+
+    def test_supplier_purchase_of_known_item_records_purchase_without_directory_entry(self):
+        """Decision: an unsaved supplier does not block a delivery, but voice
+        still never writes to the suppliers directory."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "soap", quantity=100, price=20)
+        _, errors = self._run(
+            fake_db,
+            self._txn(item="soap", qty=300, rate=12, supplier_name="ramesh traders"),
+        )
+
+        assert errors == []
+        stock = fake_db.docs[f"users/{self.UID}/stock/soap"]
+        assert stock["quantity"] == 400
+        assert stock["price"] == 20  # cost price must not overwrite the sell price
+        assert len(fake_db.paths_under(f"users/{self.UID}/suppliers_purchases")) == 1
+        assert fake_db.paths_under(f"users/{self.UID}/suppliers") == []
+
+    def test_supplier_read_still_lists_purchases(self):
+        fake_db = FakeFirestore()
+        fake_db.seed(
+            f"users/{self.UID}/suppliers/s1",
+            {"name": "Ramesh Traders", "name_lower": "ramesh traders"},
+        )
+        fake_db.seed(
+            f"users/{self.UID}/suppliers_purchases/p1",
+            {
+                "supplier_name": "Ramesh Traders",
+                "item_name": "soap",
+                "quantity": 300,
+                "amount": 3600,
+                "timestamp": _ts(1),
+            },
+        )
+        results, errors = self._run(
+            fake_db,
+            self._txn(target="supplier", operation="read", supplier_name="ramesh traders"),
+        )
+
+        assert errors == []
+        assert len(results) == 1
+        assert results[0]["rows"][0]["Item"] == "Soap"

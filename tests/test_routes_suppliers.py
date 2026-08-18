@@ -135,6 +135,7 @@ class TestAddSupplierPurchase:
         return authed_client.post("/suppliers/purchase", json=payload)
 
     def test_records_the_purchase(self, authed_client, fake_db):
+        fake_db.seed(f"{self.STOCK}/rice", {"item": "rice", "quantity": 0, "price": 40})
         assert self._purchase(authed_client).status_code == 200
 
         written = [fake_db.docs[p] for p in fake_db.paths_under(self.PURCHASES)]
@@ -143,11 +144,26 @@ class TestAddSupplierPurchase:
         assert written[0]["item_name"] == "rice"
         assert written[0]["quantity"] == 10
 
-    def test_creates_the_stock_row_when_the_item_is_new(self, authed_client, fake_db):
-        self._purchase(authed_client, item_name="  Basmati Rice  ", quantity=10)
+    def test_unknown_item_is_404_and_writes_nothing(self, authed_client, fake_db):
+        """A purchase restocks an existing item; it never creates one.
 
-        # Stock is keyed by the lowercased, trimmed item name.
-        assert fake_db.docs[f"{self.STOCK}/basmati rice"]["quantity"] == 10
+        Creating here produced a stock row with no price, unit or category. The
+        item check runs before the purchase write, so a rejected purchase must
+        leave no orphan record behind.
+        """
+        res = self._purchase(authed_client, item_name="Basmati Rice")
+
+        assert res.status_code == 404
+        assert "not in your inventory" in res.json()["detail"]
+        assert fake_db.paths_under(self.PURCHASES) == []
+        assert fake_db.paths_under(self.STOCK) == []
+
+    def test_item_is_matched_case_and_whitespace_insensitively(self, authed_client, fake_db):
+        """Stock is keyed by the lowercased, trimmed item name."""
+        fake_db.seed(f"{self.STOCK}/basmati rice", {"item": "basmati rice", "quantity": 5})
+
+        assert self._purchase(authed_client, item_name="  Basmati Rice  ").status_code == 200
+        assert fake_db.docs[f"{self.STOCK}/basmati rice"]["quantity"] == 15
 
     def test_adds_to_existing_stock_rather_than_overwriting(self, authed_client, fake_db):
         fake_db.seed(f"{self.STOCK}/rice", {"item": "rice", "quantity": 25})
@@ -157,10 +173,12 @@ class TestAddSupplierPurchase:
         assert fake_db.docs[f"{self.STOCK}/rice"]["quantity"] == 35
 
     def test_stock_updates_are_scoped_to_the_caller(self, authed_client, fake_db):
+        fake_db.seed(f"{self.STOCK}/rice", {"item": "rice", "quantity": 25})
         fake_db.seed("users/someone-else/stock/rice", {"item": "rice", "quantity": 5})
 
         self._purchase(authed_client, quantity=10)
 
+        assert fake_db.docs[f"{self.STOCK}/rice"]["quantity"] == 35
         assert fake_db.docs["users/someone-else/stock/rice"]["quantity"] == 5
 
     @pytest.mark.parametrize("field", ["supplier_name", "item_name"])
