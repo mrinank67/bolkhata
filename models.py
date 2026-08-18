@@ -4,6 +4,7 @@ Pydantic request/response models for BolKhata API.
 
 from typing import Optional
 
+from fastapi import UploadFile
 from pydantic import BaseModel, Field
 
 # Shared bounds: quantities up to 1 lakh units, amounts up to ₹1 crore.
@@ -17,9 +18,23 @@ _MAX_AMOUNT = MAX_AMOUNT
 
 
 class InventoryItemUpdate(BaseModel):
+    """PUT /inventory/{id}, bound as a multipart Form model.
+
+    The photo lives in the model rather than in a separate File() parameter on
+    purpose: FastAPI only flattens a form model into its fields when it is the
+    *sole* body parameter, and a second one would make it expect a form field
+    literally named "req". Keeping everything here is also what lets this
+    endpoint be validated by these bounds instead of re-asserting them by hand
+    the way the multipart create route has to.
+    """
+
     item: Optional[str] = Field(default=None, max_length=100)
     quantity: Optional[int] = Field(default=None, ge=0, le=_MAX_QTY)
     price: Optional[float] = Field(default=None, ge=0, le=_MAX_AMOUNT)
+    image: Optional[UploadFile] = None
+    # Only meaningful when no replacement photo is attached; an attached image
+    # always wins, so "replace" never has to be spelled as remove-then-add.
+    remove_image: bool = False
 
 
 class PurchaseRequest(BaseModel):
