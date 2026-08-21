@@ -72,6 +72,7 @@ REQUESTS = [
     ("DELETE", "/orders/item/{item_id}", None, None, None),
     ("DELETE", "/orders/{order_id}", None, None, None),
     ("POST", "/orders/{order_id}/bill", None, None, None),
+    ("POST", "/orders/{order_id}/bill/touch", None, None, None),
     (
         "POST",
         "/process_voice",

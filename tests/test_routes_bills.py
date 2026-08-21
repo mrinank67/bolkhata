@@ -33,32 +33,39 @@ def _line(order_id="o1", item="rice", qty=2, price=50, amount=100, days_ago=0, *
 
 @pytest.fixture
 def storage():
-    """Storage double; uploaded PDFs land in `.blobs` keyed by path."""
+    """Storage double; uploaded PDFs land in `.blobs` keyed by path.
+
+    Blob mocks are cached per path so a test can inspect what the code set on the
+    object (metadata, custom_time) via ``storage.blob(path)`` — a fresh mock per
+    call would throw that away.
+    """
     bucket = mock.MagicMock()
     bucket.name = "test-bucket.appspot.com"
     bucket.blobs = {}
+    handles = {}
 
     def _blob(path):
-        blob = mock.MagicMock()
-        blob.name = path
-        blob.upload_from_string.side_effect = lambda data, **kw: bucket.blobs.__setitem__(
-            path, data
-        )
-        return blob
+        if path not in handles:
+            blob = mock.MagicMock()
+            blob.name = path
+            blob.custom_time = None
+            blob.upload_from_string.side_effect = lambda data, **kw: bucket.blobs.__setitem__(
+                path, data
+            )
+            blob.delete.side_effect = lambda: bucket.blobs.pop(path, None)
+            handles[path] = blob
+        return handles[path]
 
     bucket.blob.side_effect = _blob
-    with mock.patch("routes.bills.get_bucket", return_value=bucket):
+    with (
+        mock.patch("routes.bills.get_bucket", return_value=bucket),
+        mock.patch("routes.orders.get_bucket", return_value=bucket),
+    ):
         yield bucket
 
 
 @pytest.fixture
-def direct_transactions():
-    with mock.patch("routes.bills.firestore.transactional", lambda f: f):
-        yield
-
-
-@pytest.fixture
-def bill(authed_client, storage, direct_transactions):
+def bill(authed_client, storage):
     def _generate(order_id="o1"):
         return authed_client.post(f"/orders/{order_id}/bill")
 
@@ -173,7 +180,95 @@ class TestGenerateBill:
         assert bill("o1").status_code == 404
 
     def test_bill_sequence_is_per_user(self, fake_db, bill):
-        fake_db.seed("users/someone-else", {"bill_seq": 42})
+        fake_db.seed("users/someone-else", {"order_seq": 42})
         fake_db.seed(f"{ORDERS}/a", _line())
 
         assert bill().json()["bill_number"] == "BK-001"
+
+
+class TestRetention:
+    """Bills are deleted 30 days after last use and rebuilt on demand.
+
+    That is only safe if a rebuilt bill is indistinguishable from the original:
+    same number, same URL. These tests are the contract that makes deletion OK.
+    """
+
+    def test_number_and_url_survive_the_bill_being_deleted(self, fake_db, bill):
+        fake_db.seed(f"{ORDERS}/a", _line())
+        original = bill().json()
+
+        # Simulate the TTL sweep having removed the bill entirely.
+        del fake_db.docs[f"{BILLS}/o1"]
+        rebuilt = bill().json()
+
+        assert rebuilt["bill_number"] == original["bill_number"] == "BK-001"
+        assert rebuilt["pdf_url"] == original["pdf_url"]
+
+    def test_number_is_not_redrawn_from_the_counter_on_rebuild(self, fake_db, bill):
+        """The old scheme would have handed out BK-002 here."""
+        fake_db.seed(f"{ORDERS}/a", _line())
+        bill()
+        del fake_db.docs[f"{BILLS}/o1"]
+
+        assert bill().json()["bill_number"] == "BK-001"
+        assert fake_db.docs[f"users/{UID}"]["order_seq"] == 1
+
+    def test_generating_starts_the_retention_window(self, fake_db, bill):
+        fake_db.seed(f"{ORDERS}/a", _line())
+        bill()
+
+        expires = fake_db.docs[f"{BILLS}/o1"]["expires_at"]
+        remaining = expires - datetime.datetime.now(datetime.UTC)
+        assert datetime.timedelta(days=29) < remaining <= datetime.timedelta(days=30)
+
+    def test_generating_stamps_custom_time_for_the_lifecycle_rule(self, fake_db, bill, storage):
+        """GCS deletes on daysSinceCustomTime; an unstamped object is never eligible."""
+        fake_db.seed(f"{ORDERS}/a", _line())
+        bill()
+
+        assert storage.blob(f"users/{UID}/bills/o1.pdf").custom_time is not None
+
+    def test_touch_restamps_custom_time(self, fake_db, authed_client, storage):
+        fake_db.seed(f"{ORDERS}/a", _line())
+        authed_client.post("/orders/o1/bill")
+        blob = storage.blob(f"users/{UID}/bills/o1.pdf")
+        blob.custom_time = None
+
+        authed_client.post("/orders/o1/bill/touch")
+
+        assert blob.custom_time is not None
+        blob.patch.assert_called()
+
+    def test_touch_extends_the_window(self, fake_db, authed_client, storage):
+        fake_db.seed(f"{ORDERS}/a", _line())
+        authed_client.post("/orders/o1/bill")
+        fake_db.docs[f"{BILLS}/o1"]["expires_at"] = datetime.datetime.now(
+            datetime.UTC
+        ) + datetime.timedelta(days=2)
+
+        resp = authed_client.post("/orders/o1/bill/touch")
+
+        assert resp.status_code == 200
+        assert resp.json()["touched"] is True
+        remaining = fake_db.docs[f"{BILLS}/o1"]["expires_at"] - datetime.datetime.now(datetime.UTC)
+        assert remaining > datetime.timedelta(days=29)
+
+    def test_touching_an_already_swept_bill_is_not_an_error(self, fake_db, authed_client):
+        fake_db.seed(f"{ORDERS}/a", _line())
+
+        resp = authed_client.post("/orders/o1/bill/touch")
+
+        assert resp.status_code == 200
+        assert resp.json()["touched"] is False
+
+    def test_editing_an_order_extends_the_window(self, fake_db, authed_client, storage):
+        fake_db.seed(f"{ORDERS}/a", _line())
+        authed_client.post("/orders/o1/bill")
+        fake_db.docs[f"{BILLS}/o1"]["expires_at"] = datetime.datetime.now(
+            datetime.UTC
+        ) + datetime.timedelta(days=2)
+
+        authed_client.put("/orders/item/a", json={"quantity": 5})
+
+        remaining = fake_db.docs[f"{BILLS}/o1"]["expires_at"] - datetime.datetime.now(datetime.UTC)
+        assert remaining > datetime.timedelta(days=29)

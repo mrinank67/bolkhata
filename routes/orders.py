@@ -8,6 +8,7 @@ inventory stock; inventory reconciliation is deferred to the (future) bill
 generation flow so editing an order doesn't trigger unnecessary stock writes.
 """
 
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from fastapi import APIRouter, Header, HTTPException
@@ -18,6 +19,66 @@ from auth import get_bucket, verify_token
 from models import OrderCreateRequest, OrderItemAddRequest, OrderItemUpdate
 
 router = APIRouter()
+
+# Generated bills are disposable: the PDF and its metadata doc are deleted this
+# many days after the bill was last generated, viewed or shared, and rebuilt on
+# demand if anyone wants it again. See _bill_no for why that is safe.
+BILL_RETENTION_DAYS = 30
+
+
+def _bill_expiry():
+    """Absolute expiry for a bill, refreshed on every use.
+
+    A concrete UTC datetime rather than SERVER_TIMESTAMP: Firestore's TTL policy
+    needs a real Timestamp field, and the sentinel cannot be added to.
+    """
+    return datetime.now(timezone.utc) + timedelta(days=BILL_RETENTION_DAYS)
+
+
+def _is_expired(expires_at, now=None) -> bool:
+    """True when a bill's retention window has already closed.
+
+    The TTL sweep can lag its deadline by up to ~24h, so readers check this
+    themselves instead of trusting that an expired doc is already gone.
+    """
+    if not expires_at:
+        return False
+    try:
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return expires_at < (now or datetime.now(timezone.utc))
+    except (AttributeError, TypeError):
+        return False
+
+
+def _bill_no(order_no) -> str:
+    """The customer-facing bill number, derived from the order's own number.
+
+    Deriving it — rather than drawing from a counter at generation time — is what
+    lets a bill be deleted and regenerated later with the same number on it.
+    """
+    return f"BK-{int(order_no or 0):03d}"
+
+
+def _allocate_order_no(db, user_ref) -> int:
+    """Reserve the next per-shop order number.
+
+    Transactional because two orders created at once must not share a number, and
+    the number is customer-facing once it reaches a bill.
+    """
+
+    @firestore.transactional
+    def _next(txn):
+        snap = user_ref.get(transaction=txn)
+        seq = int((snap.to_dict() or {}).get("order_seq", 0)) + 1
+        txn.set(user_ref, {"order_seq": seq}, merge=True)
+        return seq
+
+    return _next(db.transaction())
+
+
+def _bill_blob_path(uid: str, order_id: str) -> str:
+    return f"users/{uid}/bills/{order_id}.pdf"
 
 
 def _display_price(data: dict) -> float:
@@ -47,11 +108,12 @@ def _order_id_for_doc(data: dict) -> str:
 
 def _mark_bill_stale(user_ref, order_id: str) -> None:
     """Flag an order's bill as out-of-date so the UI re-generates it on next view.
-    Best-effort: a missing bill (or any error) is silently ignored."""
+    Editing an order counts as using it, so this also pushes the retention clock
+    out. Best-effort: a missing bill (or any error) is silently ignored."""
     try:
         bill_ref = user_ref.collection("bills").document(order_id)
         if bill_ref.get().exists:
-            bill_ref.update({"stale": True})
+            bill_ref.update({"stale": True, "expires_at": _bill_expiry()})
     except Exception:
         pass
 
@@ -69,13 +131,18 @@ def _attach_bills(user_ref, order_list: list) -> None:
         bucket_name = get_bucket().name
     except Exception:
         return
+    now = datetime.now(timezone.utc)
     for o in order_list:
         bd = bill_docs.get(o["order_id"])
         if not bd or not bd.get("download_token") or not bd.get("storage_path"):
             continue
+        # Past its retention window: the PDF is gone (or about to be), so offer a
+        # fresh "Generate Bill" rather than a link that 404s.
+        if _is_expired(bd.get("expires_at"), now):
+            continue
         path = quote(bd["storage_path"], safe="")
         o["bill"] = {
-            "bill_number": f"BK-{int(bd.get('bill_number') or 0):03d}",
+            "bill_number": _bill_no(o.get("order_no")),
             "pdf_url": (
                 f"https://firebasestorage.googleapis.com/v0/b/{bucket_name}/o/{path}"
                 f"?alt=media&token={bd['download_token']}"
@@ -121,20 +188,26 @@ async def get_orders(authorization: str = Header(None)):
         if oid not in orders:
             orders[oid] = {
                 "order_id": oid,
+                "order_no": data.get("order_no"),
                 "customer_name": cname,
                 "customer_modifier": cmod,
                 "last_order": ts,
                 "total": 0,
                 "items": [],
             }
+        elif orders[oid].get("order_no") is None:
+            # Items added to an order before it was numbered still carry None.
+            orders[oid]["order_no"] = data.get("order_no")
 
-        orders[oid]["items"].append({
-            "id": doc.id,
-            "item": data.get("item", ""),
-            "quantity": data.get("quantity", 0),
-            "price": _display_price(data),
-            "amount": amount,
-        })
+        orders[oid]["items"].append(
+            {
+                "id": doc.id,
+                "item": data.get("item", ""),
+                "quantity": data.get("quantity", 0),
+                "price": _display_price(data),
+                "amount": amount,
+            }
+        )
         orders[oid]["total"] += amount
         total_value += amount
 
@@ -159,8 +232,10 @@ async def create_order(req: OrderCreateRequest, authorization: str = Header(None
     if not req.items:
         raise HTTPException(status_code=400, detail="At least one item is required.")
 
-    orders_ref = db.collection("users").document(uid).collection("orders")
+    user_ref = db.collection("users").document(uid)
+    orders_ref = user_ref.collection("orders")
     order_id = orders_ref.document().id  # one shared id for all items in this order
+    order_no = _allocate_order_no(db, user_ref)
 
     cname = req.customer_name.strip().lower()
     cmod = (req.customer_modifier or "").strip().lower()
@@ -169,26 +244,32 @@ async def create_order(req: OrderCreateRequest, authorization: str = Header(None
         item = it.item.strip().lower()
         if not item:
             continue
-        orders_ref.add({
-            "customer_name": cname,
-            "customer_modifier": cmod,
-            "item": item,
-            "quantity": it.quantity,
-            "amount": round(it.price * it.quantity, 2),
-            "price": it.price,
-            "order_id": order_id,
-            "timestamp": firestore.SERVER_TIMESTAMP,
-        })
+        orders_ref.add(
+            {
+                "customer_name": cname,
+                "customer_modifier": cmod,
+                "item": item,
+                "quantity": it.quantity,
+                "amount": round(it.price * it.quantity, 2),
+                "price": it.price,
+                "order_id": order_id,
+                "order_no": order_no,
+                "timestamp": firestore.SERVER_TIMESTAMP,
+            }
+        )
 
     return {
         "status": "success",
         "message": f"Order created for {req.customer_name}.",
         "order_id": order_id,
+        "order_no": order_no,
     }
 
 
 @router.post("/orders/{order_id}/items")
-async def add_order_item(order_id: str, req: OrderItemAddRequest, authorization: str = Header(None)):
+async def add_order_item(
+    order_id: str, req: OrderItemAddRequest, authorization: str = Header(None)
+):
     from main import db
 
     uid = verify_token(authorization)
@@ -202,24 +283,33 @@ async def add_order_item(order_id: str, req: OrderItemAddRequest, authorization:
     # the request body (e.g. legacy orders that have no queryable order_id field).
     cname = (req.customer_name or "").strip().lower()
     cmod = (req.customer_modifier or "").strip().lower()
-    existing = list(orders_ref.where(filter=FieldFilter("order_id", "==", order_id)).limit(1).stream())
+    order_no = None
+    existing = list(
+        orders_ref.where(filter=FieldFilter("order_id", "==", order_id)).limit(1).stream()
+    )
     if existing:
         data = existing[0].to_dict()
         cname = data.get("customer_name", cname)
         cmod = data.get("customer_modifier", cmod)
+        # Inherit the order's number — a new line item is part of the same order,
+        # so it must not draw a number of its own.
+        order_no = data.get("order_no")
     elif not cname:
         raise HTTPException(status_code=404, detail="Order not found.")
 
-    orders_ref.add({
-        "customer_name": cname,
-        "customer_modifier": cmod,
-        "item": item,
-        "quantity": req.quantity,
-        "amount": round(req.price * req.quantity, 2),
-        "price": req.price,
-        "order_id": order_id,
-        "timestamp": firestore.SERVER_TIMESTAMP,
-    })
+    orders_ref.add(
+        {
+            "customer_name": cname,
+            "customer_modifier": cmod,
+            "item": item,
+            "quantity": req.quantity,
+            "amount": round(req.price * req.quantity, 2),
+            "price": req.price,
+            "order_id": order_id,
+            "order_no": order_no,
+            "timestamp": firestore.SERVER_TIMESTAMP,
+        }
+    )
 
     _mark_bill_stale(orders_ref.parent, order_id)
     return {"status": "success", "message": "Item added to order."}
@@ -259,12 +349,14 @@ async def update_order_item(item_id: str, req: OrderItemUpdate, authorization: s
     # customer + day (see get_orders), so re-dating an edited item would move it
     # into another day's order — merging two separate orders for the same person.
     if changed:
-        doc_ref.update({
-            "item": new_item,
-            "quantity": new_qty,
-            "price": new_price,
-            "amount": round((new_price or 0) * (new_qty or 0), 2),
-        })
+        doc_ref.update(
+            {
+                "item": new_item,
+                "quantity": new_qty,
+                "price": new_price,
+                "amount": round((new_price or 0) * (new_qty or 0), 2),
+            }
+        )
         _mark_bill_stale(orders_ref.parent, _order_id_for_doc(data))
 
     return {"status": "success", "message": "Order item updated."}
@@ -323,9 +415,15 @@ async def delete_order(order_id: str, authorization: str = Header(None)):
     for doc in docs:
         doc.reference.delete()
 
-    # The order is gone, so its saved bill metadata is no longer meaningful.
+    # The order is gone, so its saved bill is no longer meaningful. The PDF has to
+    # go with the metadata doc: its download URL never expires, so an orphaned blob
+    # stays publicly readable — and billed — forever.
     try:
         orders_ref.parent.collection("bills").document(order_id).delete()
+    except Exception:
+        pass
+    try:
+        get_bucket().blob(_bill_blob_path(uid, order_id)).delete()
     except Exception:
         pass
 

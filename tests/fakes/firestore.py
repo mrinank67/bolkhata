@@ -7,7 +7,9 @@ patterns this codebase actually uses, so it stays small enough to trust:
     ref.get() / .set(data, merge=) / .update(data) / .delete()
     collection.stream() / .order_by(f, direction=) / .limit(n) / .where(filter=)
     collection.add(data) / .document()          (auto-id)
+    collection.list_documents()                 (includes "missing" parents)
     db.transaction()                            (see note below)
+    db.batch()                                  (buffered writes, applied on commit)
 
 Transactions: Firestore's real ``transactional`` decorator drives a live
 backend session, so tests that exercise rate_limiter monkeypatch
@@ -20,7 +22,7 @@ from __future__ import annotations
 import itertools
 import re
 
-from google.cloud.firestore_v1 import Increment
+from google.cloud.firestore_v1 import DELETE_FIELD, Increment
 
 # Sentinel object identity for firestore.SERVER_TIMESTAMP is checked by value in
 # the app, so we just store whatever sentinel it passes and let assertions look
@@ -34,7 +36,11 @@ def _auto_id() -> str:
 
 
 def _apply_sentinels(existing: dict, incoming: dict) -> dict:
-    """Resolve Increment sentinels against the current value."""
+    """Resolve Increment sentinels against the current value.
+
+    DELETE_FIELD is passed through untouched: it can only be resolved against the
+    dict it is being written into, which _strip_deletes does afterwards.
+    """
     out = {}
     for key, value in incoming.items():
         if isinstance(value, Increment):
@@ -42,6 +48,13 @@ def _apply_sentinels(existing: dict, incoming: dict) -> dict:
         else:
             out[key] = value
     return out
+
+
+def _strip_deletes(target: dict) -> dict:
+    """Remove fields whose written value was the DELETE_FIELD sentinel."""
+    for key in [k for k, v in target.items() if v is DELETE_FIELD]:
+        target.pop(key)
+    return target
 
 
 class FakeSnapshot:
@@ -93,15 +106,16 @@ class FakeDocumentRef:
             existing = self._store.docs.get(self.path) or {}
             merged = dict(existing)
             merged.update(_apply_sentinels(existing, data))
-            self._store.docs[self.path] = merged
+            self._store.docs[self.path] = _strip_deletes(merged)
         else:
-            self._store.docs[self.path] = _apply_sentinels({}, data)
+            self._store.docs[self.path] = _strip_deletes(_apply_sentinels({}, data))
 
     def update(self, data: dict) -> None:
         existing = self._store.docs.get(self.path)
         if existing is None:
             raise KeyError(f"cannot update missing document: {self.path}")
         existing.update(_apply_sentinels(existing, data))
+        _strip_deletes(existing)
 
     def delete(self) -> None:
         self._store.docs.pop(self.path, None)
@@ -227,6 +241,24 @@ class FakeCollectionRef:
         ref.set(data)
         return None, ref
 
+    def list_documents(self):
+        """Every child document reference, including "missing" ones.
+
+        Real Firestore reports a document that holds subcollections but has no
+        fields of its own. That is not a corner case here: a shop that has only
+        ever used voice gets users/{uid}/orders/... with no users/{uid} document,
+        and a migration that walked stream() would skip it entirely.
+        """
+        prefix = self.path + "/"
+        seen = []
+        for key in self._store.docs:
+            if not key.startswith(prefix):
+                continue
+            doc_id = key[len(prefix) :].split("/")[0]
+            if doc_id not in seen:
+                seen.append(doc_id)
+        return [self.document(doc_id) for doc_id in sorted(seen)]
+
     def _raw_docs(self) -> list[tuple[str, dict]]:
         """Direct children only — not documents in nested subcollections."""
         prefix = self.path + "/"
@@ -275,6 +307,35 @@ class FakeTransaction:
         doc_ref.delete()
 
 
+class FakeWriteBatch:
+    """Buffers writes and applies them on commit.
+
+    Unlike FakeTransaction this really does buffer, because that is the whole
+    point of a batch: callers accumulate operations and only the commit makes
+    them visible.
+    """
+
+    def __init__(self):
+        self._ops = []
+
+    def __len__(self) -> int:
+        return len(self._ops)
+
+    def set(self, doc_ref: FakeDocumentRef, data: dict, merge: bool = False) -> None:
+        self._ops.append(lambda: doc_ref.set(data, merge=merge))
+
+    def update(self, doc_ref: FakeDocumentRef, data: dict) -> None:
+        self._ops.append(lambda: doc_ref.update(data))
+
+    def delete(self, doc_ref: FakeDocumentRef) -> None:
+        self._ops.append(lambda: doc_ref.delete())
+
+    def commit(self) -> None:
+        for op in self._ops:
+            op()
+        self._ops.clear()
+
+
 class FakeFirestore:
     """Root client. `docs` maps a slash-joined path -> dict."""
 
@@ -286,6 +347,9 @@ class FakeFirestore:
 
     def transaction(self) -> FakeTransaction:
         return FakeTransaction()
+
+    def batch(self) -> FakeWriteBatch:
+        return FakeWriteBatch()
 
     # --- test helpers -------------------------------------------------
 

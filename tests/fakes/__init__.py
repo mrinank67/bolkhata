@@ -1,3 +1,3 @@
-from .firestore import FakeFirestore, FakeSnapshot, FakeTransaction
+from .firestore import FakeFirestore, FakeSnapshot, FakeTransaction, FakeWriteBatch
 
-__all__ = ["FakeFirestore", "FakeSnapshot", "FakeTransaction"]
+__all__ = ["FakeFirestore", "FakeSnapshot", "FakeTransaction", "FakeWriteBatch"]

@@ -405,6 +405,45 @@ class TestProcessTransactions:
         assert fake_db.docs[f"users/{self.UID}/stock/rice"]["quantity"] == 7
         assert len(fake_db.paths_under(f"users/{self.UID}/orders")) == 1
 
+    def test_a_voice_sale_is_numbered_like_any_other_order(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "rice", quantity=10, price=50)
+        self._run(
+            fake_db,
+            self._txn(operation="subtract", item="rice", qty=3, customer_name="sujal"),
+        )
+
+        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        assert fake_db.docs[path]["order_no"] == 1
+        assert fake_db.docs[f"users/{self.UID}"]["order_seq"] == 1
+
+    def test_a_follow_up_reuses_the_orders_number_instead_of_drawing_a_new_one(self):
+        """A follow-up utterance appends to the same order card, so it is the
+        same order — and must not consume a second number from the counter."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "rice", quantity=10, price=50)
+        self._seed_item(fake_db, "dal", quantity=10, price=80)
+        fake_db.seed(
+            f"users/{self.UID}/orders/existing",
+            {"customer_name": "sujal", "customer_modifier": "", "order_id": "o1", "order_no": 4},
+        )
+        fake_db.seed(f"users/{self.UID}", {"order_seq": 4})
+
+        process_transactions(
+            [self._txn(operation="subtract", item="dal", qty=1, customer_name="sujal")],
+            recent_customer="sujal",
+            recent_order_id="o1",
+            **self._refs(fake_db),
+        )
+
+        added = [
+            fake_db.docs[p]
+            for p in fake_db.paths_under(f"users/{self.UID}/orders")
+            if fake_db.docs[p].get("item") == "dal"
+        ]
+        assert [d["order_no"] for d in added] == [4]
+        assert fake_db.docs[f"users/{self.UID}"]["order_seq"] == 4, "counter must not advance"
+
     def test_supplier_purchase_of_known_item_records_purchase_without_directory_entry(self):
         """Decision: an unsaved supplier does not block a delivery, but voice
         still never writes to the suppliers directory."""

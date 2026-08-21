@@ -55,9 +55,10 @@ By leveraging extreme low-latency processing, BolKhata allows shopkeepers to spe
 * **Voice or Manual Entry:** Build orders by speaking naturally or via the + button. Add, edit, or remove individual line items and delete whole orders inline — no page reloads.
 * **Inventory-Aware Pricing:** New order line items auto-fill their unit price from live inventory, with an item-name autocomplete sourced from current stock.
 * **Stock-Safe Edits:** Order edits intentionally never mutate inventory stock — stock reconciliation is deferred to billing — so editing an order never triggers stray stock writes.
-* **One-Tap PDF Bills:** Generate a branded A4 PDF invoice for any order, complete with an itemized table, quantity/rate/total columns, and a grand total. Bills carry a stable, sequential bill number (`BK-001`, `BK-002`, …) that stays the same across regenerations.
+* **One-Tap PDF Bills:** Generate a branded A4 PDF invoice for any order, complete with an itemized table, quantity/rate/total columns, and a grand total. Every order carries a running order number the moment it is created, and its bill takes the same number (`BK-001`, `BK-002`, …) — so the number is a property of the sale, not of when a PDF happened to be printed.
+* **Self-Cleaning Bill Archive:** Bills are kept for 30 days after they were last generated, opened, shared, or edited, then deleted from Firestore and Storage — opening one restarts the clock. Nothing is lost: because the number comes from the order and the download token is derived rather than random, a bill rebuilt months later comes back with the same number at the same link.
 * **Shop Profile ("Bill From"):** Account Settings captures the shop name, mobile, and address that print on every bill — alongside the UPI ID used for payment reminders.
-* **Permanent Shareable Links:** Each bill is archived to Firebase Storage and served through a non-expiring, unguessable download token, so it can be reopened or re-shared anytime; regenerating a bill keeps the same number and link.
+* **Permanent Shareable Links:** Each bill is archived to Firebase Storage and served through a non-expiring, unguessable download token, so it can be reopened or re-shared anytime; regenerating a bill keeps the same number and link, even if the archived copy was cleaned up in between.
 * **Send Bill on WhatsApp:** One tap formats a Hinglish message with the bill link and opens it in WhatsApp for the customer's saved number.
 
 ### 6. Multi-Tenant Security & Reliability
@@ -132,6 +133,7 @@ BolKhata uses a clean REST API structure. All endpoints except `/config` and `/p
 | `/orders` | `POST` | Creates a new order from one or more line items |
 | `/orders/{order_id}/items` | `POST` | Appends a line item to an existing order |
 | `/orders/{order_id}/bill` | `POST` | Renders a PDF bill, archives it to Storage, and returns a permanent download link |
+| `/orders/{order_id}/bill/touch` | `POST` | Marks an archived bill as still in use, restarting its 30-day retention window |
 | `/orders/item/{item_id}` | `PUT` | Edits a single order line item (item, quantity, or price) |
 | `/orders/item/{item_id}` | `DELETE` | Removes a single line item from an order |
 | `/orders/{order_id}` | `DELETE` | Deletes an entire order and all its line items |
@@ -147,7 +149,7 @@ BolKhata uses a clean REST API structure. All endpoints except `/config` and `/p
 
 * **Siloed Databases:** All subcollections (stock, udhaar, orders, bills, history, suppliers, suppliers_purchases) and all Storage objects (bills, item photos) are uniquely locked under their authenticated Firebase uid path, preventing cross-shop data leaks. The uid always comes from the verified token, never from the request.
 * **Deny-All Firestore Rules:** `firestore.rules` blocks all direct client access; only the backend's Admin SDK touches data. Deploy with `npx firebase-tools deploy --only firestore:rules`.
-* **Per-User File Storage:** Generated bill PDFs (`users/{uid}/bills/`) and product photos (`users/{uid}/items/`) are exposed only through unguessable download tokens — never via a public listing. Deleting an item or clearing inventory also deletes its photos, and renaming an item carries its photo across; an orphaned blob would otherwise be billed indefinitely.
+* **Per-User File Storage:** Generated bill PDFs (`users/{uid}/bills/`) and product photos (`users/{uid}/items/`) are exposed only through unguessable download tokens — never via a public listing. Deleting an item or clearing inventory also deletes its photos, deleting an order deletes its bill PDF, and renaming an item carries its photo across; an orphaned blob would otherwise be billed indefinitely.
 * **Hardened Image Uploads:** Product photos are identified by magic bytes (JPEG, PNG, and WebP only — the client's `Content-Type` and filename are ignored entirely), capped at 3 MB before any decoding, and rejected above 40 megapixels so a small file cannot expand into a decompression bomb. Every accepted image is then **fully re-encoded from decoded pixels**, which strips EXIF/GPS metadata (these are photos taken inside a named shop) and discards any appended polyglot payload — no client-supplied bytes ever reach Storage. Storage paths are server-generated UUIDs, so a hostile filename cannot escape the caller's own directory.
 * **Signed Payment Links:** `/pay` tokens are signed with `PAY_LINK_SECRET` (required; the app refuses to mint links without it) and expire after 24 hours. The payee UPI ID is always read from the authenticated shopkeeper's settings, never from the request.
 * **Rate Limits Imposed:** Each feature holds its own per-user budget, so uploading photos can never consume a shopkeeper's voice quota.

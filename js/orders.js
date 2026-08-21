@@ -63,6 +63,19 @@ async function generateBill(orderId) {
   return data;
 }
 
+// Tell the server this bill is still wanted, restarting its 30-day retention
+// window. Fire-and-forget: the PDF opens either way, and a missed touch only
+// means the bill gets rebuilt on demand later.
+async function touchBill(orderId) {
+  try {
+    const token = await auth.currentUser.getIdToken();
+    await fetch(`${API}/orders/${encodeURIComponent(orderId)}/bill/touch`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch { /* silent — retention is best-effort */ }
+}
+
 // Flip an order card into "bill ready" state so later clicks re-open the saved
 // PDF instead of regenerating it.
 function markBillGenerated(card, pdfUrl) {
@@ -154,7 +167,11 @@ function renderOrders() {
     const displayName = o.customer_modifier
       ? `${capitalize(o.customer_name)} (${o.customer_modifier})`
       : capitalize(o.customer_name);
+    // The order number doubles as the bill number (order #7 → bill BK-007), so
+    // showing it lets a shopkeeper match a bill in hand to a card on this page.
+    const orderNo = o.order_no ? `Order #${o.order_no}` : '';
     const lastOrder = o.last_order ? `Last order ${formatOrderDate(o.last_order)}` : '';
+    const subtitle = [orderNo, lastOrder].filter(Boolean).join(' · ');
     const waNum = ledgerNumbers[`${o.customer_name}|${o.customer_modifier || ''}`] || '';
 
     // Bill state: a fresh (non-stale) bill lets the button just re-open the saved
@@ -190,7 +207,7 @@ function renderOrders() {
       <div class="ledger-card-header" onclick="this.parentElement.classList.toggle('expanded')">
         <div class="ledger-card-info">
           <div class="ledger-card-name">${escapeHtml(displayName)}</div>
-          <div class="ledger-card-subtitle">${lastOrder}</div>
+          <div class="ledger-card-subtitle">${escapeHtml(subtitle)}</div>
         </div>
         <div class="ledger-card-right">
           <div class="ledger-card-amount due">${inr(o.total || 0)}</div>
@@ -284,9 +301,12 @@ function wireOrderCards(listEl) {
       const card = btn.closest('.order-card');
       const orderId = card.dataset.orderId;
 
-      // Bill already generated and current — just re-open the saved PDF.
+      // Bill already generated and current — just re-open the saved PDF. Opened
+      // synchronously (no await first) or the popup blocker eats it; the
+      // retention touch goes out afterwards on its own.
       if (btn.dataset.mode === 'show' && card.dataset.billUrl) {
         window.open(card.dataset.billUrl, '_blank');
+        touchBill(orderId);
         return;
       }
 
@@ -329,7 +349,10 @@ function wireOrderCards(listEl) {
         saveWhatsAppNumber(card.dataset.customer, card.dataset.modifier, waNumber);
         // Reuse the already-generated bill if it's current; otherwise generate now.
         let pdf_url = (card.dataset.billFresh && card.dataset.billUrl) ? card.dataset.billUrl : '';
-        if (!pdf_url) {
+        if (pdf_url) {
+          // Sharing a link counts as using it — keep it alive for another 30 days.
+          touchBill(orderId);
+        } else {
           ({ pdf_url } = await generateBill(orderId));
           markBillGenerated(card, pdf_url);
         }

@@ -5,12 +5,23 @@ Renders a PDF invoice for a customer order, archives it to Firebase Storage at
 users/{uid}/bills/{order_id}.pdf, and returns a non-expiring, read-only download
 URL (Firebase download-token style) so the bill can be viewed/shared anytime.
 
+Bills are *disposable*. Both the PDF and its metadata doc are deleted 30 days
+after last use (Firestore TTL on expires_at; a GCS lifecycle rule on customTime),
+and rebuilt on demand afterwards. That only works because nothing about a bill is
+invented at generation time: the number comes from the order's own order_no, and
+the download token is derived from uid + order_id, so a regenerated bill is
+byte-for-byte the same bill at the same URL. POST .../bill/touch pushes the
+deadline out whenever someone actually opens or shares the bill.
+
 Currency is rendered as "Rs." rather than the ₹ glyph: reportlab's bundled fonts
 don't include U+20B9, and we avoid committing a binary Unicode TTF. Swap in a
 registered TTF (e.g. DejaVuSans) here if a proper ₹ symbol is wanted later.
 """
 
+import hashlib
+import hmac
 import io
+import os
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from uuid import uuid4
@@ -32,7 +43,13 @@ from reportlab.platypus import (
 )
 
 from auth import get_bucket, verify_token
-from routes.orders import _display_price  # reuse the order price-derivation helper
+from routes.orders import (  # reuse the order-side helpers rather than restating them
+    _allocate_order_no,
+    _bill_blob_path,
+    _bill_expiry,
+    _bill_no,
+    _display_price,
+)
 
 router = APIRouter()
 
@@ -57,6 +74,47 @@ def _num(n) -> str:
 
 def _money(n) -> str:
     return f"Rs. {_num(n)}"
+
+
+def _download_token(uid: str, order_id: str) -> str:
+    """The bill's Firebase Storage download token.
+
+    Derived, not random, so regenerating a bill that was deleted by the retention
+    sweep rebuilds the *same* URL — a link shared with a customer months ago goes
+    dead while the PDF is gone and starts working again the moment it is rebuilt.
+
+    Falls back to a random token when BILL_TOKEN_SECRET is unset: a missing secret
+    costs link stability, which is not worth failing a bill over.
+    """
+    secret = os.getenv("BILL_TOKEN_SECRET")
+    if not secret:
+        return str(uuid4())
+    msg = f"{uid}:{order_id}".encode()
+    return hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()
+
+
+def _pdf_url(bucket_name: str, blob_name: str, token: str) -> str:
+    """Non-expiring, read-only Firebase download URL for an archived bill."""
+    path = quote(blob_name, safe="")
+    return (
+        f"https://firebasestorage.googleapis.com/v0/b/{bucket_name}/o/{path}"
+        f"?alt=media&token={token}"
+    )
+
+
+def _touch_blob(blob) -> None:
+    """Restart the Storage-side retention clock for a bill PDF.
+
+    The bucket's lifecycle rule deletes on daysSinceCustomTime, so stamping
+    customTime is what "the shopkeeper used this bill today" means to GCS. Only
+    objects that carry customTime are eligible for that rule, which is why
+    inventory photos are unaffected by it.
+    """
+    try:
+        blob.custom_time = datetime.now(timezone.utc)
+        blob.patch()
+    except Exception:
+        pass
 
 
 def _load_order_docs(orders_ref, order_id):
@@ -97,6 +155,7 @@ async def generate_bill(order_id: str, authorization: str = Header(None)):
 
     customer_name = ""
     customer_modifier = ""
+    order_no = None
     items = []
     total_amount = 0.0
     total_qty = 0
@@ -104,14 +163,17 @@ async def generate_bill(order_id: str, authorization: str = Header(None)):
         data = doc.to_dict()
         customer_name = customer_name or data.get("customer_name", "")
         customer_modifier = customer_modifier or data.get("customer_modifier", "")
+        order_no = order_no or data.get("order_no")
         qty = data.get("quantity", 0) or 0
         amount = data.get("amount", 0) or 0
-        items.append({
-            "item": data.get("item", ""),
-            "quantity": qty,
-            "price": _display_price(data),
-            "amount": amount,
-        })
+        items.append(
+            {
+                "item": data.get("item", ""),
+                "quantity": qty,
+                "price": _display_price(data),
+                "amount": amount,
+            }
+        )
         total_amount += amount
         total_qty += qty
 
@@ -122,30 +184,17 @@ async def generate_bill(order_id: str, authorization: str = Header(None)):
     shop_mobile = (udata.get("shop_mobile") or "").strip()
     shop_address = (udata.get("shop_address") or "").strip()
 
-    # 3. Stable bill number + download token (idempotent across regenerations).
-    bill_ref = user_ref.collection("bills").document(order_id)
-
-    @firestore.transactional
-    def _allocate(txn):
-        snap = bill_ref.get(transaction=txn)
-        if snap.exists:
-            bd = snap.to_dict() or {}
-            if bd.get("bill_number") and bd.get("download_token"):
-                return bd["bill_number"], bd["download_token"]
-        user_snap = user_ref.get(transaction=txn)
-        seq = int((user_snap.to_dict() or {}).get("bill_seq", 0)) + 1
-        token = str(uuid4())
-        txn.set(user_ref, {"bill_seq": seq}, merge=True)
-        txn.set(bill_ref, {
-            "bill_number": seq,
-            "download_token": token,
-            "storage_path": f"users/{uid}/bills/{order_id}.pdf",
-            "generated_at": firestore.SERVER_TIMESTAMP,
-        }, merge=True)
-        return seq, token
-
-    bill_seq, download_token = _allocate(db.transaction())
-    bill_no = f"BK-{int(bill_seq):03d}"
+    # 3. Bill number — the order's own number, so it is identical every time this
+    # bill is rebuilt. Orders written before numbering existed get one now, stamped
+    # back onto their line items so it never has to be worked out again.
+    if not order_no:
+        order_no = _allocate_order_no(db, user_ref)
+        for doc in docs:
+            try:
+                doc.reference.update({"order_no": order_no})
+            except Exception:
+                pass
+    bill_no = _bill_no(order_no)
 
     # 4. Render the PDF.
     pdf_bytes = _render_bill_pdf(
@@ -160,52 +209,122 @@ async def generate_bill(order_id: str, authorization: str = Header(None)):
         total_qty=total_qty,
     )
 
-    # 5. Upload, embedding the download token so the permanent link works after overwrite.
+    # 5. Upload, embedding the download token so the permanent link works after
+    # overwrite. An existing token is reused rather than re-derived, so a link
+    # already shared with a customer survives even if BILL_TOKEN_SECRET changes.
+    bill_ref = user_ref.collection("bills").document(order_id)
+    existing = bill_ref.get()
+    download_token = (
+        (existing.to_dict() or {}).get("download_token") if existing.exists else None
+    ) or _download_token(uid, order_id)
+
     bucket = get_bucket()
-    blob = bucket.blob(f"users/{uid}/bills/{order_id}.pdf")
+    blob = bucket.blob(_bill_blob_path(uid, order_id))
     blob.metadata = {"firebaseStorageDownloadTokens": download_token}
+    blob.custom_time = datetime.now(timezone.utc)
     blob.upload_from_string(pdf_bytes, content_type="application/pdf")
 
-    # Mark the saved bill current — clears any stale flag set by later order edits.
-    bill_ref.set({"stale": False, "generated_at": firestore.SERVER_TIMESTAMP}, merge=True)
-
-    # 6. Build the non-expiring, read-only download URL.
-    path = quote(blob.name, safe="")
-    pdf_url = (
-        f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/{path}"
-        f"?alt=media&token={download_token}"
+    # Mark the saved bill current — clears any stale flag set by later order edits
+    # — and start its 30-day retention window.
+    bill_ref.set(
+        {
+            "download_token": download_token,
+            "storage_path": _bill_blob_path(uid, order_id),
+            "stale": False,
+            "generated_at": firestore.SERVER_TIMESTAMP,
+            "expires_at": _bill_expiry(),
+        },
+        merge=True,
     )
 
-    return {"status": "success", "bill_number": bill_no, "pdf_url": pdf_url}
+    # 6. Build the non-expiring, read-only download URL.
+    pdf_url = _pdf_url(bucket.name, blob.name, download_token)
+
+    return {
+        "status": "success",
+        "bill_number": bill_no,
+        "order_no": order_no,
+        "pdf_url": pdf_url,
+    }
 
 
-def _render_bill_pdf(*, bill_no, shop_name, shop_mobile, shop_address,
-                     customer_name, customer_modifier, items,
-                     total_amount, total_qty) -> bytes:
+@router.post("/orders/{order_id}/bill/touch")
+async def touch_bill(order_id: str, authorization: str = Header(None)):
+    """Restart a bill's 30-day retention window because someone just used it.
+
+    Deliberately cheap — one Firestore write and one Storage metadata patch, no
+    PDF work — because the frontend fires it on every bill open and share.
+    """
+    from main import db
+
+    uid = verify_token(authorization)
+    bill_ref = db.collection("users").document(uid).collection("bills").document(order_id)
+
+    if not bill_ref.get().exists:
+        # Already swept, or never generated. Nothing to keep alive; the next
+        # "Generate Bill" rebuilds it at the same number and URL.
+        return {"status": "success", "touched": False}
+
+    bill_ref.update({"expires_at": _bill_expiry()})
+    try:
+        _touch_blob(get_bucket().blob(_bill_blob_path(uid, order_id)))
+    except Exception:
+        pass
+
+    return {"status": "success", "touched": True}
+
+
+def _render_bill_pdf(
+    *,
+    bill_no,
+    shop_name,
+    shop_mobile,
+    shop_address,
+    customer_name,
+    customer_modifier,
+    items,
+    total_amount,
+    total_qty,
+) -> bytes:
     styles = getSampleStyleSheet()
-    title = ParagraphStyle("billTitle", parent=styles["Title"],
-                           textColor=DARK_GREEN, fontSize=24, alignment=0, spaceAfter=0)
-    powered = ParagraphStyle("powered", parent=styles["Normal"],
-                             textColor=GREY, fontSize=9, alignment=2)
-    label = ParagraphStyle("label", parent=styles["Normal"],
-                           textColor=DARK_GREEN, fontSize=8, fontName="Helvetica-Bold",
-                           spaceAfter=4)
+    title = ParagraphStyle(
+        "billTitle",
+        parent=styles["Title"],
+        textColor=DARK_GREEN,
+        fontSize=24,
+        alignment=0,
+        spaceAfter=0,
+    )
+    powered = ParagraphStyle(
+        "powered", parent=styles["Normal"], textColor=GREY, fontSize=9, alignment=2
+    )
+    label = ParagraphStyle(
+        "label",
+        parent=styles["Normal"],
+        textColor=DARK_GREEN,
+        fontSize=8,
+        fontName="Helvetica-Bold",
+        spaceAfter=4,
+    )
     meta = ParagraphStyle("meta", parent=styles["Normal"], fontSize=9, spaceAfter=2)
     party = ParagraphStyle("party", parent=styles["Normal"], fontSize=9, leading=13)
     party_name = ParagraphStyle("partyName", parent=party, fontName="Helvetica-Bold")
     cell = ParagraphStyle("cell", parent=styles["Normal"], fontSize=9, leading=12)
-    footer = ParagraphStyle("footer", parent=styles["Normal"],
-                            textColor=GREY, fontSize=8, alignment=1)
+    footer = ParagraphStyle(
+        "footer", parent=styles["Normal"], textColor=GREY, fontSize=8, alignment=1
+    )
 
     cw = A4[0] - 30 * mm  # content width inside 15mm margins
     flow = []
 
     # Header: BILL (left) + Powered by BolKhata (right).
-    flow.append(Table(
-        [[Paragraph("BILL", title), Paragraph("Powered by <b>BolKhata</b>", powered)]],
-        colWidths=[cw * 0.5, cw * 0.5],
-        style=TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")]),
-    ))
+    flow.append(
+        Table(
+            [[Paragraph("BILL", title), Paragraph("Powered by <b>BolKhata</b>", powered)]],
+            colWidths=[cw * 0.5, cw * 0.5],
+            style=TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")]),
+        )
+    )
     flow.append(Spacer(1, 4))
 
     bill_date = datetime.now(IST).strftime("%d-%m-%Y")
@@ -228,58 +347,70 @@ def _render_bill_pdf(*, bill_no, shop_name, shop_mobile, shop_address,
     to_cell = [Paragraph("Bill To", label), Paragraph(cust_display, party_name)]
 
     party_table = Table([[from_cell, to_cell]], colWidths=[cw * 0.5, cw * 0.5])
-    party_table.setStyle(TableStyle([
-        ("BOX", (0, 0), (0, 0), 0.5, BORDER),
-        ("BOX", (1, 0), (1, 0), 0.5, BORDER),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 10),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-        ("TOPPADDING", (0, 0), (-1, -1), 10),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
-    ]))
+    party_table.setStyle(
+        TableStyle(
+            [
+                ("BOX", (0, 0), (0, 0), 0.5, BORDER),
+                ("BOX", (1, 0), (1, 0), 0.5, BORDER),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+            ]
+        )
+    )
     flow.append(party_table)
     flow.append(Spacer(1, 14))
 
     # Items table.
     data = [["S.No", "Item Name", "Qty", "Rate (Rs.)", "Total (Rs.)"]]
     for i, it in enumerate(items, 1):
-        data.append([
-            str(i),
-            Paragraph(_titlecase(it["item"]), cell),
-            _num(it["quantity"]),
-            _num(it["price"]),
-            _num(it["amount"]),
-        ])
-    data.append([
-        "",
-        Paragraph("<b>TOTAL</b>", cell),
-        _num(total_qty),
-        "",
-        Paragraph(f"<b>{_money(total_amount)}</b>", cell),
-    ])
+        data.append(
+            [
+                str(i),
+                Paragraph(_titlecase(it["item"]), cell),
+                _num(it["quantity"]),
+                _num(it["price"]),
+                _num(it["amount"]),
+            ]
+        )
+    data.append(
+        [
+            "",
+            Paragraph("<b>TOTAL</b>", cell),
+            _num(total_qty),
+            "",
+            Paragraph(f"<b>{_money(total_amount)}</b>", cell),
+        ]
+    )
 
     n = len(data) - 1  # index of the TOTAL row
     items_table = Table(
         data,
         colWidths=[cw * 0.10, cw * 0.45, cw * 0.13, cw * 0.16, cw * 0.16],
     )
-    items_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), GREEN),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("ALIGN", (0, 0), (0, -1), "CENTER"),
-        ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LINEBELOW", (0, 0), (-1, -2), 0.4, BORDER),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        # TOTAL row emphasis.
-        ("BACKGROUND", (0, n), (-1, n), LIGHT_GREEN),
-        ("LINEABOVE", (0, n), (-1, n), 1, GREEN),
-    ]))
+    items_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), GREEN),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LINEBELOW", (0, 0), (-1, -2), 0.4, BORDER),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                # TOTAL row emphasis.
+                ("BACKGROUND", (0, n), (-1, n), LIGHT_GREEN),
+                ("LINEABOVE", (0, n), (-1, n), 1, GREEN),
+            ]
+        )
+    )
     flow.append(items_table)
     flow.append(Spacer(1, 24))
 
@@ -290,9 +421,12 @@ def _render_bill_pdf(*, bill_no, shop_name, shop_mobile, shop_address,
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=15 * mm, rightMargin=15 * mm,
-        topMargin=15 * mm, bottomMargin=15 * mm,
+        buf,
+        pagesize=A4,
+        leftMargin=15 * mm,
+        rightMargin=15 * mm,
+        topMargin=15 * mm,
+        bottomMargin=15 * mm,
         title=f"Bill {bill_no}",
     )
     doc.build(flow)
