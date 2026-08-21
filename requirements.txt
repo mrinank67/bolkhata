@@ -1,11 +1,11 @@
-fastapi==0.136.3
-python-multipart==0.0.29
+fastapi==0.141.1
+python-multipart==0.0.32
 thefuzz==0.22.1
 requests==2.34.2
-groq==1.4.0
-python-dotenv==1.2.2
-firebase-admin==7.4.0
-uvicorn==0.48.0
+groq==1.6.0
+python-dotenv==1.2.3
+firebase-admin==7.5.0
+uvicorn==0.52.3
 itsdangerous==2.2.0
 reportlab==4.2.5
 pillow==12.3.0
