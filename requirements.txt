@@ -1,5 +1,5 @@
 fastapi==0.136.3
-python-multipart==0.0.29
+python-multipart==0.0.31
 thefuzz==0.22.1
 requests==2.34.2
 groq==1.4.0
