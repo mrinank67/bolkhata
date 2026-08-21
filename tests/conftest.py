@@ -33,6 +33,7 @@ TEST_ENV = {
     "GROQ_API_KEY": "test-groq-key",
     "SARVAM_API_KEY": "test-sarvam-key",
     "PAY_LINK_SECRET": "test-pay-link-secret",
+    "BILL_TOKEN_SECRET": "test-bill-token-secret",
     "ALLOWED_ORIGINS": "",
     "DEBUG_LOGS": "",
 }
@@ -147,6 +148,20 @@ def authed_client(client):
 @pytest.fixture
 def user_path() -> str:
     return f"users/{TEST_UID}"
+
+
+@pytest.fixture(autouse=True)
+def _direct_transactions():
+    """Run ``@firestore.transactional`` callables directly against the fake.
+
+    The real decorator drives a live backend session and rejects a
+    ``FakeTransaction``. The fake applies writes immediately, so invoking the
+    wrapped callable as-is reproduces what a committed transaction would leave
+    behind. Autouse because order-number allocation is transactional, and that
+    now runs on every order-creating path in the app.
+    """
+    with mock.patch("routes.orders.firestore.transactional", lambda f: f):
+        yield
 
 
 @pytest.fixture(autouse=True)

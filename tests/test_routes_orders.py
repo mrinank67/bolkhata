@@ -164,6 +164,55 @@ class TestCreateOrder:
         assert fake_db.paths_under(ORDERS) == []
 
 
+class TestOrderNumbers:
+    """order_no is the shop's own running order count, and doubles as the bill
+    number. It is allocated up front so a bill can be deleted and rebuilt later
+    without its number changing."""
+
+    def _create(self, client, customer="Ramesh"):
+        return client.post(
+            "/orders",
+            json={
+                "customer_name": customer,
+                "items": [
+                    {"item": "rice", "quantity": 2, "price": 50},
+                    {"item": "dal", "quantity": 1, "price": 80},
+                ],
+            },
+        )
+
+    def test_all_items_of_an_order_share_one_number(self, authed_client, fake_db):
+        resp = self._create(authed_client)
+
+        numbers = {fake_db.docs[p]["order_no"] for p in fake_db.paths_under(ORDERS)}
+        assert numbers == {1}
+        assert resp.json()["order_no"] == 1
+
+    def test_numbers_increment_per_shop(self, authed_client, fake_db):
+        assert self._create(authed_client, "Ramesh").json()["order_no"] == 1
+        assert self._create(authed_client, "Suresh").json()["order_no"] == 2
+        assert fake_db.docs[f"users/{UID}"]["order_seq"] == 2
+
+    def test_numbering_is_per_shop(self, authed_client, fake_db):
+        fake_db.seed("users/someone-else", {"order_seq": 99})
+        assert self._create(authed_client).json()["order_no"] == 1
+
+    def test_adding_an_item_inherits_the_orders_number(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/a", _line(order_id="o1", order_no=7))
+
+        authed_client.post("/orders/o1/items", json={"item": "atta", "quantity": 1, "price": 40})
+
+        numbers = {fake_db.docs[p]["order_no"] for p in fake_db.paths_under(ORDERS)}
+        assert numbers == {7}, "a new line item must not draw a number of its own"
+        assert "order_seq" not in (fake_db.docs.get(f"users/{UID}") or {})
+
+    def test_get_orders_reports_the_number(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/a", _line(order_id="o1", order_no=7))
+
+        (order,) = authed_client.get("/orders").json()["orders"]
+        assert order["order_no"] == 7
+
+
 class TestModifyOrderItems:
     def test_update_quantity(self, authed_client, fake_db):
         fake_db.seed(f"{ORDERS}/i1", _line(qty=2, price=50))
@@ -233,3 +282,59 @@ class TestDeleteOrder:
         authed_client.delete("/orders/o1")
 
         assert "users/someone-else/orders/a" in fake_db.docs
+
+    def test_deletes_the_saved_bill_pdf_too(self, authed_client, fake_db, no_storage):
+        """An orphaned PDF keeps a public, never-expiring URL — and keeps billing."""
+        fake_db.seed(f"{ORDERS}/a", _line(order_id="o1"))
+        fake_db.seed(f"users/{UID}/bills/o1", {"download_token": "t", "storage_path": "p"})
+
+        authed_client.delete("/orders/o1")
+
+        assert f"users/{UID}/bills/o1" not in fake_db.docs
+        no_storage.blob.assert_called_with(f"users/{UID}/bills/o1.pdf")
+        no_storage.blob.return_value.delete.assert_called_once()
+
+
+class TestBillRetentionInOrderList:
+    def _bill(self, expires_in_days):
+        return {
+            "download_token": "tok",
+            "storage_path": f"users/{UID}/bills/o1.pdf",
+            "stale": False,
+            "expires_at": _ts(days_ago=-expires_in_days),
+        }
+
+    def test_a_live_bill_is_attached(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/a", _line(order_id="o1", order_no=7))
+        fake_db.seed(f"users/{UID}/bills/o1", self._bill(10))
+
+        (order,) = authed_client.get("/orders").json()["orders"]
+        assert order["bill"]["bill_number"] == "BK-007"
+        assert "token=tok" in order["bill"]["pdf_url"]
+
+    def test_an_expired_bill_is_hidden(self, authed_client, fake_db):
+        """The TTL sweep lags by up to a day; don't offer a link that 404s."""
+        fake_db.seed(f"{ORDERS}/a", _line(order_id="o1", order_no=7))
+        fake_db.seed(f"users/{UID}/bills/o1", self._bill(-1))
+
+        (order,) = authed_client.get("/orders").json()["orders"]
+        assert "bill" not in order
+
+    def test_a_bill_with_no_expiry_is_still_attached(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/a", _line(order_id="o1", order_no=7))
+        bill = self._bill(10)
+        del bill["expires_at"]
+        fake_db.seed(f"users/{UID}/bills/o1", bill)
+
+        (order,) = authed_client.get("/orders").json()["orders"]
+        assert order["bill"]["bill_number"] == "BK-007"
+
+    def test_editing_an_item_extends_the_window(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/a", _line(order_id="o1", order_no=7))
+        fake_db.seed(f"users/{UID}/bills/o1", self._bill(2))
+
+        authed_client.put("/orders/item/a", json={"quantity": 9})
+
+        stored = fake_db.docs[f"users/{UID}/bills/o1"]
+        assert stored["stale"] is True
+        assert stored["expires_at"] - _ts() > datetime.timedelta(days=29)

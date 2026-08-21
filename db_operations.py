@@ -11,6 +11,8 @@ from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from thefuzz import process
 
+from routes.orders import _allocate_order_no  # one order-numbering path for the whole app
+
 SUPPLIER_SUFFIXES = {
     "supplier",
     "suppliers",
@@ -192,21 +194,41 @@ def process_transactions(
     result_groups = {}
     errors = []
 
-    # One order "session" id per customer per voice call, so all items spoken in
-    # a single command for the same customer group into one order on the Orders page.
-    order_session_ids = {}
+    # One order "session" per customer per voice call — (order_id, order_no) — so
+    # all items spoken in a single command for the same customer group into one
+    # order on the Orders page, under one order number.
+    order_sessions = {}
+
+    def _existing_order_no(order_id):
+        """The number already carried by an order, so appending to it does not
+        draw a second one from the shop's counter."""
+        try:
+            for doc in (
+                user_orders_ref.where(filter=FieldFilter("order_id", "==", order_id))
+                .limit(1)
+                .stream()
+            ):
+                return doc.to_dict().get("order_no")
+        except Exception:
+            pass
+        return None
+
+    def _order_session_for(ckey):
+        """(order_id, order_no) for this customer, minting both on first use."""
+        if ckey not in order_sessions:
+            order_sessions[ckey] = (
+                user_orders_ref.document().id,  # pre-generated shared id
+                _allocate_order_no(db, user_orders_ref.parent),
+            )
+        return order_sessions[ckey]
 
     # Seed the recent customer's session with their last order's id so a follow-up
     # command within the recent-context window appends to that same order card
-    # rather than creating a new one.
+    # rather than creating a new one. It inherits that order's number too — a
+    # follow-up is the same order, not a new one.
     if recent_order_id and recent_customer:
         recent_ckey = f"{recent_customer.lower()}|{(recent_modifier or '').lower()}"
-        order_session_ids[recent_ckey] = recent_order_id
-
-    def _order_id_for(ckey):
-        if ckey not in order_session_ids:
-            order_session_ids[ckey] = user_orders_ref.document().id  # pre-generated shared id
-        return order_session_ids[ckey]
+        order_sessions[recent_ckey] = (recent_order_id, _existing_order_no(recent_order_id))
 
     def get_group(action_key, title, icon, columns):
         if action_key not in result_groups:
@@ -824,6 +846,7 @@ def process_transactions(
 
             # Dual-write: also log a matching order record (credit sale = goods left the shop)
             try:
+                order_id, order_no = _order_session_for(f"{customer_name}|{customer_modifier}")
                 user_orders_ref.add(
                     {
                         "customer_name": customer_name,
@@ -833,7 +856,8 @@ def process_transactions(
                         "amount": txn_amount or 0,
                         "price": txn_rate
                         or ((txn_amount / qty) if (txn_amount and qty) else (db_price or 0)),
-                        "order_id": _order_id_for(f"{customer_name}|{customer_modifier}"),
+                        "order_id": order_id,
+                        "order_no": order_no,
                         "timestamp": firestore.SERVER_TIMESTAMP,
                     }
                 )
@@ -872,6 +896,7 @@ def process_transactions(
                 if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
                     prior_ordered += doc.to_dict().get("amount", 0) or 0
 
+            order_id, order_no = _order_session_for(f"{customer_name}|{customer_modifier}")
             user_orders_ref.add(
                 {
                     "customer_name": customer_name,
@@ -881,7 +906,8 @@ def process_transactions(
                     "amount": txn_amount or 0,
                     "price": txn_rate
                     or ((txn_amount / qty) if (txn_amount and qty) else (db_price or 0)),
-                    "order_id": _order_id_for(f"{customer_name}|{customer_modifier}"),
+                    "order_id": order_id,
+                    "order_no": order_no,
                     "timestamp": firestore.SERVER_TIMESTAMP,
                 }
             )
