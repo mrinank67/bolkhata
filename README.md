@@ -56,7 +56,7 @@ By leveraging extreme low-latency processing, BolKhata allows shopkeepers to spe
 * **Inventory-Aware Pricing:** New order line items auto-fill their unit price from live inventory, with an item-name autocomplete sourced from current stock.
 * **Stock-Safe Edits:** Order edits intentionally never mutate inventory stock — stock reconciliation is deferred to billing — so editing an order never triggers stray stock writes.
 * **One-Tap PDF Bills:** Generate a branded A4 PDF invoice for any order, complete with an itemized table, quantity/rate/total columns, and a grand total. Every order carries a running order number the moment it is created, and its bill takes the same number (`BK-001`, `BK-002`, …) — so the number is a property of the sale, not of when a PDF happened to be printed.
-* **Self-Cleaning Bill Archive:** Bills are kept for 30 days after they were last generated, opened, shared, or edited, then deleted from Firestore and Storage — opening one restarts the clock. Nothing is lost: because the number comes from the order and the download token is derived rather than random, a bill rebuilt months later comes back with the same number at the same link.
+* **Self-Cleaning Bill Archive:** Bills are kept for 30 days after they were last generated, opened, shared, or edited, then deleted from Firestore and Storage — opening one restarts the clock. Nothing is lost: because the number comes from the order and the download token is derived rather than random, a bill rebuilt months later comes back with the same number at the same link. Deletion is enforced by infrastructure rather than app code: a Firestore TTL policy on `bills.expires_at`, and the Storage lifecycle rule in `storage.lifecycle.json`, which only matches objects carrying a `customTime` (set on bill PDFs alone, so item photos in the same bucket are never touched). Both are one-time project settings — `scripts/migrate_bills.py` covers the matching data migration.
 * **Shop Profile ("Bill From"):** Account Settings captures the shop name, mobile, and address that print on every bill — alongside the UPI ID used for payment reminders.
 * **Permanent Shareable Links:** Each bill is archived to Firebase Storage and served through a non-expiring, unguessable download token, so it can be reopened or re-shared anytime; regenerating a bill keeps the same number and link, even if the archived copy was cleaned up in between.
 * **Send Bill on WhatsApp:** One tap formats a Hinglish message with the bill link and opens it in WhatsApp for the customer's saved number.
@@ -101,7 +101,7 @@ Speak naturally in Hindi or Hinglish, and BolKhata will instantly map the correc
 * **Bill Rendering:** Server-side A4 PDF invoices generated with ReportLab and uploaded to Firebase Storage with a permanent download token.
 * **Image Pipeline:** Browser-side canvas downscaling for transport, then Pillow sanitization and WebP re-encoding server-side. The in-app camera uses `getUserMedia`, which requires a secure (HTTPS) origin.
 * **Language Engines:** Sarvam AI (Speech-to-Text & Native Translation), Groq Cloud (GPT-OSS 20B LLM for structure extraction).
-* **Testing & CI:** pytest against an in-memory Firestore double, Ruff and ESLint for linting, and GitHub Actions gating every pull request. See [Automated Quality Checks](#automated-quality-checks).
+* **Testing & CI:** pytest against an in-memory Firestore double, Ruff and ESLint for linting, CodeQL static analysis for security defects, and GitHub Actions gating every pull request. See [Automated Quality Checks](#automated-quality-checks).
 
 ---
 
@@ -168,10 +168,11 @@ BolKhata uses a clean REST API structure. All endpoints except `/config` and `/p
 
 Every push and pull request runs a CI pipeline before anything can reach production. `main` is protected — all checks must pass before a merge is allowed.
 
-* **Test Suite:** 408 automated tests covering the ledger math, rate limiting, image sanitization, token verification, and every API route. They run against an in-memory database double with all external services stubbed, so no test spends an API quota or touches live shop data.
+* **Test Suite:** 460 automated tests covering the ledger math, rate limiting, image sanitization, token verification, and every API route. They run against an in-memory database double with all external services stubbed, so no test spends an API quota or touches live shop data.
 * **Route Coverage:** `vercel.json` lists every API path by hand, and auth is enforced inside each route handler rather than centrally. Two tests catch a new endpoint that was added without a deploy route (which would 404 only in production) or without an auth check (which would expose another shop's data).
 * **Config Drift:** Every environment variable the code reads must be documented in `.env.example`, and the deployment configs must parse — a malformed `vercel.json` otherwise breaks the deploy with no earlier warning.
 * **Secret Scanning:** Full git history is scanned for leaked credentials on every run, with an explicit check that the Firebase Admin key and `.env` are never committed.
+* **CodeQL Static Analysis:** GitHub's semantic code scanner runs the `security-extended` query suite over both the Python backend and the frontend JavaScript on every push and pull request, publishing findings to the repository's Security tab. It also re-scans weekly on a schedule, so a vulnerability class discovered *after* the last commit still gets reported against existing code. The maintainability queries are deliberately left off — Ruff and ESLint already cover style, and folding it in would bury real security findings in noise.
 * **Linting:** Ruff on the Python backend and ESLint on the frontend modules, on Python 3.12 and 3.14.
 
 The same checks run locally as Git hooks, so problems surface before a push rather than after.
