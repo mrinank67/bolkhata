@@ -1,0 +1,16 @@
+name: BolKhata CodeQL config
+
+# `security-extended` adds the lower-severity / higher-recall security queries on
+# top of the default set. `security-and-quality` is deliberately not used: it
+# folds in maintainability queries that ruff and eslint already cover, which
+# would bury real security findings in style noise.
+queries:
+  - uses: security-extended
+
+paths-ignore:
+  # Vendored dependencies -- gitignored, so normally absent on CI, but excluded
+  # explicitly so a stray local scan does not analyse thousands of third-party
+  # files and time out.
+  - node_modules
+  - .venv
+  - graphify-out
