@@ -6,7 +6,7 @@ scope, so a bad import or a malformed route decorator is a production cold-start
 crash rather than anything visible in local development.
 """
 
-from tests.conftest import TEST_ENV
+from tests.conftest import TEST_ENV, iter_routes
 
 CONFIG_KEYS = {
     "apiKey": "FIREBASE_API_KEY",
@@ -21,7 +21,7 @@ CONFIG_KEYS = {
 
 def test_app_imports_and_mounts_all_routers(app):
     """Every router in main.py contributed at least one path."""
-    paths = {route.path for route in app.routes}
+    paths = {path for r in iter_routes(app) if (path := getattr(r, "path", None))}
     for expected in (
         "/config",
         "/process_voice",

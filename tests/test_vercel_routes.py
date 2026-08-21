@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import DOCS_PATHS, iter_routes
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VERCEL_JSON = REPO_ROOT / "vercel.json"
 
@@ -45,15 +47,18 @@ def _first_match(path: str, routes: list[dict]) -> dict | None:
 
 def _api_paths(app) -> list[str]:
     paths = set()
-    for route in app.routes:
+    for route in iter_routes(app):
         path = getattr(route, "path", None)
         if not path:
             continue
         # Starlette's built-in docs/openapi routes are not deployed behind
         # vercel.json rules and are irrelevant here.
-        if path in ("/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"):
+        if path in DOCS_PATHS:
             continue
         paths.add(path)
+    # Without this the test passes vacuously when route discovery breaks: an
+    # empty list means the loop below never runs and nothing is ever checked.
+    assert paths, "no routes were discovered — the walk in iter_routes() is broken"
     return sorted(paths)
 
 
