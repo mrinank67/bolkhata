@@ -22,8 +22,17 @@ const STATIC_ASSETS = [
   "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
 ];
 
-// Listen for skip-waiting message from the client
+// Listen for skip-waiting message from the client.
+//
+// The origin check is belt-and-braces: a service worker only ever controls
+// documents from its own origin, so a cross-origin page cannot reach this
+// handler in the first place, and skipWaiting() is called unconditionally on
+// install below regardless. It is here because the guarantee is the spec's
+// rather than this file's, and a one-line check is cheaper than re-deriving
+// that argument the next time someone reads this handler. `e.origin` is empty
+// for some same-origin senders, so only a *mismatching* origin is rejected.
 self.addEventListener("message", e => {
+  if (e.origin && e.origin !== self.location.origin) return;
   if (e.data && e.data.type === "SKIP_WAITING") {
     self.skipWaiting();
   }
