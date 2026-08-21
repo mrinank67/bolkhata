@@ -26,15 +26,25 @@ means an invoice a customer already holds may now name a different order.
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
-from firebase_admin import firestore
+from dotenv import load_dotenv  # noqa: E402
 
-from auth import get_bucket, init_firebase
-from routes.orders import _order_id_for_doc
+# Only main.py loads .env, and this script deliberately does not import the app.
+# Without this, FIREBASE_STORAGE_BUCKET is unset and the Storage half of the
+# migration silently no-ops. Everything below imports after it, hence the E402
+# suppressions: the environment has to exist before auth is imported.
+load_dotenv(REPO_ROOT / ".env")
+
+from firebase_admin import firestore  # noqa: E402
+
+from auth import get_bucket, init_firebase  # noqa: E402
+from routes.orders import _order_id_for_doc  # noqa: E402
 
 # Firestore caps a batch at 500 operations; stop short of it so a batch is never
 # rejected for being one write over.
@@ -145,11 +155,23 @@ def main(argv=None) -> int:
     parser.add_argument("--uid", help="migrate a single shop instead of all of them")
     args = parser.parse_args(argv)
 
+    # init_firebase() resolves its credential file relative to the CWD, so the
+    # script only works from the repo root.
+    os.chdir(REPO_ROOT)
     db = init_firebase()
+
     try:
         bucket = get_bucket()
     except Exception as e:
-        print(f"! Storage unavailable ({e}) — PDFs will not be deleted.")
+        # Carrying on would wipe the Firestore records while leaving every PDF
+        # behind — each one still publicly readable at a URL that now has no
+        # bill doc pointing at it, and impossible to find afterwards. Refuse.
+        if args.apply:
+            print(f"! Storage is unavailable ({e}).")
+            print("! Refusing to --apply: bill docs would be deleted but PDFs left behind.")
+            print("! Check FIREBASE_STORAGE_BUCKET in .env, then re-run.")
+            return 1
+        print(f"! Storage unavailable ({e}) — PDF counts below will read 0.")
         bucket = None
 
     if args.uid:

@@ -158,6 +158,35 @@ class TestDryRun:
 
 
 class TestCommandLine:
+    def test_apply_refuses_when_storage_is_unavailable(self, db, capsys):
+        """Wiping bill docs without their PDFs strands every blob: still publicly
+        readable, no longer referenced, and impossible to find afterwards."""
+        db.seed(f"{ORDERS}/a", _line("o1", days_ago=1))
+        db.seed(f"{BILLS}/o1", {"bill_number": 3})
+
+        with (
+            mock.patch("scripts.migrate_bills.init_firebase", return_value=db),
+            mock.patch(
+                "scripts.migrate_bills.get_bucket", side_effect=Exception("no bucket configured")
+            ),
+        ):
+            assert main(["--apply"]) == 1
+
+        assert f"{BILLS}/o1" in db.docs, "nothing may be deleted on the refusal path"
+        assert "order_no" not in db.docs[f"{ORDERS}/a"]
+        assert "Refusing to --apply" in capsys.readouterr().out
+
+    def test_dry_run_still_reports_when_storage_is_unavailable(self, db, capsys):
+        db.seed(f"{ORDERS}/a", _line("o1", days_ago=1))
+
+        with (
+            mock.patch("scripts.migrate_bills.init_firebase", return_value=db),
+            mock.patch("scripts.migrate_bills.get_bucket", side_effect=Exception("no bucket")),
+        ):
+            assert main([]) == 0
+
+        assert "DRY RUN" in capsys.readouterr().out
+
     def test_apply_migrates_every_shop(self, db, bucket):
         db.seed(f"{ORDERS}/a", _line("o1", days_ago=1))
         db.seed("users/u2/orders/a", _line("o9", days_ago=1))
