@@ -91,9 +91,9 @@ class TestRateLimitingHappensBeforeAnyPaidCall:
     ):
         monkeypatch.setattr(
             "routes.voice.check_global_rate_limit",
-            lambda db, config: (False, 30.0)
-            if config.firestore_key == "sarvam_rpm"
-            else (True, 0.0),
+            lambda db, config: (
+                (False, 30.0) if config.firestore_key == "sarvam_rpm" else (True, 0.0)
+            ),
         )
         resp = _post(authed_client)
 
@@ -105,9 +105,9 @@ class TestRateLimitingHappensBeforeAnyPaidCall:
     ):
         monkeypatch.setattr(
             "routes.voice.check_global_rate_limit",
-            lambda db, config: (False, 7200.0)
-            if config.firestore_key == "groq_rpd"
-            else (True, 0.0),
+            lambda db, config: (
+                (False, 7200.0) if config.firestore_key == "groq_rpd" else (True, 0.0)
+            ),
         )
         resp = _post(authed_client)
 

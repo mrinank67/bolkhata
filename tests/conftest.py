@@ -56,6 +56,54 @@ assert main.db is _FAKE_DB, "main.db was not replaced by the fake — patch orde
 
 TEST_UID = "test-uid"
 
+# Paths Starlette/FastAPI mount for themselves. No test in this suite is about
+# the docs UI, and none of them are deployed behind vercel.json rules.
+DOCS_PATHS = frozenset({"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"})
+
+
+def iter_routes(app):
+    """Yield every leaf route, flattening whatever ``app.routes`` nests them in.
+
+    Starlette changed this shape underneath us: it used to hand back one flat
+    list of ``Route``/``APIRoute`` objects, and now returns an opaque
+    ``_IncludedRouter`` per ``include_router()`` call, holding the real routes
+    on ``original_router``. Tests that walked ``app.routes`` directly did not
+    fail loudly on that change -- they skipped every entry lacking ``.path``
+    and quietly asserted nothing -- so this walks the tree instead. It handles
+    both shapes, and ``Mount``/sub-application nesting, so a future change of
+    the same kind cannot silently empty these tests again.
+    """
+    stack = list(app.routes)
+    while stack:
+        route = stack.pop()
+        included = getattr(route, "original_router", None)
+        if included is not None:
+            stack.extend(included.routes)
+            continue
+        nested = getattr(route, "routes", None)
+        if nested:
+            stack.extend(nested)
+            continue
+        yield route
+
+
+def route_methods(app, *, skip_docs: bool = True) -> set[tuple[str, str]]:
+    """``{(method, path)}`` for every real endpoint, e.g. ``("GET", "/orders")``.
+
+    HEAD and OPTIONS are dropped: Starlette adds them implicitly, so they are
+    not decisions anyone made in this codebase.
+    """
+    found = set()
+    for route in iter_routes(app):
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None)
+        if not path or not methods:
+            continue
+        if skip_docs and path in DOCS_PATHS:
+            continue
+        found.update((m, path) for m in methods if m not in ("HEAD", "OPTIONS"))
+    return found
+
 
 @pytest.fixture
 def fake_db() -> FakeFirestore:

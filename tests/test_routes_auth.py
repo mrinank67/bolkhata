@@ -15,6 +15,8 @@ verify_token call this file is about.
 
 import pytest
 
+from tests.conftest import route_methods
+
 PUBLIC_ROUTES = {
     # The browser fetches its Firebase config before any user can sign in.
     ("GET", "/config"),
@@ -123,18 +125,8 @@ def test_every_route_is_covered(app):
     """No endpoint may exist without a decision about its auth behaviour."""
     registered = {(m, p) for m, p, *_ in REQUESTS} | PUBLIC_ROUTES
 
-    actual = set()
-    for route in app.routes:
-        path = getattr(route, "path", None)
-        methods = getattr(route, "methods", None)
-        if not path or not methods:
-            continue
-        if path in ("/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"):
-            continue
-        for method in methods:
-            if method in ("HEAD", "OPTIONS"):
-                continue
-            actual.add((method, path))
+    actual = route_methods(app)
+    assert actual, "no routes were discovered — the walk in iter_routes() is broken"
 
     missing = actual - registered
     assert not missing, (
