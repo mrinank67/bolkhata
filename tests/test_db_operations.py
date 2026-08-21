@@ -207,7 +207,7 @@ class TestApplyPayment:
     def test_modifier_scopes_the_payment(self, fake_db):
         """Two customers named Ramesh are told apart by their modifier."""
         ref = self._seed_dues(fake_db, [(100, 1, "tailor"), (200, 1, "milkman")])
-        matched, owed, paid, remaining = apply_payment(ref, "ramesh", "tailor", 100)
+        matched, owed, paid, _ = apply_payment(ref, "ramesh", "tailor", 100)
 
         assert (matched, owed, paid) == (1, 100, 100)
         left = fake_db.paths_under("users/u1/udhaar")
