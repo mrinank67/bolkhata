@@ -30,8 +30,33 @@
   --shadow-card: 0 1px 2px rgba(0,0,0,0.3), 0 8px 32px rgba(0,0,0,0.25);
   --shadow-btn: 0 1px 3px rgba(0,0,0,0.4);
   --transition: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Width of the docked sidebar at the tablet tier and up. Below 768px the
+     drawer is off-canvas and this is unused. */
+  --sidebar-w: 240px;
+  /* Content is centred and capped at the wide tier so lines of text don't run
+     the full width of an ultrawide monitor. */
+  --content-max: 1440px;
+
   color-scheme: dark;
 }
+
+/* ══════════════════════════════════════
+   RESPONSIVE TIERS
+   ══════════════════════════════════════
+   Mobile   < 768px   Floating card + off-canvas drawer. The base cascade —
+                      every rule outside a min-width block is the mobile rule.
+   Tablet   >= 768px  Full-viewport shell, docked sidebar, wider modals.
+   Desktop  >= 1024px Master-detail split panes (see js/layout.js).
+   Wide     >= 1440px Denser grids, capped content width.
+
+   All tier rules live in the RESPONSIVE — TABLET & DESKTOP section at the
+   bottom of this file and are written as min-width, so mobile is never
+   overridden downward. The one legacy max-width:480px block (small-phone
+   touch-ups, just below) predates these tiers and is left alone.
+
+   Custom properties can't be used inside @media, so 768/1024/1440 are
+   literals here and in js/layout.js. Change them in both places. */
 
 /* ── Light theme ─────────────────────────
    Activated via data-theme="light" on <html> (set by js/theme.js). */
@@ -658,8 +683,10 @@ input::placeholder {
 
 /* History page grid is defined in the HISTORY PAGE section below */
 
-/* Page title in topbar */
+/* Page title in topbar. Hidden on mobile, where the centred brand owns the
+   topbar; shown from 768px up, where the brand moves into the sidebar. */
 .page-title {
+  display: none;
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--text-tertiary);
@@ -1427,10 +1454,19 @@ input::placeholder {
   gap: 12px;
 }
 
+/* A <button> so the disclosure is keyboard-operable — hence the chrome reset.
+   Its children are spans (a button may only contain phrasing content), so the
+   ones that were divs need their block display back. */
 .drawer-user-info {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
 }
 
 .drawer-user-avatar {
@@ -1446,11 +1482,13 @@ input::placeholder {
 }
 
 .drawer-user-details {
+  display: block;
   overflow: hidden;
   min-width: 0;
 }
 
 .drawer-user-name {
+  display: block;
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-primary);
@@ -1460,6 +1498,7 @@ input::placeholder {
 }
 
 .drawer-user-email {
+  display: block;
   font-size: 0.72rem;
   color: var(--text-tertiary);
   white-space: nowrap;
@@ -1471,10 +1510,13 @@ input::placeholder {
   display: none;
 }
 
+/* No negative margin: it used to pull the hover highlight out to the drawer
+   edge, which was invisible when this row stood alone in the footer. Now it
+   sits directly above the account menu buttons, and an 8px bleed on each side
+   reads as two different widths. Same box as the buttons instead. */
 .drawer-user-info-clickable {
   cursor: pointer;
-  padding: 8px;
-  margin: -8px;
+  padding: 10px 12px;
   border-radius: var(--radius-sm);
   transition: background var(--transition);
 }
@@ -1488,6 +1530,12 @@ input::placeholder {
   font-size: 1.2rem;
   color: var(--text-tertiary);
   flex-shrink: 0;
+  transition: transform var(--transition);
+}
+
+/* Points down while the account menu is open. */
+.drawer-user-info[aria-expanded="true"] .drawer-user-chevron {
+  transform: rotate(90deg);
 }
 
 /* Account Settings Modal */
@@ -1537,7 +1585,21 @@ input::placeholder {
   font-style: italic;
 }
 
-.drawer-logout-btn {
+/* ── Account menu (drawer footer) ──
+   Collapsed until the user row is clicked. The row is the disclosure toggle;
+   js/auth.js flips .open here and aria-expanded on the toggle together. */
+.drawer-account-menu {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.drawer-account-menu.open {
+  display: flex;
+  animation: fadeUp 0.2s ease forwards;
+}
+
+.drawer-account-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1556,14 +1618,28 @@ input::placeholder {
   -webkit-tap-highlight-color: transparent;
 }
 
-.drawer-logout-btn:hover {
-  background: var(--red-glow);
-  border-color: rgba(239,68,68,0.2);
-  color: var(--red);
+.drawer-account-btn:hover {
+  background: var(--surface-3);
+  border-color: var(--border-focus);
+  color: var(--text-primary);
 }
 
-.drawer-logout-btn:active {
+.drawer-account-btn:active {
   transform: scale(0.98);
+}
+
+/* Log out is the destructive one, so it reads red at rest rather than only on
+   hover — it sits next to a benign action and shouldn't be mistaken for it. */
+.drawer-account-btn-danger {
+  color: var(--red);
+  border-color: rgba(239,68,68,0.25);
+  background: var(--red-glow);
+}
+
+.drawer-account-btn-danger:hover {
+  background: rgba(239,68,68,0.18);
+  border-color: rgba(239,68,68,0.45);
+  color: var(--red);
 }
 
 /* ══════════════════════════════════════
@@ -2185,6 +2261,37 @@ input::placeholder {
   gap: 6px;
 }
 
+.supplier-purchase-total {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Detail-pane title block for the selected supplier. */
+.supplier-detail-head {
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.supplier-detail-name {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
+.supplier-detail-meta {
+  margin-top: 4px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
 .supplier-purchase-row {
   display: flex;
   align-items: center;
@@ -2433,6 +2540,52 @@ input::placeholder {
 
 .ledger-items-table tr:last-child td {
   border-bottom: none;
+}
+
+/* Entry date column — desktop pane only, where there's room for a 4th column. */
+.ledger-item-date {
+  color: var(--text-secondary);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+/* due_note — the shopkeeper's own note about the debt. Written by the API since
+   the ledger shipped; this is the first place it's ever been shown. */
+.ledger-due-note {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  border-left: 2px solid var(--amber);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.ledger-due-note-label {
+  display: block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  margin-bottom: 3px;
+}
+
+.ledger-reminder-status {
+  margin-top: 8px;
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+}
+
+/* "Also owes ₹X" — the customer's outstanding ledger balance, shown on the
+   Orders page. The data is already in memory there (see js/orders.js). */
+.order-card-also-owes {
+  margin-top: 2px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--amber);
+  white-space: nowrap;
 }
 
 /* WhatsApp section */
@@ -2750,6 +2903,47 @@ input::placeholder {
   overflow: hidden;
 }
 
+/* Desktop list row — replaces the stacked .history-entry in the left column,
+   with the entry's result tables moving to the detail pane. */
+.history-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 11px 12px;
+  margin-bottom: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.history-row:hover {
+  border-color: var(--border-focus);
+}
+
+.history-row.selected {
+  background: var(--accent-soft);
+  border-color: var(--border-focus);
+}
+
+.history-row .history-timestamp {
+  margin-bottom: 0;
+}
+
+.history-row-summary {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .history-entry {
   margin-bottom: 16px;
   padding-bottom: 16px;
@@ -2806,8 +3000,20 @@ input::placeholder {
 }
 
 /* ══════════════════════════════════════
-   DESKTOP POLISH
-   ══════════════════════════════════════ */
+   RESPONSIVE — TABLET & DESKTOP
+   ══════════════════════════════════════
+   See the RESPONSIVE TIERS block at the top of this file. Everything here is
+   min-width, so the mobile layout above is the default and is never
+   overridden downward. */
+
+/* The master-detail pane exists in the markup at every size but only has a
+   column to live in at >= 1024px. Below that the detail is rendered inside
+   each card as an accordion instead — see js/layout.js. */
+.detail-pane {
+  display: none;
+}
+
+/* ── Large phone / small tablet ── */
 @media (min-width: 481px) {
   .card {
     padding: 40px 32px;
@@ -2822,6 +3028,526 @@ input::placeholder {
   .mic-wrapper {
     width: 160px;
     height: 160px;
+  }
+}
+
+/* ══════════════════════════════════════
+   TABLET TIER (>= 768px) — FULL-VIEWPORT SHELL
+   ══════════════════════════════════════ */
+@media (min-width: 768px) {
+  /* The app sheds the phone card and takes the whole screen.
+     position:fixed is what does the work: it lifts #app-view out of the body
+     flex centring (which #login-view still depends on) without needing :has()
+     or a second body layout mode. left: is the docked sidebar's gutter. */
+  #app-view {
+    position: fixed;
+    inset: 0;
+    left: var(--sidebar-w);
+    width: auto;
+    max-width: none;
+    height: auto;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background: var(--surface-0);
+  }
+
+  /* Topbar spans the content column; the sidebar carries its own header. */
+  #app-view .app-topbar {
+    margin: 0;
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-1);
+    justify-content: flex-end;
+    gap: 16px;
+  }
+
+  /* The brand lives in the sidebar header at this tier — one wordmark, not two. */
+  #app-view .brand-home,
+  #menu-btn {
+    display: none;
+  }
+
+  /* Page title sits left, controls right. */
+  #app-view .app-topbar .page-title {
+    display: block;
+    margin-right: auto;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    text-transform: none;
+    letter-spacing: -0.01em;
+  }
+
+  /* Padding only — the base rule's `overflow: hidden` has to stand, because
+     each page manages its own inner scroll region (the inventory grid, the
+     history body, the split columns). Making the container itself scrollable
+     would give those a second, outer scrollbar. */
+  /* `#app-view .page-container`, not `.page-container`: #page-ledger,
+     #page-orders and #page-suppliers each declare `padding: 0 2px` at ID
+     specificity (1,0,0) for the phone card, which outranks a bare class and
+     would leave those three pages' content flush against the window edge.
+     (1,1,0) beats them; #page-inventory and #page-history set no padding, so
+     they were never affected — which is why only some pages looked wrong. */
+  #app-view .page-container {
+    padding: 24px 28px;
+    width: 100%;
+  }
+
+  .page-container {
+    /* Declare the column. .page-container is `display: grid` but most pages
+       never set grid-template-columns, leaving a single *implicit* `auto`
+       track — and an auto track sizes to max-content, which for a nested
+       auto-fill grid is one column wide. The page then collapses to about one
+       card's width instead of filling the shell.
+
+       It never showed on mobile because #app-view was a definite 420px there,
+       so the track had nothing to collapse away from. That is exactly why a
+       page could still look phone-shaped inside a full-width desktop shell.
+
+       minmax(0, 1fr): the 1fr claims all the space, the 0 minimum stops
+       min-content from blowing the track back out. Pages that declare their
+       own columns (#page-voice, .split-page) override this from the 1024
+       block below, which is why only the pages *without* explicit columns —
+       inventory at every width, and every page between 768 and 1023 — were
+       affected. */
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* ── Drawer becomes a permanent sidebar ──
+     The overlay keeps position:fixed but stops being a modal scrim: no
+     backdrop, no pointer events (so its click-to-close handler in js/ui.js
+     can never fire), always visible. The drawer itself just stops
+     translating off-canvas. No markup moves, no JS branch.
+
+     Gated on body.signed-in (set in js/auth.js). The drawer is a sibling of
+     both #login-view and #app-view rather than a child of #app-view, so
+     `#app-view.hidden` does not hide it — ungated, the sidebar renders next to
+     the login card. #app-view itself needs no gate: .hidden already carries
+     `display: none !important`. */
+  body.signed-in .drawer-overlay {
+    background: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: none;
+    transition: none;
+  }
+
+  body.signed-in .drawer {
+    width: var(--sidebar-w);
+    transform: none;
+    pointer-events: auto;
+    transition: none;
+  }
+
+  body.signed-in .drawer-close {
+    display: none;
+  }
+
+  .drawer-header {
+    padding: 18px 16px;
+  }
+
+  /* The decorative background and ambient glow exist to fill the dead space
+     around a 420px card. Once the shell is full-viewport they are just noise
+     behind an opaque panel — but the login card still wants them, hence the
+     same signed-in gate. */
+  body.signed-in .bg-decor,
+  body.signed-in::before {
+    display: none;
+  }
+
+  /* Multi-field forms get room to breathe.
+
+     Every rule here is prefixed with .modal-overlay on purpose. The base
+     .modal-card / .modal-card-scroll rules live in the MODAL section near the
+     bottom of this file — i.e. AFTER this block — and a media query adds no
+     specificity, so a bare `.modal-card` here loses to them on source order
+     and silently does nothing. (0,2,0) beats their (0,1,0) regardless of
+     position. */
+  .modal-overlay .modal-card {
+    max-width: 480px;
+    padding: 32px 28px;
+  }
+
+  /* ── Account Settings ──
+     Four fields stacked in a 480px column is a phone form on a desktop. Going
+     two-up halves the height and stops the short fields (mobile number, UPI
+     id) from being stretched across the full width. */
+  .modal-overlay .account-settings-card {
+    max-width: 620px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 20px;
+    align-content: start;
+  }
+
+  .account-settings-card .modal-title,
+  .account-settings-card .settings-field-wide,
+  .account-settings-card .modal-actions {
+    grid-column: 1 / -1;
+  }
+
+  .account-settings-card .settings-field {
+    margin-bottom: 16px;
+  }
+
+  /* The textarea has room to be a real address field now. */
+  .account-settings-card #settings-shop-address-input {
+    min-height: 76px;
+    resize: vertical;
+  }
+
+  /* Full-width Cancel/Save either side of a 620px dialog looks like a landing
+     page, not a settings sheet. Size them to content, right-aligned.
+     width:auto is required — .btn sets width:100%, so without it each button
+     takes the full row and the pair overflows the dialog. */
+  .account-settings-card .modal-actions {
+    justify-content: flex-end;
+    margin-top: 4px;
+  }
+
+  .account-settings-card .modal-actions .btn {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 130px;
+  }
+
+  .modal-overlay .modal-card-scroll {
+    max-width: 640px;
+    max-height: 85dvh;
+  }
+
+  /* The add/edit item photo picker shouldn't become a billboard in a 640px
+     modal — cap it and centre it. */
+  .modal-overlay .modal-card-scroll .image-picker {
+    max-width: 360px;
+    margin-inline: auto;
+  }
+
+  /* Summary tiles spread rather than crowd. */
+  .summary-cards {
+    gap: 16px;
+  }
+
+  /* The home shortcuts are a phone affordance — a way to reach Orders and
+     Ledger without opening the drawer. From here up the sidebar is docked and
+     already lists every page, so they are duplicate navigation. */
+  #page-voice .home-shortcuts {
+    display: none;
+  }
+
+  /* ── In-page titles ──
+     The topbar names the current page and the sidebar highlights it, so the
+     page's own <h2> is the same word twice ("Inventory" / "Live Inventory").
+     Voice has no such heading, so it is not listed here.
+
+     Ledger, Orders and Suppliers pair the heading with a page badge in the
+     same row; dropping the heading and leaving a lone chip reads as debris, so
+     the whole header row goes. Inventory is the exception — its header row
+     also holds the sort select and refresh button, so only the title is
+     dropped and the controls keep the row. */
+  .ledger-header,
+  .suppliers-header,
+  .history-page-header {
+    display: none;
+  }
+
+  .dashboard-title {
+    display: none;
+  }
+
+  /* space-between would shove the controls to the left once the title is gone. */
+  #app-view .dashboard-header {
+    justify-content: flex-end;
+    padding-top: 0;
+  }
+
+  /* Those headers were each the first grid row, and `display: none` takes them
+     out of flow entirely — so every remaining row shifts up one and the `1fr`
+     that gives the list/pane its height would land on an unused track. Each
+     template loses its leading `auto` to compensate. IDs, because the base
+     rules are IDs. */
+  #page-ledger,
+  #page-orders,
+  #page-suppliers {
+    grid-template-rows: auto auto 1fr;
+  }
+
+  #page-history {
+    grid-template-rows: 1fr auto;
+  }
+
+  /* With the real width available, 120px tiles would flow ~9 across and read as
+     thumbnails. Nothing else about the tile changes.
+
+     align-content:start is what keeps the tiles their natural height. The grid
+     sits in #page-inventory's `1fr` row, so it is as tall as the page; its
+     implicit rows are `auto`, and auto rows stretch to fill under the default
+     align-content. With only a row or two of stock, that row absorbed the whole
+     page height and every tile grew to ~440px, with .inventory-tile-edit-hint's
+     `margin-top: auto` holding the empty space open. Packing to the top sizes
+     each row to its content and lets the grid scroll instead. */
+  .inventory-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
+    align-content: start;
+  }
+}
+
+/* ══════════════════════════════════════
+   DESKTOP TIER (>= 1024px) — MASTER-DETAIL
+   ══════════════════════════════════════ */
+@media (min-width: 1024px) {
+  /* Voice page: mic on the left, results on the right, shortcuts across the
+     bottom. Overrides the mobile `grid-template-rows: 1fr 1fr auto`.
+     An even 50/50 split — the mic is the primary control on this page, so it
+     gets equal billing rather than being squeezed into a fixed-width rail. */
+  #page-voice {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;          /* single row — the shortcuts are hidden at this tier */
+    gap: 0 28px;
+    align-items: stretch;
+  }
+
+  #page-voice .mic-area {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  /* Fill the column. The mic is the whole point of this page and at 110px it
+     was a dot in half a screen. Fluid rather than fixed so it tracks the
+     column width, which is 50% of the content area — clamped at the top so it
+     stops growing on an ultrawide, and at the bottom so it never drops below
+     the tablet size when the window is narrow for this tier.
+     The two rings are `inset` on .mic-wrapper, so they follow for free. */
+  #page-voice .mic-wrapper {
+    width: clamp(200px, 22vw, 380px);
+    height: clamp(200px, 22vw, 380px);
+  }
+
+  #page-voice .mic-btn {
+    width: clamp(140px, 15vw, 260px);
+    height: clamp(140px, 15vw, 260px);
+    font-size: clamp(2.8rem, 5vw, 5rem);
+  }
+
+  /* -6px reads as a hairline once the wrapper is 380px across. */
+  #page-voice .mic-ring-2 {
+    inset: -10px;
+  }
+
+  #page-voice .mic-hint {
+    margin-top: 24px;
+    font-size: 1rem;
+  }
+
+  #page-voice .result-area {
+    grid-column: 2;
+    grid-row: 1;
+    border-top: none;
+    border-left: 1px solid var(--divider);
+    padding-top: 0;
+    padding-left: 24px;
+  }
+
+  /* ── Master-detail split ──
+     The page header, summary tiles and sort row span both columns; the list
+     and the detail pane share the last row. Auto-placement handles it: three
+     full-width items, then .split-list lands in row 4 col 1 and .detail-pane
+     follows it into row 4 col 2. Modals inside these pages are
+     position:fixed, so they're out of flow and never become grid items.
+
+     The list and the pane each own their scroll, so a customer with fifty
+     entries can't push the customer list out of view. */
+  .split-page {
+    grid-template-columns: minmax(300px, 380px) 1fr;
+    column-gap: 24px;
+  }
+
+  /* Same ID-specificity problem as the padding above: #page-ledger,
+     #page-orders and #page-suppliers set `overflow-y: auto` on themselves. In
+     a split the columns own their scrolling, so leaving it on the page gives a
+     second, outer scrollbar. (1,1,0) to outrank those (1,0,0) rules. */
+  #app-view .split-page {
+    overflow: hidden;
+  }
+
+  /* Page chrome (title, summary tiles, sort row, footer) spans both columns. */
+  .split-page > .split-full {
+    grid-column: 1 / -1;
+  }
+
+  .split-page > .split-list {
+    grid-column: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+
+  /* The list is a flex column (.ledger-customer-list) and the split gives it a
+     definite height, so its rows become shrinkable flex items: with more rows
+     than fit, every row is squeezed below its content height and — because the
+     card is overflow:hidden — the subtitle and the "Also owes" line get sliced
+     off mid-glyph. It only bites on shorter viewports, which is why it showed
+     on a laptop but not on a large monitor. The rows must keep their natural
+     height and let the container scroll. */
+  .split-list > * {
+    flex-shrink: 0;
+  }
+
+  /* Row templates are set once in the 768 block, where the in-page headers are
+     hidden — they are the same here, so they are not repeated.
+
+     Suppliers splits one tab, not the page: the page grid hands the tab panel
+     a row and the panel divides it. .supplier-tab-content isn't a grid by
+     default, so it needs display:grid here where .page-container supplies it
+     for the others. */
+  #page-suppliers {
+    overflow: hidden;
+  }
+
+  #supplier-tab-directory.split-page {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-height: 0;
+  }
+
+  #supplier-tab-purchases {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .supplier-dir-card.selected {
+    border-color: var(--border-focus);
+    background: var(--accent-soft);
+  }
+
+  /* The in-card purchases panel and its caret are the mobile accordion; on
+     desktop the same content lives in the pane. */
+  .split-list .supplier-dir-purchases,
+  .split-list .supplier-dir-caret {
+    display: none;
+  }
+
+  /* #page-history already declares `auto 1fr auto` in the HISTORY PAGE section
+     — header, scrollable body, footer — which is exactly what the split needs. */
+
+  .detail-pane {
+    display: block;
+    grid-column: 2;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 24px 24px;
+    border-left: 1px solid var(--divider);
+  }
+
+  /* Cap the content, not the pane — the pane keeps its full column so the
+     divider still runs the height of the page, but a form, a row of buttons
+     and a line-item list stop stretching to 1200px. Left-aligned: this reads
+     as a document column beside the list, not a centred island. */
+  .detail-pane > * {
+    max-width: 820px;
+  }
+
+  .detail-pane-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-tertiary);
+    font-size: 0.9rem;
+    text-align: center;
+  }
+
+  /* In the pane the detail is always open — it is not an accordion here, so
+     the collapse rule and the chevron affordance both go away. Scoped to
+     .detail-pane so the mobile accordion (shared verbatim by Ledger and
+     Orders) is untouched. */
+  .detail-pane .ledger-card-details {
+    display: block;
+    max-height: none;
+    padding: 0;
+  }
+
+  .detail-pane .ledger-customer-card {
+    border: none;
+    background: none;
+    margin: 0;
+  }
+
+  .detail-pane .ledger-card-header {
+    cursor: default;
+    padding: 0 0 16px;
+    border-bottom: 1px solid var(--divider);
+    margin-bottom: 16px;
+  }
+
+  .detail-pane .ledger-card-chevron {
+    display: none;
+  }
+
+  .detail-pane .ledger-card-name {
+    font-size: 1.25rem;
+  }
+
+  .detail-pane .ledger-card-amount {
+    font-size: 1.35rem;
+  }
+
+  /* Rows in the list column are compact — the detail lives in the pane. */
+  .split-list .ledger-card-details {
+    display: none;
+  }
+
+  .split-list .ledger-customer-card.selected {
+    border-color: var(--border-focus);
+    background: var(--accent-soft);
+  }
+
+  /* The pane holds exactly one entry, so the between-entries separator that
+     .history-entry carries in the stacked mobile log is just a stray rule. */
+  .detail-pane .history-entry {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+
+  /* Wide tables no longer need to scroll sideways. */
+  .detail-pane .table-scroll,
+  .page-container .table-scroll {
+    overflow-x: visible;
+  }
+}
+
+/* ══════════════════════════════════════
+   WIDE TIER (>= 1440px)
+   ══════════════════════════════════════ */
+@media (min-width: 1440px) {
+  /* Cap on the container, not on its children. Capping each child would let
+     the split-page columns span the full width while the full-width chrome
+     above them stopped at --content-max, so the page header would no longer
+     line up with the columns it heads. */
+  /* width:100% is load-bearing, do not drop it. .page-container is a grid item
+     of #app-view, and auto inline margins on a grid item absorb the free space
+     and override justify-self:stretch — which makes the box shrink-to-fit. It
+     then collapses to the max-content of whatever grid is nested inside it
+     (for the inventory page, one auto-fill column: ~425px), so the page renders
+     phone-width inside a 1664px shell. An explicit width makes the box definite
+     first, and the auto margins only centre what is left over. */
+  #app-view .page-container {
+    padding: 28px 40px;
+    width: 100%;
+    max-width: var(--content-max);
+    margin-inline: auto;
+  }
+
+  .split-page {
+    grid-template-columns: minmax(340px, 420px) 1fr;
   }
 }
 
@@ -2894,9 +3620,12 @@ input[type="number"] {
 /* ══════════════════════════════════════
    FLOATING ADD BUTTON (INVENTORY PAGE)
    ══════════════════════════════════════ */
-/* Absolute, not fixed: #app-view is a .card (position:relative), so this
-   anchors to the 420px app card rather than the corner of a wide desktop
-   viewport, and doesn't scroll away with #page-inventory. */
+/* Absolute, not fixed: #app-view is position:relative at every tier, so this
+   anchors to the app shell and doesn't scroll away with #page-inventory.
+   On mobile that shell is the 420px card. At >= 768px the shell is
+   position:fixed and inset to the right of the sidebar, so the same rule now
+   parks the button in the corner of the content column — clear of the
+   sidebar — without needing a tier override. */
 .fab {
   position: absolute;
   right: 20px;

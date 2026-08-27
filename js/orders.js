@@ -4,10 +4,8 @@
  */
 
 import { $, auth, API } from "./config.js";
-import { showToast, escapeHtml, capitalize } from "./ui.js";
-
-// WhatsApp glyph — same artwork as the Ledger "Send Reminder" button.
-const WA_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>';
+import { showToast, escapeHtml, capitalize, WA_SVG } from "./ui.js";
+import { isWide, onLayoutChange } from "./layout.js";
 
 // Pencil glyph — diagonal with the writing tip at the bottom-left (Feather "edit-2").
 const PENCIL_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
@@ -17,6 +15,9 @@ let currentOrdersSort = 'recent';
 let ordersSearchQuery = '';
 let inventoryPrices = {};            // { itemNameLower: price }
 let ledgerNumbers = {};              // { "name|modifier": whatsapp_number } — for bill-send prefill
+let ledgerDues = {};                 // { "name|modifier": total_due } — this page already has the ledger
+// Which order the desktop detail pane is showing (unused below 1024px).
+let selectedOrderId = null;
 
 // WhatsApp number split helpers (mirror js/ledger.js).
 function parseWaCode(wa) {
@@ -78,13 +79,23 @@ async function touchBill(orderId) {
 
 // Flip an order card into "bill ready" state so later clicks re-open the saved
 // PDF instead of regenerating it.
-function markBillGenerated(card, pdfUrl) {
+function markBillGenerated(card, pdfUrl, billNumber) {
   card.dataset.billUrl = pdfUrl;
   card.dataset.billFresh = '1';
   const genBtn = card.querySelector('.order-generate-bill-btn');
   if (genBtn) {
     genBtn.dataset.mode = 'show';
     genBtn.innerHTML = '📄 Show Bill';
+  }
+
+  // Write it back to the in-memory record too, not just this card. The next
+  // re-render (a search keystroke, a sort, a breakpoint change) rebuilds from
+  // currentOrdersData, and on desktop the card that was mutated is the detail
+  // pane's — the list row showing the bill number is a different element.
+  const order = (currentOrdersData.orders || []).find(o => o.order_id === card.dataset.orderId);
+  if (order) {
+    order.bill = { ...(order.bill || {}), pdf_url: pdfUrl, stale: false };
+    if (billNumber) order.bill.bill_number = billNumber;
   }
 }
 
@@ -107,12 +118,16 @@ export async function loadOrders() {
     currentOrdersData = await ordersRes.json();
 
     // Build WhatsApp number lookup from the ledger to prefill bill-send inputs.
+    // The same response also carries every customer's outstanding due, so the
+    // order card can show what they still owe without a second request.
     ledgerNumbers = {};
+    ledgerDues = {};
     try {
       const led = await ledgerRes.json();
       for (const c of (led.customers || [])) {
         const key = `${c.customer_name || ''}|${c.customer_modifier || ''}`;
         if (c.whatsapp_number) ledgerNumbers[key] = c.whatsapp_number;
+        if (c.total_due) ledgerDues[key] = c.total_due;
       }
     } catch { /* best-effort — inputs just won't prefill */ }
 
@@ -152,6 +167,8 @@ function renderOrders() {
 
   if (orders.length === 0) {
     listEl.innerHTML = '<div class="inventory-empty">No orders found.<br>Use Voice or the + button to add an order.</div>';
+    selectedOrderId = null;
+    renderOrderDetail(null);
     return;
   }
 
@@ -162,82 +179,167 @@ function renderOrders() {
   }
   // 'recent' already sorted by the API
 
+  // Desktop shows one order's detail in the pane; keep the previous selection
+  // if it survived the filter, else fall back to the first row.
+  const wide = isWide();
+  let selected = null;
+  if (wide) {
+    selected = orders.find(o => o.order_id === selectedOrderId) || orders[0];
+    selectedOrderId = selected ? selected.order_id : null;
+  }
+
   let html = '';
   for (const o of orders) {
-    const displayName = o.customer_modifier
-      ? `${capitalize(o.customer_name)} (${o.customer_modifier})`
-      : capitalize(o.customer_name);
-    // The order number doubles as the bill number (order #7 → bill BK-007), so
-    // showing it lets a shopkeeper match a bill in hand to a card on this page.
-    const orderNo = o.order_no ? `Order #${o.order_no}` : '';
-    const lastOrder = o.last_order ? `Last order ${formatOrderDate(o.last_order)}` : '';
-    const subtitle = [orderNo, lastOrder].filter(Boolean).join(' · ');
-    const waNum = ledgerNumbers[`${o.customer_name}|${o.customer_modifier || ''}`] || '';
-
-    // Bill state: a fresh (non-stale) bill lets the button just re-open the saved
-    // PDF ("Show Bill"); otherwise it generates one ("Generate Bill").
-    const bill = o.bill || null;
-    const billFresh = !!(bill && bill.pdf_url && !bill.stale);
-    const billUrl = (bill && bill.pdf_url) || '';
-    const genLabel = billFresh ? '📄 Show Bill' : '🧾 Generate Bill';
-    const genMode = billFresh ? 'show' : 'generate';
-
-    let itemsHtml = '';
-    for (const item of (o.items || [])) {
-      const qty = item.quantity || 0;
-      const price = item.price || 0;
-      itemsHtml += `<div class="order-item-row" data-id="${escapeHtml(item.id)}" data-item="${escapeHtml(item.item)}" data-qty="${qty}" data-price="${price}">
-        <div class="order-item-info">
-          <div class="order-item-name">${escapeHtml(capitalize(item.item))}</div>
-          <div class="order-item-meta">${qty} × ${inr(price)} = ${inr(item.amount)}</div>
-        </div>
-        <div class="order-item-actions">
-          <button class="order-item-edit" title="Edit">${PENCIL_SVG}</button>
-          <button class="order-item-remove" title="Remove" data-label="${escapeHtml(capitalize(item.item))}">✕</button>
-        </div>
-      </div>`;
-    }
-
-    html += `<div class="ledger-customer-card order-card"
-        data-order-id="${escapeHtml(o.order_id)}"
-        data-customer="${escapeHtml(o.customer_name)}"
-        data-modifier="${escapeHtml(o.customer_modifier || '')}"
-        data-bill-url="${escapeHtml(billUrl)}"
-        data-bill-fresh="${billFresh ? '1' : ''}">
-      <div class="ledger-card-header" onclick="this.parentElement.classList.toggle('expanded')">
-        <div class="ledger-card-info">
-          <div class="ledger-card-name">${escapeHtml(displayName)}</div>
-          <div class="ledger-card-subtitle">${escapeHtml(subtitle)}</div>
-        </div>
-        <div class="ledger-card-right">
-          <div class="ledger-card-amount due">${inr(o.total || 0)}</div>
-        </div>
-      </div>
-      <div class="ledger-card-details">
-        <div class="order-items-list">${itemsHtml}</div>
-        <div class="order-item-actions-row">
-          <button class="btn btn-outline order-add-item-btn">+ Add item</button>
-          <button class="btn btn-outline order-delete-order-btn">🗑️ Delete order</button>
-        </div>
-        <div class="whatsapp-section">
-          <div class="whatsapp-section-label">WHATSAPP NUMBER</div>
-          <div class="whatsapp-input wa-split-input">
-            <input type="tel" class="wa-code-input" value="${escapeHtml(parseWaCode(waNum))}" maxlength="4" />
-            <input type="tel" class="wa-number-input" placeholder="98765 43210" value="${escapeHtml(parseWaNumber(waNum))}" maxlength="10" inputmode="numeric" />
-          </div>
-        </div>
-        <div class="order-bill-actions">
-          <button class="btn btn-primary order-generate-bill-btn" data-mode="${genMode}">${genLabel}</button>
-          <button class="btn btn-whatsapp order-send-bill-btn">${WA_SVG}Send Bill on WhatsApp</button>
-        </div>
-      </div>
+    const isSelected = wide && o.order_id === selectedOrderId;
+    html += `<div class="${orderCardClasses(o, isSelected)}" ${orderCardAttrs(o)}>
+      ${buildOrderHeaderHTML(o)}
+      ${wide ? '' : `<div class="ledger-card-details">${buildOrderDetailHTML(o)}</div>`}
     </div>`;
   }
   listEl.innerHTML = html;
   wireOrderCards(listEl);
+  renderOrderDetail(selected);
+}
+
+const orderKey = (o) => `${o.customer_name}|${o.customer_modifier || ''}`;
+
+function orderCardClasses(o, isSelected) {
+  return `ledger-customer-card order-card${isSelected ? ' selected' : ''}`;
+}
+
+/**
+ * The data-* attributes every order handler depends on. wireOrderCards() reads
+ * them via closest('.order-card'), so the detail pane's wrapper has to carry
+ * exactly the same set as the list row — see js/layout.js.
+ */
+function orderCardAttrs(o) {
+  const bill = o.bill || null;
+  const billFresh = !!(bill && bill.pdf_url && !bill.stale);
+  const billUrl = (bill && bill.pdf_url) || '';
+  return `data-order-id="${escapeHtml(o.order_id)}"
+    data-customer="${escapeHtml(o.customer_name)}"
+    data-modifier="${escapeHtml(o.customer_modifier || '')}"
+    data-bill-url="${escapeHtml(billUrl)}"
+    data-bill-fresh="${billFresh ? '1' : ''}"`;
+}
+
+function buildOrderHeaderHTML(o) {
+  const displayName = o.customer_modifier
+    ? `${capitalize(o.customer_name)} (${o.customer_modifier})`
+    : capitalize(o.customer_name);
+  // The order number doubles as the bill number (order #7 → bill BK-007), so
+  // showing it lets a shopkeeper match a bill in hand to a card on this page.
+  const orderNo = o.order_no ? `Order #${o.order_no}` : '';
+  const lastOrder = o.last_order ? `Last order ${formatOrderDate(o.last_order)}` : '';
+  // Once a bill exists its number is the thing the shopkeeper matches against
+  // paper. It used to appear only in a toast that vanished after 3 seconds.
+  const billNo = (o.bill && o.bill.bill_number) ? `Bill ${o.bill.bill_number}` : '';
+  const subtitle = [orderNo, billNo, lastOrder].filter(Boolean).join(' · ');
+
+  // This page already fetches /ledger/customers for the WhatsApp prefill, so
+  // the customer's outstanding balance is free — no extra request.
+  const due = ledgerDues[orderKey(o)] || 0;
+  const dueHtml = due > 0
+    ? `<div class="order-card-also-owes">Also owes ${inr(due)}</div>`
+    : '';
+
+  return `<div class="ledger-card-header">
+    <div class="ledger-card-info">
+      <div class="ledger-card-name">${escapeHtml(displayName)}</div>
+      <div class="ledger-card-subtitle">${escapeHtml(subtitle)}</div>
+    </div>
+    <div class="ledger-card-right">
+      <div class="ledger-card-amount due">${inr(o.total || 0)}</div>
+      ${dueHtml}
+    </div>
+  </div>`;
+}
+
+/**
+ * An order's line items and actions, as an HTML string.
+ *
+ * Pure — same markup whether it lands inside the card (mobile accordion) or in
+ * the detail pane (desktop).
+ */
+function buildOrderDetailHTML(o) {
+  // Bill state: a fresh (non-stale) bill lets the button just re-open the saved
+  // PDF ("Show Bill"); otherwise it generates one ("Generate Bill").
+  const bill = o.bill || null;
+  const billFresh = !!(bill && bill.pdf_url && !bill.stale);
+  const genLabel = billFresh ? '📄 Show Bill' : '🧾 Generate Bill';
+  const genMode = billFresh ? 'show' : 'generate';
+  const waNum = ledgerNumbers[orderKey(o)] || '';
+
+  let itemsHtml = '';
+  for (const item of (o.items || [])) {
+    const qty = item.quantity || 0;
+    const price = item.price || 0;
+    itemsHtml += `<div class="order-item-row" data-id="${escapeHtml(item.id)}" data-item="${escapeHtml(item.item)}" data-qty="${qty}" data-price="${price}">
+      <div class="order-item-info">
+        <div class="order-item-name">${escapeHtml(capitalize(item.item))}</div>
+        <div class="order-item-meta">${qty} × ${inr(price)} = ${inr(item.amount)}</div>
+      </div>
+      <div class="order-item-actions">
+        <button class="order-item-edit" title="Edit">${PENCIL_SVG}</button>
+        <button class="order-item-remove" title="Remove" data-label="${escapeHtml(capitalize(item.item))}">✕</button>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="order-items-list">${itemsHtml}</div>
+    <div class="order-item-actions-row">
+      <button class="btn btn-outline order-add-item-btn">+ Add item</button>
+      <button class="btn btn-outline order-delete-order-btn">🗑️ Delete order</button>
+    </div>
+    <div class="whatsapp-section">
+      <div class="whatsapp-section-label">WHATSAPP NUMBER</div>
+      <div class="whatsapp-input wa-split-input">
+        <input type="tel" class="wa-code-input" value="${escapeHtml(parseWaCode(waNum))}" maxlength="4" />
+        <input type="tel" class="wa-number-input" placeholder="98765 43210" value="${escapeHtml(parseWaNumber(waNum))}" maxlength="10" inputmode="numeric" />
+      </div>
+    </div>
+    <div class="order-bill-actions">
+      <button class="btn btn-primary order-generate-bill-btn" data-mode="${genMode}">${genLabel}</button>
+      <button class="btn btn-whatsapp order-send-bill-btn">${WA_SVG}Send Bill on WhatsApp</button>
+    </div>`;
+}
+
+/** Paint the desktop detail pane. */
+function renderOrderDetail(o) {
+  const paneEl = $('orders-detail');
+  if (!paneEl) return;
+
+  if (!o) {
+    paneEl.innerHTML = '<div class="detail-pane-empty">Select an order to see its items.</div>';
+    return;
+  }
+
+  paneEl.innerHTML = `<div class="${orderCardClasses(o, false)} expanded" ${orderCardAttrs(o)}>
+    ${buildOrderHeaderHTML(o)}
+    <div class="ledger-card-details">${buildOrderDetailHTML(o)}</div>
+  </div>`;
+  wireOrderCards(paneEl);
 }
 
 function wireOrderCards(listEl) {
+  // Card header: select on desktop, expand/collapse on mobile. Replaces an
+  // inline onclick that could only ever do the accordion.
+  listEl.querySelectorAll('.ledger-card-header').forEach(header => {
+    const card = header.closest('.order-card');
+    if (!card || listEl.id === 'orders-detail') return;   // pane title isn't clickable
+    header.addEventListener('click', () => {
+      if (isWide()) {
+        selectedOrderId = card.dataset.orderId;
+        listEl.querySelectorAll('.order-card').forEach(el => {
+          el.classList.toggle('selected', el === card);
+        });
+        renderOrderDetail((currentOrdersData.orders || []).find(o => o.order_id === selectedOrderId));
+      } else {
+        card.classList.toggle('expanded');
+      }
+    });
+  });
+
   // Edit a line item
   listEl.querySelectorAll('.order-item-edit').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -317,7 +419,7 @@ function wireOrderCards(listEl) {
         const { bill_number, pdf_url } = await generateBill(orderId);
         window.open(pdf_url, '_blank');
         showToast(`✅ Bill ${bill_number} generated`);
-        markBillGenerated(card, pdf_url);
+        markBillGenerated(card, pdf_url, bill_number);
       } catch (e) {
         showToast('❌ ' + (e.message || 'Could not generate bill.'));
         btn.innerHTML = label;
@@ -353,8 +455,9 @@ function wireOrderCards(listEl) {
           // Sharing a link counts as using it — keep it alive for another 30 days.
           touchBill(orderId);
         } else {
-          ({ pdf_url } = await generateBill(orderId));
-          markBillGenerated(card, pdf_url);
+          let bill_number;
+          ({ pdf_url, bill_number } = await generateBill(orderId));
+          markBillGenerated(card, pdf_url, bill_number);
         }
         const phone = waNumber.startsWith('+') ? waNumber.substring(1)
           : (waNumber.length === 10 ? '91' + waNumber : waNumber);
@@ -575,6 +678,11 @@ $('order-modal-save').addEventListener('click', async () => {
     btn.textContent = 'Create Order';
     btn.disabled = false;
   }
+});
+
+// Crossing 1024px moves the detail between the card and the pane — rebuild.
+onLayoutChange(() => {
+  if (currentOrdersData.orders && currentOrdersData.orders.length) renderOrders();
 });
 
 // Search & sort
