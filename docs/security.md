@@ -33,4 +33,4 @@ The limiter is fail-open: if its Firestore transaction fails, the request procee
 
 ## Automated Security Checks
 
-Secret scanning over the full git history, a tracked-credential-file check, and CodeQL's `security-extended` suite run on every push and pull request — see [Development & Deployment](development.md#automated-quality-checks).
+Secret scanning over the full git history, a tracked-credential-file check, and CodeQL's `security-extended` suite run on every push and pull request — see [Development & Deployment](https://github.com/mrinank67/bolkhata/blob/main/docs/development.md#automated-quality-checks).
