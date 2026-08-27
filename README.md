@@ -1,5 +1,7 @@
 # BolKhata — Smart Voice-First Inventory & Ledger
 
+![BolKhata — voice-first inventory and ledger for kirana shops](docs/banner.jpg)
+
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white)
 ![Sarvam AI](https://img.shields.io/badge/Sarvam_AI-saaras:v3-orange?style=flat)
 ![Groq](https://img.shields.io/badge/Groq-GPT_OSS_20B-purple?style=flat)
