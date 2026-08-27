@@ -22,4 +22,4 @@ __pycache__
 
 .env.example
 README.md
-PRODUCT_USAGE.md
+docs

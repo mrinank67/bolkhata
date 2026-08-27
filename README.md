@@ -56,7 +56,7 @@ By leveraging extreme low-latency processing, BolKhata allows shopkeepers to spe
 * **Inventory-Aware Pricing:** New order line items auto-fill their unit price from live inventory, with an item-name autocomplete sourced from current stock.
 * **Stock-Safe Edits:** Order edits intentionally never mutate inventory stock — stock reconciliation is deferred to billing — so editing an order never triggers stray stock writes.
 * **One-Tap PDF Bills:** Generate a branded A4 PDF invoice for any order, complete with an itemized table, quantity/rate/total columns, and a grand total. Every order carries a running order number the moment it is created, and its bill takes the same number (`BK-001`, `BK-002`, …) — so the number is a property of the sale, not of when a PDF happened to be printed.
-* **Self-Cleaning Bill Archive:** Bills are kept for 30 days after they were last generated, opened, shared, or edited, then deleted from Firestore and Storage — opening one restarts the clock. Nothing is lost: because the number comes from the order and the download token is derived rather than random, a bill rebuilt months later comes back with the same number at the same link. Deletion is enforced by infrastructure rather than app code: a Firestore TTL policy on `bills.expires_at`, and the Storage lifecycle rule in `storage.lifecycle.json`, which only matches objects carrying a `customTime` (set on bill PDFs alone, so item photos in the same bucket are never touched). Both are one-time project settings — `scripts/migrate_bills.py` covers the matching data migration.
+* **Self-Cleaning Bill Archive:** Bills are kept for 30 days after they were last generated, opened, shared, or edited, then deleted — opening one restarts the clock. Nothing is lost: a bill rebuilt months later comes back with the same number at the same link. See [Bill Retention](docs/bill-retention.md) for the mechanics and the one-time project setup it needs.
 * **Shop Profile ("Bill From"):** Account Settings captures the shop name, mobile, and address that print on every bill — alongside the UPI ID used for payment reminders.
 * **Permanent Shareable Links:** Each bill is archived to Firebase Storage and served through a non-expiring, unguessable download token, so it can be reopened or re-shared anytime; regenerating a bill keeps the same number and link, even if the archived copy was cleaned up in between.
 * **Send Bill on WhatsApp:** One tap formats a Hinglish message with the bill link and opens it in WhatsApp for the customer's saved number.
@@ -66,6 +66,8 @@ By leveraging extreme low-latency processing, BolKhata allows shopkeepers to spe
 * **Firebase Authentication:** Phone/OTP, Google, and Email sign-in keep every shopkeeper's ledger strictly private and isolated.
 * **Deny-All Firestore Rules:** Clients never talk to Firestore directly; all access flows through the authenticated API.
 * **Layered Rate Limiting:** Per-user cooldowns, per-user daily caps, and global sliding-window limits protect the Sarvam and Groq quotas from abuse.
+
+Full details in [Security & Rate Limiting](docs/security.md).
 
 ---
 
@@ -92,92 +94,27 @@ Speak naturally in Hindi or Hinglish, and BolKhata will instantly map the correc
 
 ---
 
-## Tech Stack & Architecture
+## Built With
 
-* **Frontend:** Modular Single Page App (SPA) built using native HTML5, CSS3, and JavaScript. No build step.
-* **PWA Engine:** Service Worker (sw.js) and Web App Manifest (manifest.json) for offline asset caching, standalone launcher capability, and responsive layout scaling.
-* **Backend:** FastAPI (Python) optimized for extremely low routing overhead. Deployed as a Vercel Python serverless function.
-* **Database & Auth:** Google Firebase (Firestore Database, Firebase Authentication, Firebase Storage for archived bill PDFs and product photos).
-* **Bill Rendering:** Server-side A4 PDF invoices generated with ReportLab and uploaded to Firebase Storage with a permanent download token.
-* **Image Pipeline:** Browser-side canvas downscaling for transport, then Pillow sanitization and WebP re-encoding server-side. The in-app camera uses `getUserMedia`, which requires a secure (HTTPS) origin.
-* **Language Engines:** Sarvam AI (Speech-to-Text & Native Translation), Groq Cloud (GPT-OSS 20B LLM for structure extraction).
-* **Testing & CI:** pytest against an in-memory Firestore double, Ruff and ESLint for linting, CodeQL static analysis for security defects, and GitHub Actions gating every pull request. See [Automated Quality Checks](#automated-quality-checks).
+A vanilla HTML/CSS/JS progressive web app (no build step) talking to a FastAPI
+backend on Vercel, with Firebase for auth, data, and file storage. Speech goes
+through Sarvam AI for transcription and Groq's GPT-OSS 20B for intent
+extraction; bills are rendered server-side with ReportLab.
 
----
-
-## API Endpoints Reference
-
-BolKhata uses a clean REST API structure. All endpoints except `/config` and `/pay` require a `Bearer <Firebase_ID_Token>` in the Authorization header.
-
-| Endpoint | Method | Description |
-| :--- | :--- | :--- |
-| `/config` | `GET` | Fetches client Firebase keys dynamically |
-| `/process_voice` | `POST` | Primary entry point. Processes audio binary data and commits intents to Firestore |
-| `/voice/resolve` | `POST` | Completes a transaction after the user picks a customer in a disambiguation prompt |
-| `/inventory` | `GET` | Lists all active stock names, quantities, prices, optional metadata, and product image URLs |
-| `/inventory` | `POST` | Creates a stock item from a `multipart/form-data` submission (name + price required; product photo, cost price, unit, opening stock, and category optional) |
-| `/inventory/{item_id}` | `PUT` | Renames an item or updates its price/stock levels in-place |
-| `/inventory/{item_id}` | `DELETE` | Removes a single item from the active database |
-| `/confirm_clear_inventory` | `POST` | Deletes the entire stock collection (requires UI verification) |
-| `/suppliers` | `GET` | Lists wholesale purchase history and compiles monthly totals |
-| `/suppliers/purchase` | `POST` | Logs a wholesale transaction, automatically updating related item stock |
-| `/suppliers/list` | `GET` | Retrieves saved wholesale vendors |
-| `/suppliers/add` | `POST` | Registers a new wholesale vendor in the directory |
-| `/suppliers/{supplier_id}` | `PUT` | Edits a saved vendor's name, mobile, and GST (rejects duplicate names) |
-| `/suppliers/{supplier_id}` | `DELETE` | Removes a vendor and their purchase history |
-| `/ledger/customers` | `GET` | Compiles a list of active udhaar accounts, dues, and itemizations |
-| `/ledger/entry` | `POST` | Manually writes credit/udhaar entries directly |
-| `/ledger/clear` | `POST` | Settles a customer's dues — full or partial (FIFO), shared with the voice payment flow |
-| `/ledger/whatsapp-reminder` | `POST` | Saves a customer's WhatsApp number and reminder schedule |
-| `/orders` | `GET` | Lists customer orders grouped by order, with per-order totals and a grand total |
-| `/orders` | `POST` | Creates a new order from one or more line items |
-| `/orders/{order_id}/items` | `POST` | Appends a line item to an existing order |
-| `/orders/{order_id}/bill` | `POST` | Renders a PDF bill, archives it to Storage, and returns a permanent download link |
-| `/orders/{order_id}/bill/touch` | `POST` | Marks an archived bill as still in use, restarting its 30-day retention window |
-| `/orders/item/{item_id}` | `PUT` | Edits a single order line item (item, quantity, or price) |
-| `/orders/item/{item_id}` | `DELETE` | Removes a single line item from an order |
-| `/orders/{order_id}` | `DELETE` | Deletes an entire order and all its line items |
-| `/pay/create` | `POST` | Mints a signed UPI payment link token for the caller's saved UPI ID |
-| `/pay` | `GET` | Public payment page; validates the signed token and renders a UPI deep link |
-| `/settings` | `GET` / `PUT` | Reads or updates the shopkeeper's UPI ID (validated VPA format) and shop "Bill From" profile (name, mobile, address) |
-| `/history` | `GET` | Pulls the last 50 speech transaction logs and parsing errors |
-| `/history` | `DELETE` | Clears the voice processing history |
+Every push and pull request runs 460 automated tests, Ruff and ESLint, secret
+scanning, and CodeQL static analysis before anything can reach production.
 
 ---
 
-## Security & Rate Limiting
+## Documentation
 
-* **Siloed Databases:** All subcollections (stock, udhaar, orders, bills, history, suppliers, suppliers_purchases) and all Storage objects (bills, item photos) are uniquely locked under their authenticated Firebase uid path, preventing cross-shop data leaks. The uid always comes from the verified token, never from the request.
-* **Deny-All Firestore Rules:** `firestore.rules` blocks all direct client access; only the backend's Admin SDK touches data. Deploy with `npx firebase-tools deploy --only firestore:rules`.
-* **Per-User File Storage:** Generated bill PDFs (`users/{uid}/bills/`) and product photos (`users/{uid}/items/`) are exposed only through unguessable download tokens — never via a public listing. Deleting an item or clearing inventory also deletes its photos, deleting an order deletes its bill PDF, and renaming an item carries its photo across; an orphaned blob would otherwise be billed indefinitely.
-* **Hardened Image Uploads:** Product photos are identified by magic bytes (JPEG, PNG, and WebP only — the client's `Content-Type` and filename are ignored entirely), capped at 3 MB before any decoding, and rejected above 40 megapixels so a small file cannot expand into a decompression bomb. Every accepted image is then **fully re-encoded from decoded pixels**, which strips EXIF/GPS metadata (these are photos taken inside a named shop) and discards any appended polyglot payload — no client-supplied bytes ever reach Storage. Storage paths are server-generated UUIDs, so a hostile filename cannot escape the caller's own directory.
-* **Signed Payment Links:** `/pay` tokens are signed with `PAY_LINK_SECRET` (required; the app refuses to mint links without it) and expire after 24 hours. The payee UPI ID is always read from the authenticated shopkeeper's settings, never from the request.
-* **Rate Limits Imposed:** Each feature holds its own per-user budget, so uploading photos can never consume a shopkeeper's voice quota.
-  * **User Cooldown:** One voice request per 2 seconds per user to prevent audio button spamming.
-  * **Per-User Daily Cap:** 400 voice requests per user per day, so a single account cannot exhaust the shared quota.
-  * **Image Uploads:** A 3-second per-user cooldown and 100 uploads per user per day, plus global ceilings of 60/minute and 2,000/day to bound Firebase Storage growth. Signup is open, so the global cap is the layer that holds even against mass account creation. Creating an item without a photo doesn't spend this budget.
-  * **Sarvam STT Global Limits:** Firestore-backed sliding window to stay within plan quotas.
-  * **Groq RPM/RPD Limits:** Monitored to gracefully handle Groq Cloud rate-limit policies and return a user-friendly wait message ("Thoda ruko!").
-* **Input Validation:** All write endpoints enforce bounds (non-negative quantities/amounts, length caps, UPI VPA format) via Pydantic models. Multipart endpoints get no Pydantic validation, so `POST /inventory` re-asserts the same bounds by hand and additionally validates the item name as a Firestore document ID.
-* **Hardened Frontend:** All user-derived strings are HTML-escaped before rendering; CORS is restricted to local development origins plus an optional `ALLOWED_ORIGINS` allowlist.
-* **Privacy:** Voice transcripts and parsed intents are only logged when `DEBUG_LOGS=1`; production logs contain timings only.
-
----
-
-## Automated Quality Checks
-
-Every push and pull request runs a CI pipeline before anything can reach production. `main` is protected — all checks must pass before a merge is allowed.
-
-* **Test Suite:** 460 automated tests covering the ledger math, rate limiting, image sanitization, token verification, and every API route. They run against an in-memory database double with all external services stubbed, so no test spends an API quota or touches live shop data.
-* **Route Coverage:** `vercel.json` lists every API path by hand, and auth is enforced inside each route handler rather than centrally. Two tests catch a new endpoint that was added without a deploy route (which would 404 only in production) or without an auth check (which would expose another shop's data).
-* **Config Drift:** Every environment variable the code reads must be documented in `.env.example`, and the deployment configs must parse — a malformed `vercel.json` otherwise breaks the deploy with no earlier warning.
-* **Secret Scanning:** Full git history is scanned for leaked credentials on every run, with an explicit check that the Firebase Admin key and `.env` are never committed.
-* **CodeQL Static Analysis:** GitHub's semantic code scanner runs the `security-extended` query suite over both the Python backend and the frontend JavaScript on every push and pull request, publishing findings to the repository's Security tab. It also re-scans weekly on a schedule, so a vulnerability class discovered *after* the last commit still gets reported against existing code. The maintainability queries are deliberately left off — Ruff and ESLint already cover style, and folding it in would bury real security findings in noise.
-* **Linting:** Ruff on the Python backend and ESLint on the frontend modules, on Python 3.12 and 3.14.
-
-The same checks run locally as Git hooks, so problems surface before a push rather than after.
-
-Browser behaviour, live Firebase rules, and real speech recognition are still verified by hand — CI covers the logic, not the experience.
+| Document | Covers |
+| :--- | :--- |
+| [Architecture](docs/architecture.md) | Tech stack, module map, the voice pipeline, the Firestore data model, and the conventions the code depends on |
+| [API Reference](docs/api-reference.md) | Every REST endpoint, its method, and what it does |
+| [Security & Rate Limiting](docs/security.md) | Tenant isolation, upload hardening, signed links, and every rate-limit budget |
+| [Development & Deployment](docs/development.md) | Local setup, environment variables, running the test suite, CI, and deploying |
+| [Bill Retention](docs/bill-retention.md) | The 30-day bill lifecycle, its one-time Firestore/Storage setup, and the data migration |
 
 ---
 

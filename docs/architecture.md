@@ -1,0 +1,75 @@
+# Architecture
+
+## Tech Stack
+
+* **Frontend:** Modular Single Page App (SPA) built using native HTML5, CSS3, and JavaScript. No build step — the browser loads `js/*.js` as native ES modules.
+* **PWA Engine:** Service Worker (`sw.js`) and Web App Manifest (`manifest.json`) for offline asset caching, standalone launcher capability, and responsive layout scaling.
+* **Backend:** FastAPI (Python) optimized for extremely low routing overhead. Deployed as a Vercel Python serverless function.
+* **Database & Auth:** Google Firebase (Firestore Database, Firebase Authentication, Firebase Storage for archived bill PDFs and product photos).
+* **Bill Rendering:** Server-side A4 PDF invoices generated with ReportLab and uploaded to Firebase Storage with a permanent download token.
+* **Image Pipeline:** Browser-side canvas downscaling for transport, then Pillow sanitization and WebP re-encoding server-side. The in-app camera uses `getUserMedia`, which requires a secure (HTTPS) origin.
+* **Language Engines:** Sarvam AI (Speech-to-Text & Native Translation), Groq Cloud (GPT-OSS 20B LLM for structure extraction).
+
+## Backend Modules
+
+* `main.py` — App entry point: creates the FastAPI app, initializes Firebase, mounts all routers, and exposes `/config` for the client-side Firebase config.
+* `routes/` — One module per domain: `voice.py`, `inventory.py`, `ledger.py` (also holds `/settings` and `/pay*`), `suppliers.py`, `history.py`, `orders.py`, `bills.py`. Each defines an `APIRouter`.
+* `routes/inventory.py` — CRUD on stock items. `POST /inventory` is a `multipart/form-data` create (name + price required; cost price, unit, opening stock, category, and a product photo optional). Because a multipart body gets no Pydantic validation, the bounds from `models.py` are re-asserted by hand there. Item photos are stored per-item under `users/{uid}/items/{image_id}.webp` (+ `_thumb.webp`), and the blobs are deleted on item delete and on inventory clear.
+* `routes/orders.py` — Pure CRUD on customer orders. Orders are flat per-line-item docs grouped by a shared `order_id`; these routes intentionally do **not** touch inventory stock (stock reconciliation is deferred to billing). Legacy docs without an `order_id` are grouped and addressed by a synthetic `legacy|{name}|{modifier}|{day}` key.
+* `routes/bills.py` — `POST /orders/{order_id}/bill` renders an A4 PDF invoice with ReportLab, uploads it to Firebase Storage at `users/{uid}/bills/{order_id}.pdf`, and returns a non-expiring download URL. Bill numbers (`BK-001`…) are derived from the order's `order_no` and the download token from `BILL_TOKEN_SECRET`, so regenerating a bill is idempotent — same number, same link — even after the original was deleted. `POST /orders/{order_id}/bill/touch` restarts the 30-day retention window; see [Bill Retention](bill-retention.md).
+* `auth.py` — Firebase Admin SDK init (from the `FIREBASE_SERVICE_ACCOUNT` env var, with a local JSON file fallback), `verify_token()` which validates Firebase ID tokens from `Authorization: Bearer <token>` headers, and `get_bucket()` which returns the default Firebase Storage bucket (configured from `FIREBASE_STORAGE_BUCKET` at init).
+* `db_operations.py` — Core transaction processing engine. Takes parsed LLM transactions and applies them to Firestore (stock updates, udhaar entries, order logging). Uses `thefuzz` to fuzzy-match spoken item names to inventory IDs (threshold: score > 70). Named sales also dual-write an `orders/` record — one shared `order_id` per customer per voice call — so they surface on the Orders page.
+* `image_utils.py` — `process_item_image()` sanitizes and compresses an untrusted upload into `(main_webp, thumb_webp)`: magic-byte allowlist (JPEG/PNG/WebP only), pixel-count cap checked on the header before any decode, then a full re-encode via Pillow.
+* `prompts.py` — Single function `get_system_prompt()` returning the Groq LLM system prompt with kirana-domain intent extraction rules.
+* `rate_limiter.py` — Firestore-backed sliding-window rate limiter for the Sarvam STT and Groq LLM APIs, plus per-user cooldowns. Limits are set to 80% of free-tier quotas. Global limits use the `RateLimitConfig` dataclass; per-user budgets use `UserLimitConfig` + `check_user_limit()`, where each feature gets **its own** `users/{uid}/_meta/{doc}` document so an image upload can't consume the shopkeeper's voice quota. `check_user_cooldown()` is a thin wrapper for the voice path.
+* `models.py` — Pydantic request/response models.
+
+## Frontend Modules
+
+* `index.html` + `styles.css` + `app.js` — Main SPA shell.
+* `js/` — `auth.js` (Firebase auth), `config.js` (fetches `/config`), `recording.js` (push-to-talk audio capture), `dashboard.js` (inventory grid + Add Item modal), `camera.js` (in-app `getUserMedia` camera), `image-compress.js` (canvas downscale for gallery picks), `ledger.js` (udhaar panel), `orders.js` (orders page + bill generation/share), `suppliers.js`, `history.js`, `theme.js`, `idle-timer.js`, `ui.js`.
+* `sw.js` + `manifest.json` — PWA support with offline asset caching.
+
+## Voice Processing Pipeline
+
+`routes/voice.py` → `db_operations.py`:
+
+1. Audio uploaded → rate limit checks (user cooldown, Sarvam RPM, Groq RPM/RPD).
+2. Sarvam AI STT (`saaras:v3`, `mode=translate`) → English transcript.
+3. Groq GPT-OSS 20B → structured JSON transactions (target/operation/item/qty/customer/supplier).
+4. `process_transactions()` applies each transaction: fuzzy-match items, update stock, log credit/orders.
+5. History saved as a background task.
+
+Voice **records transactions only — it never creates an inventory item or a supplier directory entry.** Both are catalogued through the manual forms, which capture the fields speech cannot carry (price, cost price, unit, category, photo; mobile, GST). `process_transactions()` enforces this: an unknown item name is rejected with an error rather than creating a stock doc, and any `target="supplier"` operation other than `read` is rejected. A purchase from a supplier not yet in the directory is still recorded — it writes `suppliers_purchases` but no `suppliers/` doc, and the name-canonicalization merge in `routes/suppliers.py` surfaces it on the Suppliers page.
+
+## Firestore Data Model
+
+Everything is per-user, under `users/{uid}/`:
+
+* The `users/{uid}` doc itself holds settings: `upi_id`, the shop "Bill From" fields (`shop_name`, `shop_mobile`, `shop_address`), and the `order_seq` counter for order numbering.
+* `stock/{item_id}` — quantity, price, timestamps, plus `cost_price`, `unit`, `category` and (when a photo was supplied) `image_id`, `image_path`, `image_thumb_path`, `image_token`. Every item is now created through `POST /inventory`, so new docs carry the full set. Readers must still use defaults: **legacy** docs created by voice or a supplier purchase, before those paths were closed, have only `item`/`quantity`/timestamps.
+* `udhaar/{auto_id}` — credit entries: `customer_name`, `customer_modifier`, `item`, `quantity`, `amount`, `whatsapp_number`.
+* `orders/{auto_id}` — customer order line items; items sharing an `order_id` form one order (legacy docs without it group by customer + day). Every line item also carries `order_no`, the shop's running order count, allocated once when the order is created and shared by all its items.
+* `bills/{order_id}` — per-bill metadata: `download_token`, `storage_path`, `generated_at`, `expires_at`, `stale`. The PDF itself lives in Firebase Storage at `users/{uid}/bills/{order_id}.pdf`. Deliberately **disposable** — see [Bill Retention](bill-retention.md).
+* `history/{auto_id}` — voice processing logs.
+* `suppliers/{auto_id}` — saved supplier directory entries.
+* `suppliers_purchases/{auto_id}` — wholesale purchase records.
+* `_meta/voice_cooldown`, `_meta/image_upload_limit` — per-user rate limit state, one document per feature.
+* Item photos live in Firebase Storage at `users/{uid}/items/{image_id}.webp` and `..._thumb.webp` (not in Firestore).
+* Global: `_system/rate_limits` — API rate limit counters.
+
+## Conventions the Code Depends On
+
+* Route handlers import `db` from `main` at call time (`from main import db`) to avoid circular imports — this is intentional, not a bug.
+* The rate limiter is fail-open: if a Firestore transaction fails, the request proceeds rather than blocking users.
+* Groq and Sarvam clients are lazily initialized (not at import time) to work with `load_dotenv()` ordering.
+* All API routes that mutate data require Firebase auth via `verify_token(authorization)`.
+* Order edits (`routes/orders.py`) deliberately never write to `stock/` — stock reconciliation belongs to the billing/voice flow, not order CRUD, so editing an order can't desync inventory.
+* Bill generation is idempotent: `bill_number` and `download_token` are allocated once per `order_id` inside a Firestore transaction and reused, and the storage upload embeds that token via `firebaseStorageDownloadTokens` so the permanent link survives overwrites. Currency renders as `Rs.` — ReportLab's bundled fonts lack the ₹ glyph.
+* `vercel.json` must be updated when adding a new API **path** — each needs an explicit `src`/`dest` mapping to `main.py` (the `/orders` and `/orders/(.*)` rules already cover the orders and bill endpoints). The `src` patterns are method-agnostic, so adding a new *method* on an already-mapped path needs no change (`POST /inventory` rides the existing `/inventory` rule).
+* **Item images are always re-encoded, never passed through.** `image_utils.process_item_image()` decodes the upload and writes fresh WebP bytes from the decoded pixels, so EXIF/GPS, ICC data, and appended polyglot payloads cannot reach Storage. The client's `content_type` and `filename` are ignored entirely — the storage path is a server-generated `uuid4`, and the blob's `content_type` is pinned to `image/webp`. Client-side compression (`js/image-compress.js`, `js/camera.js`) is a bandwidth optimization only, never a security control.
+* **A stock `unit` is a counting unit, never a conversion factor.** `ALLOWED_UNITS` is `pcs`/`dozen`/`box`/`pack`; a dozen item stores a quantity of *dozens* and a price *per dozen* (5 dozen at ₹100 = ₹500 of stock). Nothing anywhere multiplies or divides by 12 — do not "normalize" pack units into pieces.
+* **Image storage paths are uuid-keyed, not name-keyed**, because a `stock/` doc id *is* the item name and renaming is delete + recreate. This keeps a rename from having to move the blob.
+* **The rename branch in `PUT /inventory/{item_id}` rebuilds the doc from an explicit whitelist** (`_CARRY_ON_RENAME`). Any field added to a stock doc must be added there too, or renaming an item silently destroys it — and for image fields that means orphaning a blob that keeps costing money and is no longer reachable from any doc.
+* The in-app camera uses `getUserMedia`, deliberately **not** `<input type="file" capture>`: the latter hands off to the OS camera app, which writes the photo into the device gallery. Nothing the shopkeeper captures should touch device storage. This requires a secure context — `navigator.mediaDevices` is undefined on plain http (localhost excepted).
+* Firebase download-token URLs (bills and item photos) are public-but-unguessable and bypass `storage.rules` entirely; they never expire. Deleting a record must therefore delete its blobs, and these URLs must never be logged.
