@@ -1,9 +1,10 @@
 /**
  * BolKhata — Main entry point
- * 
+ *
  * All logic is split into modules under js/:
  *   config.js    — Firebase init, API config, shared state
  *   auth.js      — Phone, Google, Email auth + logout
+ *   layout.js    — Viewport tier state (mobile accordion vs desktop split pane)
  *   recording.js — Mic recording, voice processing, cooldown
  *   ui.js        — Table renderer, toast, navigation, drawer
  *   dashboard.js — Inventory grid, edit/delete modals

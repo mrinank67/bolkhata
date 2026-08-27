@@ -2,7 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <!-- No maximum-scale / user-scalable=no: blocking pinch-zoom fails WCAG 1.4.4. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="BolKhata — Voice-powered inventory and ledger management for shopkeepers." />
     <meta name="theme-color" content="#0a0a0f" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -157,17 +158,26 @@
           </button>
         </nav>
         <div class="drawer-footer">
-          <div id="drawer-user-info" class="drawer-user-info drawer-user-info-clickable">
-            <div class="drawer-user-avatar">👤</div>
-            <div class="drawer-user-details">
-              <div id="drawer-user-name" class="drawer-user-name">User</div>
-              <div id="drawer-user-email" class="drawer-user-email"></div>
-            </div>
-            <span class="drawer-user-chevron">›</span>
-          </div>
-          <button id="logout-btn" class="drawer-logout-btn">
-            <span>🚪</span> Log out
+          <!-- The user row is the disclosure toggle for the account menu below.
+               A real <button> so it is keyboard- and screen-reader-operable;
+               aria-expanded is kept in sync by js/auth.js. -->
+          <button id="drawer-user-info" class="drawer-user-info drawer-user-info-clickable"
+                  type="button" aria-expanded="false" aria-controls="drawer-account-menu">
+            <span class="drawer-user-avatar" aria-hidden="true">👤</span>
+            <span class="drawer-user-details">
+              <span id="drawer-user-name" class="drawer-user-name">User</span>
+              <span id="drawer-user-email" class="drawer-user-email"></span>
+            </span>
+            <span class="drawer-user-chevron" aria-hidden="true">›</span>
           </button>
+          <div id="drawer-account-menu" class="drawer-account-menu">
+            <button id="account-details-btn" class="drawer-account-btn" type="button">
+              <span aria-hidden="true">⚙️</span> Account details
+            </button>
+            <button id="logout-btn" class="drawer-account-btn drawer-account-btn-danger" type="button">
+              <span aria-hidden="true">🚪</span> Log out
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -185,11 +195,14 @@
           <label class="settings-field-label">Shop Mobile</label>
           <input type="tel" id="settings-shop-mobile-input" class="settings-field-input" placeholder="9999999999" />
         </div>
-        <div class="settings-field">
+        <!-- settings-field-wide: spans both columns once the dialog goes
+             two-up at >=768px. Marked explicitly rather than by :nth-of-type
+             so adding a field later can't silently reshuffle the layout. -->
+        <div class="settings-field settings-field-wide">
           <label class="settings-field-label">Shop Address</label>
           <textarea id="settings-shop-address-input" class="settings-field-input" rows="2" placeholder="Dukaan ka pata"></textarea>
         </div>
-        <div class="settings-field">
+        <div class="settings-field settings-field-wide">
           <label class="settings-field-label">UPI ID</label>
           <input type="text" id="settings-upi-input" class="settings-field-input" placeholder="yourname@upi" />
           <div class="settings-field-hint">Payment receive karne ke liye hoga</div>
@@ -222,6 +235,9 @@
           <span class="brand-icon"><img src="/icons/icon-192.png" alt="" style="width:100%;height:100%;border-radius:inherit;object-fit:cover;" /></span>
           <span class="brand-name">BolKhata</span>
         </button>
+        <!-- Current page name. Empty on mobile (the brand holds the topbar);
+             shown from 768px up, where the brand moves into the sidebar. -->
+        <div id="page-title" class="page-title" aria-live="polite">Voice</div>
         <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle light/dark mode" title="Switch theme">
           <span class="theme-toggle-icon">🌙</span>
         </button>
@@ -441,14 +457,18 @@
       </div>
 
       <!-- PAGE: History -->
-      <div id="page-history" class="page-container hidden">
-        <div class="history-page-header">
+      <div id="page-history" class="page-container split-page hidden">
+        <div class="history-page-header split-full">
           <h2 class="history-page-title">📜 Transaction History</h2>
         </div>
-        <div id="history-body" class="history-body">
+        <div id="history-body" class="history-body split-list">
           <div class="history-empty">No transactions yet.<br>Your history will appear here.</div>
         </div>
-        <div class="history-page-footer">
+
+        <!-- Detail pane — desktop only. Shows the selected entry's result tables. -->
+        <div id="history-detail" class="detail-pane"></div>
+
+        <div class="history-page-footer split-full">
           <button id="clear-history-btn" class="btn btn-ghost" style="color:var(--red); font-size:0.8rem;">Clear History</button>
         </div>
       </div>
@@ -478,14 +498,19 @@
         </div>
 
         <!-- Tab: Supplier Directory -->
-        <div id="supplier-tab-directory" class="supplier-tab-content">
-          <div class="sort-row">
+        <!-- The split lives on the tab, not the page: the page-level grid row
+             holds the whole tab panel, and only this tab has a detail view. -->
+        <div id="supplier-tab-directory" class="supplier-tab-content split-page">
+          <div class="sort-row split-full">
             <span class="section-inline-label">Your Suppliers</span>
             <button id="supplier-add-btn" class="add-entry-btn" aria-label="Add supplier">+</button>
           </div>
-          <div id="supplier-directory-list" class="supplier-list">
+          <div id="supplier-directory-list" class="supplier-list split-list">
             <div class="inventory-empty">Loading suppliers…</div>
           </div>
+
+          <!-- Detail pane — desktop only. Shows the selected supplier's purchases. -->
+          <div id="supplier-detail" class="detail-pane"></div>
         </div>
 
         <!-- Tab: Purchase History -->
@@ -574,13 +599,13 @@
 
 
       <!-- PAGE: Customer Ledger -->
-      <div id="page-ledger" class="page-container hidden">
-        <div class="ledger-header">
+      <div id="page-ledger" class="page-container split-page hidden">
+        <div class="ledger-header split-full">
           <h2 class="ledger-title">Customer Ledger</h2>
           <span class="page-badge ledger-badge">LEDGER</span>
         </div>
 
-        <div class="summary-cards">
+        <div class="summary-cards split-full">
           <div class="summary-card summary-card-blue">
             <div class="summary-card-label">Total due</div>
             <div id="ledger-total-due" class="summary-card-value">₹0</div>
@@ -591,7 +616,7 @@
           </div>
         </div>
 
-        <div class="sort-row">
+        <div class="sort-row split-full">
           <input type="text" id="ledger-search" class="ledger-search-input" placeholder="Search customer" />
           <select id="ledger-sort" class="inventory-sort-select sort-compact">
             <option value="recent">Sort: Recent</option>
@@ -601,9 +626,13 @@
           <button id="ledger-add-btn" class="add-entry-btn" aria-label="Add entry">+</button>
         </div>
 
-        <div id="ledger-customer-list" class="ledger-customer-list">
+        <div id="ledger-customer-list" class="ledger-customer-list split-list">
           <div class="inventory-empty">Loading ledger…</div>
         </div>
+
+        <!-- Detail pane — desktop only (>=1024px), hidden by default. Populated
+             by js/ledger.js with the selected customer's full record. -->
+        <div id="ledger-detail" class="detail-pane"></div>
 
         <!-- Add Entry Modal -->
         <div id="ledger-add-modal" class="modal-overlay">
@@ -664,13 +693,13 @@
 
 
       <!-- PAGE: Customer Orders -->
-      <div id="page-orders" class="page-container hidden">
-        <div class="ledger-header">
+      <div id="page-orders" class="page-container split-page hidden">
+        <div class="ledger-header split-full">
           <h2 class="ledger-title">Customer Orders</h2>
           <span class="page-badge orders-badge">ORDERS</span>
         </div>
 
-        <div class="summary-cards">
+        <div class="summary-cards split-full">
           <div class="summary-card summary-card-blue">
             <div class="summary-card-label">Orders</div>
             <div id="orders-count" class="summary-card-value">0</div>
@@ -681,7 +710,7 @@
           </div>
         </div>
 
-        <div class="sort-row">
+        <div class="sort-row split-full">
           <input type="text" id="orders-search" class="ledger-search-input" placeholder="Search customer" />
           <select id="orders-sort" class="inventory-sort-select sort-compact">
             <option value="recent">Sort: Recent</option>
@@ -691,9 +720,13 @@
           <button id="orders-add-btn" class="add-entry-btn" aria-label="Add order">+</button>
         </div>
 
-        <div id="orders-list" class="ledger-customer-list">
+        <div id="orders-list" class="ledger-customer-list split-list">
           <div class="inventory-empty">Loading orders…</div>
         </div>
+
+        <!-- Detail pane — desktop only (>=1024px), hidden by default. Populated
+             by js/orders.js with the selected order's full record. -->
+        <div id="orders-detail" class="detail-pane"></div>
 
         <!-- Datalist of inventory items (populated by orders.js) -->
         <datalist id="orders-item-datalist"></datalist>

@@ -4,10 +4,14 @@
 
 import { $, auth, API } from "./config.js";
 import { showToast, escapeHtml } from "./ui.js";
+import { isWide, onLayoutChange } from "./layout.js";
 
 let currentSupplierData = { purchases: [], month_total: 0, month_items: 0 };
 let currentSupplierSort = 'recent';
 let savedSuppliers = [];
+// Which supplier the desktop detail pane is showing (unused below 1024px,
+// where purchases expand inside the supplier's own card instead).
+let selectedSupplierId = null;
 
 const SUPPLIER_SUFFIXES = new Set(["supplier", "suppliers", "wholesale", "distributor", "distributors", "traders", "supply", "supplies", "vendor", "vendors"]);
 function normalizeSupplierName(name) {
@@ -48,15 +52,27 @@ function renderSavedSuppliers() {
   const listEl = $('supplier-directory-list');
   if (savedSuppliers.length === 0) {
     listEl.innerHTML = '<div class="inventory-empty">No suppliers added yet.<br>Tap + to add your first supplier.</div>';
+    selectedSupplierId = null;
+    renderSupplierDetail(null);
     return;
+  }
+
+  // Desktop shows one supplier's purchases in the pane; keep the previous
+  // selection if it still exists, else fall back to the first.
+  const wide = isWide();
+  let selected = null;
+  if (wide) {
+    selected = savedSuppliers.find(s => s.id === selectedSupplierId) || savedSuppliers[0];
+    selectedSupplierId = selected ? selected.id : null;
   }
 
   let html = '';
   for (const s of savedSuppliers) {
     const mobileLine = s.mobile ? `<div class="supplier-dir-mobile">📱 ${escapeHtml(s.mobile)}</div>` : '';
     const gstLine = s.gst_number ? `<div class="supplier-dir-gst">GST: ${escapeHtml(s.gst_number)}</div>` : '';
+    const isSelected = wide && s.id === selectedSupplierId;
 
-    html += `<div class="supplier-dir-card" data-id="${s.id}" data-name="${escapeHtml(s.name)}">
+    html += `<div class="supplier-dir-card${isSelected ? ' selected' : ''}" data-id="${s.id}" data-name="${escapeHtml(s.name)}">
       <div class="supplier-dir-header">
         <div class="supplier-dir-info" data-id="${s.id}" role="button" tabindex="0" aria-label="Show purchases for ${escapeHtml(s.name)}">
           <div class="supplier-dir-name"><span class="supplier-dir-caret" aria-hidden="true">▾</span>${escapeHtml(s.name)}</div>
@@ -109,11 +125,80 @@ function renderSavedSuppliers() {
       openPurchaseModal(btn.dataset.name);
     });
   });
+
+  renderSupplierDetail(selected);
 }
 
-async function toggleSupplierPurchases(supplierId) {
+// Crossing 1024px moves purchases between the card and the pane.
+onLayoutChange(() => {
+  if (savedSuppliers.length) renderSavedSuppliers();
+});
+
+/**
+ * A supplier's purchases, as an HTML string.
+ *
+ * Pure — the same markup goes inside the supplier's card (mobile accordion) or
+ * into the detail pane (desktop). Matching is on the normalized name, which
+ * strips trailing words like "supplier" so a directory entry and a voice-logged
+ * purchase line up.
+ */
+function buildSupplierPurchasesHTML(supplierName) {
+  const normalizedDir = normalizeSupplierName(supplierName || '');
+  const purchases = (currentSupplierData.purchases || []).filter(
+    p => normalizeSupplierName(p.supplier_name || '') === normalizedDir
+  );
+
+  if (purchases.length === 0) {
+    return '<div class="inventory-empty" style="padding:10px 0;">No purchases recorded for this supplier.</div>';
+  }
+
+  const total = purchases.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+  let html = '<div class="supplier-purchase-list">';
+  for (const p of purchases) {
+    const dateStr = p.timestamp ? formatPurchaseDate(p.timestamp) : '';
+    const itemDesc = `${p.item_name ? p.item_name.charAt(0).toUpperCase() + p.item_name.slice(1) : ''} × ${p.quantity}`;
+    html += `<div class="supplier-purchase-row">
+      <span class="supplier-purchase-item">${escapeHtml(itemDesc)}</span>
+      <span class="supplier-purchase-amount">₹${(p.amount || 0).toLocaleString('en-IN')}</span>
+      <span class="supplier-purchase-date">${escapeHtml(dateStr)}</span>
+    </div>`;
+  }
+  html += `<div class="supplier-purchase-total">${purchases.length} purchase${purchases.length !== 1 ? 's' : ''} · ₹${total.toLocaleString('en-IN')}</div>`;
+  html += '</div>';
+  return html;
+}
+
+/** Paint the desktop detail pane. */
+function renderSupplierDetail(s) {
+  const paneEl = $('supplier-detail');
+  if (!paneEl) return;
+  if (!s) {
+    paneEl.innerHTML = '<div class="detail-pane-empty">Select a supplier to see their purchases.</div>';
+    return;
+  }
+  const meta = [s.mobile ? `📱 ${s.mobile}` : '', s.gst_number ? `GST: ${s.gst_number}` : '']
+    .filter(Boolean).join(' · ');
+  paneEl.innerHTML = `<div class="supplier-detail-head">
+      <div class="supplier-detail-name">${escapeHtml(s.name)}</div>
+      ${meta ? `<div class="supplier-detail-meta">${escapeHtml(meta)}</div>` : ''}
+    </div>
+    ${buildSupplierPurchasesHTML(s.name)}`;
+}
+
+function toggleSupplierPurchases(supplierId) {
   const panel = $(`supplier-purchases-${supplierId}`);
   const card = panel.closest('.supplier-dir-card');
+
+  // Desktop: the click selects rather than expands — purchases go to the pane.
+  if (isWide()) {
+    selectedSupplierId = supplierId;
+    document.querySelectorAll('#supplier-directory-list .supplier-dir-card').forEach(el => {
+      el.classList.toggle('selected', el === card);
+    });
+    renderSupplierDetail(savedSuppliers.find(s => s.id === supplierId));
+    return;
+  }
 
   if (!panel.classList.contains('hidden')) {
     panel.classList.add('hidden');
@@ -123,32 +208,7 @@ async function toggleSupplierPurchases(supplierId) {
 
   panel.classList.remove('hidden');
   card.classList.add('expanded');
-
-  // Find supplier name and match using normalized form (strips suffixes like "supplier")
-  const supplierName = card.dataset.name;
-  const normalizedDir = normalizeSupplierName(supplierName);
-
-  const purchases = (currentSupplierData.purchases || []).filter(
-    p => normalizeSupplierName(p.supplier_name || '') === normalizedDir
-  );
-
-  if (purchases.length === 0) {
-    panel.innerHTML = '<div class="inventory-empty" style="padding:10px 0;">No purchases recorded for this supplier.</div>';
-    return;
-  }
-
-  let html = '<div class="supplier-purchase-list">';
-  for (const p of purchases) {
-    const dateStr = p.timestamp ? formatPurchaseDate(p.timestamp) : '';
-    const itemDesc = `${p.item_name ? p.item_name.charAt(0).toUpperCase() + p.item_name.slice(1) : ''} × ${p.quantity}`;
-    html += `<div class="supplier-purchase-row">
-      <span class="supplier-purchase-item">${escapeHtml(itemDesc)}</span>
-      <span class="supplier-purchase-amount">₹${(p.amount || 0).toLocaleString('en-IN')}</span>
-      <span class="supplier-purchase-date">${dateStr}</span>
-    </div>`;
-  }
-  html += '</div>';
-  panel.innerHTML = html;
+  panel.innerHTML = buildSupplierPurchasesHTML(card.dataset.name);
 }
 
 // ── Delete Supplier (custom modal) ──
@@ -340,6 +400,14 @@ export async function loadSuppliers() {
     $('supplier-month-total').textContent = `₹${(data.month_total || 0).toLocaleString('en-IN')}`;
     $('supplier-month-items').textContent = data.month_items || 0;
     renderSupplierList();
+
+    // navigateTo() fires this and loadSavedSuppliers() together. If the
+    // directory won that race the pane was built against an empty purchase
+    // list and is showing "no purchases" — repaint it now the data is in.
+    // (The mobile accordion never hit this: it reads purchases on click.)
+    if (isWide() && selectedSupplierId) {
+      renderSupplierDetail(savedSuppliers.find(s => s.id === selectedSupplierId));
+    }
   } catch {
     supplierList.innerHTML = '<div class="inventory-empty">Could not load purchases.</div>';
   }

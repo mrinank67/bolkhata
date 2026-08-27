@@ -30,6 +30,11 @@ onAuthStateChanged(auth, async user => {
     loginError.innerText = "";
     loginView.classList.add("hidden");
     appView.classList.remove("hidden");
+    // Gates the desktop app shell (docked sidebar, full-viewport layout) in
+    // styles.css. The drawer is a sibling of both views rather than a child of
+    // #app-view, so hiding #app-view alone does not hide it — without this the
+    // sidebar shows up alongside the login card.
+    document.body.classList.add("signed-in");
 
     // Update drawer user info
     const displayName = user.displayName || user.email || user.phoneNumber || "User";
@@ -43,7 +48,8 @@ onAuthStateChanged(auth, async user => {
     const settingsShopMobileInput = $("settings-shop-mobile-input");
     const settingsShopAddressInput = $("settings-shop-address-input");
 
-    $("drawer-user-info").addEventListener("click", async () => {
+    $("account-details-btn").addEventListener("click", async () => {
+      closeAccountMenu();
       document.getElementById("drawer-overlay").classList.remove("open");
       settingsUpiInput.value = "";
       settingsShopNameInput.value = "";
@@ -87,13 +93,34 @@ onAuthStateChanged(auth, async user => {
     setCurrentAuth(null, null);
     appView.classList.add("hidden");
     loginView.classList.remove("hidden");
+    document.body.classList.remove("signed-in");
+    closeAccountMenu();   // so it isn't still expanded for the next sign-in
   }
+});
+
+// ── Account menu (drawer footer) ──
+// The user row is a disclosure toggle: it reveals "Account details" and
+// "Log out" rather than jumping straight into settings. Registered at module
+// scope, not inside onAuthStateChanged, so signing out and back in cannot
+// stack duplicate listeners on it.
+const accountMenu = $("drawer-account-menu");
+const accountToggle = $("drawer-user-info");
+
+function closeAccountMenu() {
+  accountMenu.classList.remove("open");
+  accountToggle.setAttribute("aria-expanded", "false");
+}
+
+accountToggle.addEventListener("click", () => {
+  const open = accountMenu.classList.toggle("open");
+  accountToggle.setAttribute("aria-expanded", open ? "true" : "false");
 });
 
 // ── Logout Modal ──
 const logoutModal = $("logout-modal");
 
 $("logout-btn").addEventListener("click", () => {
+  closeAccountMenu();
   // Close drawer (imported function will be called via event)
   document.getElementById("drawer-overlay").classList.remove("open");
   logoutModal.classList.add("open");
