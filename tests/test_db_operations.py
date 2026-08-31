@@ -331,16 +331,6 @@ class TestProcessTransactions:
         assert "samosa" in errors[0]
         assert fake_db.paths_under(f"users/{self.UID}/stock") == []
 
-    def test_counter_sale_of_unknown_item_errors_and_creates_nothing(self):
-        """No customer named — it is a plain stock movement, so it still needs
-        an item to move. Only orders (see below) accept uncatalogued items."""
-        fake_db = FakeFirestore()
-        results, errors = self._run(fake_db, self._txn(operation="subtract", item="samosa", qty=2))
-
-        assert results == []
-        assert len(errors) == 1
-        assert fake_db.paths_under(f"users/{self.UID}/stock") == []
-
     def test_supplier_purchase_of_unknown_item_creates_nothing(self):
         """A supplier purchase is still a restock — it cannot conjure the item."""
         fake_db = FakeFirestore()
@@ -464,6 +454,177 @@ class TestProcessTransactions:
         (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
         assert fake_db.docs[path]["quantity"] == 3
         assert fake_db.docs[path]["amount"] == 0
+
+    def test_a_counter_sale_books_an_order_with_no_customer(self):
+        """Nobody named, item not catalogued — the old code rejected this
+        outright. A sale is an order, so it lands on a nameless card that can
+        be named and billed instead of being lost to an error."""
+        fake_db = FakeFirestore()
+        results, errors = self._run(
+            fake_db, self._txn(operation="subtract", item="samosa", qty=2, rate=10)
+        )
+
+        assert errors == []
+        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        order = fake_db.docs[path]
+        assert order["customer_name"] == ""
+        assert order["customer_modifier"] == ""
+        assert order["item"] == "samosa"
+        assert order["amount"] == 20
+        assert fake_db.paths_under(f"users/{self.UID}/stock") == []
+        assert [r["Customer"] for g in results for r in g["rows"]] == ["-"]
+
+    def test_a_counter_sale_of_a_stocked_item_still_moves_stock(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "rice", quantity=10, price=50)
+        _, errors = self._run(fake_db, self._txn(operation="subtract", item="rice", qty=3))
+
+        assert errors == []
+        assert fake_db.docs[f"users/{self.UID}/stock/rice"]["quantity"] == 7
+        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        assert fake_db.docs[path]["customer_name"] == ""
+        assert fake_db.docs[path]["amount"] == 150, "priced from inventory"
+
+    def test_counter_sale_items_spoken_together_share_one_order(self):
+        fake_db = FakeFirestore()
+        _, errors = process_transactions(
+            [
+                self._txn(operation="subtract", item="samosa", qty=2, rate=10),
+                self._txn(operation="subtract", item="kachori", qty=1, rate=15),
+            ],
+            **self._refs(fake_db),
+        )
+
+        assert errors == []
+        orders = [fake_db.docs[p] for p in fake_db.paths_under(f"users/{self.UID}/orders")]
+        assert {o["item"] for o in orders} == {"samosa", "kachori"}
+        assert len({o["order_id"] for o in orders}) == 1
+
+    def test_a_second_counter_sale_starts_its_own_order(self):
+        """Two "5 maggi bechi" a minute apart are two customers at the counter,
+        not one order in two halves — the follow-up window must not merge them."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=50, price=12)
+        fake_db.seed(
+            f"users/{self.UID}/orders/first",
+            {
+                "customer_name": "",
+                "customer_modifier": "",
+                "item": "maggi",
+                "order_id": "o1",
+                "order_no": 1,
+            },
+        )
+        fake_db.seed(f"users/{self.UID}", {"order_seq": 1})
+
+        # A nameless order sets no recent context — this is what routes/voice.py
+        # reads back off that first order.
+        process_transactions(
+            [self._txn(operation="subtract", item="maggi", qty=5)],
+            recent_customer="",
+            recent_order_id="o1",
+            **self._refs(fake_db),
+        )
+
+        added = [
+            fake_db.docs[p]
+            for p in fake_db.paths_under(f"users/{self.UID}/orders")
+            if p.endswith("/first") is False
+        ]
+        assert [d["order_id"] for d in added] != ["o1"], "must not join the previous card"
+        assert [d["order_no"] for d in added] == [2]
+
+    def test_a_named_follow_up_still_joins_the_previous_order(self):
+        """The counter-sale exception must not disarm this for real customers."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=50, price=12)
+        fake_db.seed(
+            f"users/{self.UID}/orders/first",
+            {"customer_name": "sujal", "customer_modifier": "", "order_id": "o1", "order_no": 1},
+        )
+        fake_db.seed(f"users/{self.UID}", {"order_seq": 1})
+
+        process_transactions(
+            [self._txn(operation="subtract", item="maggi", qty=5, customer_name="sujal")],
+            recent_customer="sujal",
+            recent_order_id="o1",
+            **self._refs(fake_db),
+        )
+
+        added = [
+            fake_db.docs[p]
+            for p in fake_db.paths_under(f"users/{self.UID}/orders")
+            if fake_db.docs[p].get("item") == "maggi"
+        ]
+        assert [d["order_id"] for d in added] == ["o1"]
+
+    def test_a_named_sale_keeps_its_customer(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "rice", quantity=10, price=50)
+        self._run(
+            fake_db,
+            self._txn(operation="subtract", item="rice", qty=1, customer_name="sujal"),
+        )
+
+        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        assert fake_db.docs[path]["customer_name"] == "sujal"
+
+    def test_credit_with_no_name_asks_who_instead_of_booking_an_order(self):
+        """ "5 maggi khaate mein likh do" with nobody named is a debt against
+        nobody. Booking it as a nameless order would silently turn a credit
+        entry into a cash sale, so it asks instead of guessing."""
+        fake_db = FakeFirestore()
+        results, errors = self._run(
+            fake_db, self._txn(operation="subtract", item="samosa", qty=2, is_credit=True)
+        )
+
+        assert results == []
+        assert len(errors) == 1
+        assert "khaate" in errors[0]
+        assert fake_db.paths_under(f"users/{self.UID}/udhaar") == []
+        assert fake_db.paths_under(f"users/{self.UID}/orders") == []
+
+    def test_credit_with_no_name_inherits_the_recent_customer(self):
+        """The name was said a sentence ago — "Ramesh ko do maggi de do", then
+        "aur paanch khaate mein likh do"."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=50, price=12)
+        _, errors = process_transactions(
+            [self._txn(operation="subtract", item="maggi", qty=5, is_credit=True)],
+            recent_customer="ramesh",
+            recent_modifier="delhi",
+            **self._refs(fake_db),
+        )
+
+        assert errors == []
+        (udhaar,) = [fake_db.docs[p] for p in fake_db.paths_under(f"users/{self.UID}/udhaar")]
+        assert udhaar["customer_name"] == "ramesh"
+        assert udhaar["customer_modifier"] == "delhi"
+        assert udhaar["amount"] == 60
+
+    def test_a_nameless_payment_inherits_the_recent_customer(self):
+        fake_db = FakeFirestore()
+        fake_db.seed(
+            f"users/{self.UID}/udhaar/u1",
+            {"customer_name": "ramesh", "customer_modifier": "", "item": "rice", "amount": 500},
+        )
+        _, errors = process_transactions(
+            [self._txn(target="ledger", operation="payment", amount=200, is_credit=True)],
+            recent_customer="ramesh",
+            **self._refs(fake_db),
+        )
+
+        assert errors == []
+        assert fake_db.docs[f"users/{self.UID}/udhaar/u1"]["amount"] == 300
+
+    def test_a_nameless_payment_with_no_context_still_asks_who_paid(self):
+        fake_db = FakeFirestore()
+        _, errors = self._run(
+            fake_db, self._txn(target="ledger", operation="payment", amount=200, is_credit=True)
+        )
+
+        assert len(errors) == 1
+        assert "payment" in errors[0]
 
     def test_a_spoken_item_close_to_a_stocked_one_still_matches_inventory(self):
         """Accepting new items must not stop STT slips resolving to real stock."""

@@ -105,6 +105,7 @@ function markBillGenerated(card, pdfUrl, billNumber) {
 // Pending modal state
 let orderEditState = null;           // { mode:'edit'|'add', itemId, orderId, customerName, customerModifier }
 let orderDeleteState = null;         // { type:'item'|'order', id, label }
+let orderCustomerState = null;       // { orderId, customerName, customerModifier }
 
 const inr = (n) => `₹${(Number(n) || 0).toLocaleString('en-IN')}`;
 
@@ -250,9 +251,15 @@ function orderCardAttrs(o) {
 }
 
 function buildOrderHeaderHTML(o) {
+  // A counter sale books an order with no customer on it. The name line still
+  // has to render something clickable, or the card looks broken and the pencil
+  // that puts a name on it has nothing to sit beside.
   const displayName = o.customer_modifier
     ? `${capitalize(o.customer_name)} (${o.customer_modifier})`
     : capitalize(o.customer_name);
+  const nameHtml = displayName
+    ? escapeHtml(displayName)
+    : '<span class="order-card-unnamed">No name</span>';
   // The order number doubles as the bill number (order #7 → bill BK-007), so
   // showing it lets a shopkeeper match a bill in hand to a card on this page.
   const orderNo = o.order_no ? `Order #${o.order_no}` : '';
@@ -271,7 +278,7 @@ function buildOrderHeaderHTML(o) {
 
   return `<div class="ledger-card-header">
     <div class="ledger-card-info">
-      <div class="ledger-card-name">${escapeHtml(displayName)}</div>
+      <div class="ledger-card-name">${nameHtml}<button class="order-customer-edit" title="Change customer" aria-label="Change customer">${PENCIL_SVG}</button></div>
       <div class="ledger-card-subtitle">${escapeHtml(subtitle)}</div>
     </div>
     <div class="ledger-card-right">
@@ -366,6 +373,21 @@ function wireOrderCards(listEl) {
     });
   });
 
+  // Change the order's customer. A voice sale with nobody named books a
+  // nameless card, and this is how it gets a name before the bill goes out.
+  // stopPropagation, or the click also toggles/selects the card underneath.
+  listEl.querySelectorAll('.order-customer-edit').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const card = btn.closest('.order-card');
+      openCustomerModal({
+        orderId: card.dataset.orderId,
+        customerName: card.dataset.customer,
+        customerModifier: card.dataset.modifier,
+      });
+    });
+  });
+
   // Edit a line item
   listEl.querySelectorAll('.order-item-edit').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -409,8 +431,10 @@ function wireOrderCards(listEl) {
   listEl.querySelectorAll('.order-delete-order-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const card = btn.closest('.order-card');
+      // A counter sale's order has no customer to name in the prompt.
       const name = capitalize(card.dataset.customer);
-      openDeleteModal({ type: 'order', id: card.dataset.orderId, label: `Delete the entire order for ${name}?` });
+      const label = name ? `Delete the entire order for ${name}?` : 'Delete this entire order?';
+      openDeleteModal({ type: 'order', id: card.dataset.orderId, label });
     });
   });
 
@@ -487,7 +511,10 @@ function wireOrderCards(listEl) {
         }
         const phone = waNumber.startsWith('+') ? waNumber.substring(1)
           : (waNumber.length === 10 ? '91' + waNumber : waNumber);
-        const message = `Namaste ${customer} ji,\n\nAapka bill yahan dekhein:\n${pdf_url}\n\nDhanyavaad,\nBolKhata`;
+        // "Namaste ji" rather than "Namaste  ji" when the order is a counter
+        // sale nobody was named for.
+        const greeting = customer ? `Namaste ${customer} ji` : 'Namaste ji';
+        const message = `${greeting},\n\nAapka bill yahan dekhein:\n${pdf_url}\n\nDhanyavaad,\nBolKhata`;
         window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
       } catch (e) {
         showToast('❌ ' + (e.message || 'Could not generate bill.'));
@@ -595,6 +622,58 @@ $('order-edit-save').addEventListener('click', async () => {
     showToast('❌ Could not connect to server.');
   } finally {
     btn.textContent = label;
+    btn.disabled = false;
+  }
+});
+
+// ═══════ Change customer modal (whole order) ═══════
+function openCustomerModal(state) {
+  orderCustomerState = state;
+  $('order-customer-name').value = capitalize(state.customerName || '');
+  $('order-customer-modifier').value = state.customerModifier || '';
+  $('order-customer-modal').classList.add('open');
+  setTimeout(() => $('order-customer-name').focus(), 100);
+}
+
+$('order-customer-cancel').addEventListener('click', () => {
+  $('order-customer-modal').classList.remove('open');
+  orderCustomerState = null;
+});
+
+$('order-customer-save').addEventListener('click', async () => {
+  if (!orderCustomerState) return;
+  const name = $('order-customer-name').value.trim();
+  const modifier = $('order-customer-modifier').value.trim();
+
+  if (!name) { showToast('❌ Please enter a customer name.'); return; }
+
+  const btn = $('order-customer-save');
+  btn.innerHTML = '<div class="spinner"></div>';
+  btn.disabled = true;
+
+  try {
+    const token = await auth.currentUser.getIdToken();
+    const res = await fetch(`${API}/orders/${encodeURIComponent(orderCustomerState.orderId)}/customer`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ customer_name: name, customer_modifier: modifier }),
+    });
+    const data = await res.json();
+    if (data.status === 'success') {
+      showToast('✅ ' + data.message);
+      $('order-customer-modal').classList.remove('open');
+      // The order_id survives a rename, but a legacy order's synthetic key is
+      // built from the customer — so re-select by nothing and let the list decide.
+      if (selectedOrderId === orderCustomerState.orderId) selectedOrderId = null;
+      orderCustomerState = null;
+      loadOrders();
+    } else {
+      showToast('❌ ' + (data.detail || 'Failed to change customer.'));
+    }
+  } catch {
+    showToast('❌ Could not connect to server.');
+  } finally {
+    btn.textContent = 'Save';
     btn.disabled = false;
   }
 });

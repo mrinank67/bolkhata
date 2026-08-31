@@ -29,6 +29,7 @@ Adding a new API **path** also requires an explicit `src`/`dest` mapping in `ver
 | `/orders/{order_id}/items` | `POST` | Appends a line item to an existing order |
 | `/orders/{order_id}/bill` | `POST` | Renders a PDF bill, archives it to Storage, and returns a permanent download link |
 | `/orders/{order_id}/bill/touch` | `POST` | Marks an archived bill as still in use, restarting its 30-day retention window |
+| `/orders/{order_id}/customer` | `PUT` | Re-points a whole order at a different customer — how a counter sale's order gets a name before it is billed |
 | `/orders/item/{item_id}` | `PUT` | Edits a single order line item (item, quantity, or price) |
 | `/orders/item/{item_id}` | `DELETE` | Removes a single line item from an order |
 | `/orders/{order_id}` | `DELETE` | Deletes an entire order and all its line items |

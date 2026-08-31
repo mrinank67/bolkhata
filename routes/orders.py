@@ -16,7 +16,12 @@ from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from auth import get_bucket, verify_token
-from models import OrderCreateRequest, OrderItemAddRequest, OrderItemUpdate
+from models import (
+    OrderCreateRequest,
+    OrderCustomerUpdate,
+    OrderItemAddRequest,
+    OrderItemUpdate,
+)
 
 router = APIRouter()
 
@@ -104,6 +109,34 @@ def _order_id_for_doc(data: dict) -> str:
     except AttributeError:
         day = "unknown"
     return f"legacy|{cname}|{cmod}|{day}"
+
+
+def _load_order_docs(orders_ref, order_id: str) -> list:
+    """Every line-item doc belonging to one order.
+
+    Orders written before `order_id` existed have no such field: `get_orders`
+    addresses them by the synthetic `legacy|{cname}|{cmod}|{day}` key, so they
+    have to be matched back by customer + day instead of by a query.
+    """
+    if order_id.startswith("legacy|"):
+        parts = order_id.split("|")
+        cname = parts[1] if len(parts) > 1 else ""
+        cmod = parts[2] if len(parts) > 2 else ""
+        day = parts[3] if len(parts) > 3 else ""
+        docs = []
+        for doc in orders_ref.where(filter=FieldFilter("customer_name", "==", cname)).stream():
+            d = doc.to_dict()
+            if (d.get("customer_modifier", "") or "") != cmod:
+                continue
+            ts = d.get("timestamp")
+            try:
+                doc_day = ts.date().isoformat() if ts else "unknown"
+            except AttributeError:
+                doc_day = "unknown"
+            if (not d.get("order_id") and doc_day == day) or d.get("order_id") == order_id:
+                docs.append(doc)
+        return docs
+    return list(orders_ref.where(filter=FieldFilter("order_id", "==", order_id)).stream())
 
 
 def _mark_bill_stale(user_ref, order_id: str) -> None:
@@ -380,6 +413,45 @@ async def delete_order_item(item_id: str, authorization: str = Header(None)):
     return {"status": "success", "message": "Order item removed."}
 
 
+@router.put("/orders/{order_id}/customer")
+async def update_order_customer(
+    order_id: str, req: OrderCustomerUpdate, authorization: str = Header(None)
+):
+    """Re-point a whole order at a different customer.
+
+    A voice sale with no name spoken books an order with an empty customer;
+    this is how it becomes a real customer's order before the bill goes out.
+    Every line item carries the customer, so all of them move together.
+    """
+    from main import db
+
+    uid = verify_token(authorization)
+    orders_ref = db.collection("users").document(uid).collection("orders")
+
+    cname = req.customer_name.strip().lower()
+    if not cname:
+        raise HTTPException(status_code=400, detail="Customer name is required.")
+    cmod = (req.customer_modifier or "").strip().lower()
+
+    docs = _load_order_docs(orders_ref, order_id)
+    if not docs:
+        raise HTTPException(status_code=404, detail="Order not found.")
+
+    changed = False
+    for doc in docs:
+        data = doc.to_dict()
+        if data.get("customer_name") == cname and (data.get("customer_modifier") or "") == cmod:
+            continue
+        doc.reference.update({"customer_name": cname, "customer_modifier": cmod})
+        changed = True
+
+    # The customer's name is printed on the bill, so a saved one is now wrong.
+    if changed:
+        _mark_bill_stale(orders_ref.parent, order_id)
+
+    return {"status": "success", "message": f"Order moved to {req.customer_name.strip()}."}
+
+
 @router.delete("/orders/{order_id}")
 async def delete_order(order_id: str, authorization: str = Header(None)):
     from main import db
@@ -387,27 +459,7 @@ async def delete_order(order_id: str, authorization: str = Header(None)):
     uid = verify_token(authorization)
     orders_ref = db.collection("users").document(uid).collection("orders")
 
-    if order_id.startswith("legacy|"):
-        # Synthetic key for pre-order_id docs: legacy|{cname}|{cmod}|{day}.
-        # Those docs have no order_id field, so match them by customer + day.
-        parts = order_id.split("|")
-        cname = parts[1] if len(parts) > 1 else ""
-        cmod = parts[2] if len(parts) > 2 else ""
-        day = parts[3] if len(parts) > 3 else ""
-        docs = []
-        for doc in orders_ref.where(filter=FieldFilter("customer_name", "==", cname)).stream():
-            d = doc.to_dict()
-            if (d.get("customer_modifier", "") or "") != cmod:
-                continue
-            ts = d.get("timestamp")
-            try:
-                doc_day = ts.date().isoformat() if ts else "unknown"
-            except AttributeError:
-                doc_day = "unknown"
-            if (not d.get("order_id") and doc_day == day) or d.get("order_id") == order_id:
-                docs.append(doc)
-    else:
-        docs = list(orders_ref.where(filter=FieldFilter("order_id", "==", order_id)).stream())
+    docs = _load_order_docs(orders_ref, order_id)
 
     if not docs:
         raise HTTPException(status_code=404, detail="Order not found.")

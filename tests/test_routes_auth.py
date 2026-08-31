@@ -68,6 +68,7 @@ REQUESTS = [
         None,
         None,
     ),
+    ("PUT", "/orders/{order_id}/customer", {"customer_name": "c"}, None, None),
     ("PUT", "/orders/item/{item_id}", {"quantity": 2}, None, None),
     ("DELETE", "/orders/item/{item_id}", None, None, None),
     ("DELETE", "/orders/{order_id}", None, None, None),

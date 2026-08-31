@@ -226,6 +226,10 @@ def process_transactions(
     # command within the recent-context window appends to that same order card
     # rather than creating a new one. It inherits that order's number too — a
     # follow-up is the same order, not a new one.
+    #
+    # Only for a named customer. A counter sale's order carries no name, so it
+    # sets no recent context and nothing appends to it — two sales a minute
+    # apart are two people at the counter, not one order in halves.
     if recent_order_id and recent_customer:
         recent_ckey = f"{recent_customer.lower()}|{(recent_modifier or '').lower()}"
         order_sessions[recent_ckey] = (recent_order_id, _existing_order_no(recent_order_id))
@@ -257,6 +261,27 @@ def process_transactions(
         txn_amount = _to_number(txn.get("amount"))
         txn_rate = _to_number(txn.get("rate"))
         txn_unit = txn.get("unit") or ""
+
+        # --- A ledger line has to name someone ---
+        # Money owed to nobody can never be collected, and without a name the
+        # sale path below would book the credit as a plain nameless cash order.
+        # The name was usually spoken a sentence ago ("Ramesh ko do maggi de
+        # do" … "aur paanch khaate mein likh do"), so inherit it from
+        # the recent-context window. A counter sale leaves that window empty —
+        # its order has no customer on it — so nothing is inherited from one.
+        needs_customer = (is_credit and operation == "subtract") or operation == "payment"
+        if needs_customer and not customer_name and recent_customer:
+            customer_name = recent_customer
+            customer_modifier = recent_modifier or ""
+            # The pair comes from a real transaction, so it already points at one
+            # person — asking which namesake to use would be asking twice.
+            txn["_resolved"] = True
+
+        # Nobody to inherit from: ask instead of recording a debt against nobody.
+        # (A payment keeps its own "Kisne payment kiya?" message further down.)
+        if is_credit and operation == "subtract" and not customer_name:
+            errors.append("Kiske khaate mein likhna hai? (Please specify a name).")
+            continue
 
         # --- Disambiguate duplicate customer names ---
         # _resolved is set by /voice/resolve after the user picks a customer;
@@ -736,19 +761,19 @@ def process_transactions(
         stock_doc = stock_doc_ref.get()
         in_inventory = stock_doc.exists
 
-        # Selling to a named customer is an order, and an order records whatever
-        # the shopkeeper actually handed over — the inventory is a price/stock
-        # reference, not a menu of what may be sold. An uncatalogued item is
-        # written to the order under the spoken name and flagged (the Orders page
-        # marks it with a "!"); it moves no stock, because there is no stock doc
-        # to move and voice must not create a half-formed one.
-        is_customer_sale = operation == "subtract" and bool(customer_name)
+        # A sale is an order, and an order records whatever the shopkeeper
+        # actually handed over — the inventory is a price/stock reference, not a
+        # menu of what may be sold. An uncatalogued item is written to the order
+        # under the spoken name and flagged (the Orders page marks it with a
+        # "!"); it moves no stock, because there is no stock doc to move and
+        # voice must not create a half-formed one.
+        is_sale = operation == "subtract"
 
         # Everything else still needs the item to exist: a restock, a supplier
         # purchase or a stock inquiry is meaningless without a catalogued item,
         # and creating one from speech leaves a record with no sell price, cost
         # price, unit or category that every later screen has to defend against.
-        if not in_inventory and not is_customer_sale:
+        if not in_inventory and not is_sale:
             errors.append(f"{standard_item} inventory mein nahi hai. Pehle app mein add karein.")
             continue
 
@@ -822,6 +847,13 @@ def process_transactions(
             else ""
         )
 
+        # Who the order books to. A counter sale names nobody and keeps an empty
+        # customer — it is still an order card, just one without a name on it
+        # until the shopkeeper adds one. A modifier with no name is meaningless.
+        order_customer = customer_name
+        order_modifier = customer_modifier if customer_name else ""
+        order_title = title_name or "-"
+
         # Build result row
         if operation == "subtract" and is_credit and customer_name:
             group = get_group(
@@ -894,7 +926,10 @@ def process_transactions(
                     "Stock": stock_cell,
                 }
             )
-        elif operation == "subtract" and customer_name:
+        elif operation == "subtract":
+            # Every sale lands here, named or not: a counter sale books an order
+            # with no customer on it rather than being recorded as stock movement
+            # alone, so it can be priced, corrected and billed from the Orders page.
             group = get_group(
                 "order_sale",
                 "Customer Order",
@@ -907,18 +942,18 @@ def process_transactions(
             # running "Total Ordered" is computed by summing prior matching entries.
             prior_ordered = 0
             for doc in (
-                user_orders_ref.where(filter=FieldFilter("customer_name", "==", customer_name))
+                user_orders_ref.where(filter=FieldFilter("customer_name", "==", order_customer))
                 .where(filter=FieldFilter("item", "==", standard_item))
                 .stream()
             ):
-                if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
+                if doc.to_dict().get("customer_modifier", "").lower() == order_modifier.lower():
                     prior_ordered += doc.to_dict().get("amount", 0) or 0
 
-            order_id, order_no = _order_session_for(f"{customer_name}|{customer_modifier}")
+            order_id, order_no = _order_session_for(f"{order_customer}|{order_modifier}")
             user_orders_ref.add(
                 {
-                    "customer_name": customer_name,
-                    "customer_modifier": customer_modifier,
+                    "customer_name": order_customer,
+                    "customer_modifier": order_modifier,
                     "item": standard_item,
                     "quantity": qty,
                     "amount": txn_amount or 0,
@@ -933,26 +968,13 @@ def process_transactions(
 
             group["rows"].append(
                 {
-                    "Customer": title_name,
+                    "Customer": order_title,
                     "Item": standard_item.capitalize(),
                     "Qty": qty,
                     "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
                     "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
                     "Total Ordered": f"₹{total_order_amount:,.0f}" if total_order_amount else "-",
                     "Stock": stock_cell,
-                }
-            )
-        elif operation == "subtract":
-            group = get_group(
-                "decrease", "Stock Sold", "🛒", ["Item", "Sold", "Amount", "Previous", "Current"]
-            )
-            group["rows"].append(
-                {
-                    "Item": standard_item.capitalize(),
-                    "Sold": qty,
-                    "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
-                    "Previous": current_qty,
-                    "Current": new_qty,
                 }
             )
         else:

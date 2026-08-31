@@ -91,6 +91,14 @@ class OrderItemAddRequest(OrderItemCreate):
     customer_modifier: Optional[str] = Field(default="", max_length=100)
 
 
+class OrderCustomerUpdate(BaseModel):
+    """Re-point an order at a different customer — how a customerless order (a
+    voice sale with no name spoken) becomes a named one before it is billed."""
+
+    customer_name: str = Field(max_length=100)
+    customer_modifier: Optional[str] = Field(default="", max_length=100)
+
+
 class OrderItemUpdate(BaseModel):
     item: Optional[str] = Field(default=None, max_length=100)
     quantity: Optional[int] = Field(default=None, gt=0, le=_MAX_QTY)

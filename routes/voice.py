@@ -139,10 +139,18 @@ async def process_voice(
     recent_modifier = ""
     recent_order_id = ""
     try:
-        last_orders = list(user_orders_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream())
+        last_orders = list(
+            user_orders_ref.order_by("timestamp", direction=firestore.Query.DESCENDING)
+            .limit(1)
+            .stream()
+        )
         last_order_time = last_orders[0].to_dict().get("timestamp") if last_orders else None
 
-        last_udhaars = list(user_udhaar_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(1).stream())
+        last_udhaars = list(
+            user_udhaar_ref.order_by("timestamp", direction=firestore.Query.DESCENDING)
+            .limit(1)
+            .stream()
+        )
         last_udhaar_time = last_udhaars[0].to_dict().get("timestamp") if last_udhaars else None
 
         latest_doc = None
@@ -157,7 +165,12 @@ async def process_voice(
         if latest_doc:
             data = latest_doc.to_dict()
             ts = data.get("timestamp")
-            if ts and (now - ts).total_seconds() < 120: # 2 minutes
+            if ts and (now - ts).total_seconds() < 120:  # 2 minutes
+                # A counter sale's order has no customer on it, so this stays
+                # empty: nothing carries over from one. Two counter sales a
+                # minute apart are almost always two people in the queue, and
+                # neither the LLM's follow-up context nor the order-reuse below
+                # should tie them together.
                 recent_customer = data.get("customer_name", "")
                 recent_modifier = data.get("customer_modifier", "")
 
@@ -173,10 +186,9 @@ async def process_voice(
             and (now - last_order_time).total_seconds() < 120
         ):
             o = last_orders[0].to_dict()
-            if (
-                o.get("customer_name", "") == recent_customer
-                and (o.get("customer_modifier", "") or "") == (recent_modifier or "")
-            ):
+            if o.get("customer_name", "") == recent_customer and (
+                o.get("customer_modifier", "") or ""
+            ) == (recent_modifier or ""):
                 recent_order_id = o.get("order_id", "")
     except Exception as e:
         print("Error fetching recent context:", e)
@@ -200,18 +212,14 @@ async def process_voice(
             }
 
         url = "https://api.sarvam.ai/speech-to-text"
-        files = {
-            'file': (audio.filename, audio_bytes, audio.content_type)
-        }
+        files = {"file": (audio.filename, audio_bytes, audio.content_type)}
         data = {
-            'model': 'saaras:v3',
-            'language_code': 'unknown',
-            'mode': 'translate',
-            'with_diarization': 'false'
+            "model": "saaras:v3",
+            "language_code": "unknown",
+            "mode": "translate",
+            "with_diarization": "false",
         }
-        headers = {
-            'api-subscription-key': _get_sarvam_key()
-        }
+        headers = {"api-subscription-key": _get_sarvam_key()}
 
         response = requests.post(url, headers=headers, data=data, files=files)
 
@@ -221,9 +229,7 @@ async def process_voice(
             print("⚠️ Sarvam 429 — retrying after 2s...")
             time.sleep(2)
             # Re-read audio bytes for retry (file pointer already consumed)
-            files_retry = {
-                'file': (audio.filename, audio_bytes, audio.content_type)
-            }
+            files_retry = {"file": (audio.filename, audio_bytes, audio.content_type)}
             response = requests.post(url, headers=headers, data=data, files=files_retry)
             if response.status_code == 429:
                 return JSONResponse(
@@ -237,17 +243,17 @@ async def process_voice(
                 )
 
         response.raise_for_status()
-        
+
         result = response.json()
-        hindi_text = result.get('transcript', result.get('text', ''))
-        
+        hindi_text = result.get("transcript", result.get("text", ""))
+
         print(f"⏱️ STT (Sarvam): {time.time() - t1:.2f}s")
         if _debug_logs():
             print(f"Heard: {hindi_text}")
 
     except Exception as e:
         print(f"❌ SARVAM STT ERROR: {e!s}")
-        if hasattr(e, 'response') and e.response is not None:
+        if hasattr(e, "response") and e.response is not None:
             print(f"Response: {e.response.text}")
         # Don't leak internal error details to the client
         raise HTTPException(status_code=500, detail="Speech recognition failed. Please try again.")
@@ -277,7 +283,7 @@ async def process_voice(
             )
         except Exception as groq_err:
             # Retry once on Groq 429 (rate limit from their side)
-            err_status = getattr(groq_err, 'status_code', None)
+            err_status = getattr(groq_err, "status_code", None)
             if err_status == 429:
                 record_rate_limit_hit(db, GROQ_RPM)
                 print("⚠️ Groq 429 — retrying after 3s...")
@@ -304,7 +310,7 @@ async def process_voice(
     except Exception as e:
         print(f"❌ GROQ LLM ERROR: {e!s}")
         # If it's still a 429 after retry, return proper 429 to client
-        err_status = getattr(e, 'status_code', None)
+        err_status = getattr(e, "status_code", None)
         if err_status == 429:
             return JSONResponse(
                 status_code=429,
@@ -342,9 +348,7 @@ async def process_voice(
     if result_list or errors:
 
         def write_history():
-            user_history_ref = (
-                db.collection("users").document(uid).collection("history")
-            )
+            user_history_ref = db.collection("users").document(uid).collection("history")
             user_history_ref.add(
                 {
                     "results": result_list,
@@ -399,9 +403,7 @@ async def resolve_transaction(
     if result_list or errors:
 
         def write_history():
-            user_history_ref = (
-                db.collection("users").document(uid).collection("history")
-            )
+            user_history_ref = db.collection("users").document(uid).collection("history")
             user_history_ref.add(
                 {
                     "results": result_list,
