@@ -233,7 +233,13 @@ def process_transactions(
     # command within the recent-context window appends to that same order card
     # rather than creating a new one. It inherits that order's number too — a
     # follow-up is the same order, not a new one.
-    if recent_order_id and recent_customer:
+    #
+    # Never for the walk-in card: it is a stand-in for "whoever was at the
+    # counter", so appending to it would pile unrelated customers' sales into one
+    # order. Each nameless sale starts its own card. (routes/voice.py already
+    # declines to carry walk-in context forward; this is the same rule stated
+    # where the reuse actually happens.)
+    if recent_order_id and recent_customer and recent_customer != WALK_IN_CUSTOMER:
         recent_ckey = f"{recent_customer.lower()}|{(recent_modifier or '').lower()}"
         order_sessions[recent_ckey] = (recent_order_id, _existing_order_no(recent_order_id))
 

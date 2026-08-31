@@ -501,6 +501,62 @@ class TestProcessTransactions:
         assert {o["item"] for o in orders} == {"samosa", "kachori"}
         assert len({o["order_id"] for o in orders}) == 1
 
+    def test_a_second_counter_sale_starts_its_own_order(self):
+        """Two "5 maggi bechi" a minute apart are two customers at the counter,
+        not one order in two halves — the follow-up window must not merge them."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=50, price=12)
+        fake_db.seed(
+            f"users/{self.UID}/orders/first",
+            {
+                "customer_name": WALK_IN_CUSTOMER,
+                "customer_modifier": "",
+                "item": "maggi",
+                "order_id": "o1",
+                "order_no": 1,
+            },
+        )
+        fake_db.seed(f"users/{self.UID}", {"order_seq": 1})
+
+        process_transactions(
+            [self._txn(operation="subtract", item="maggi", qty=5)],
+            recent_customer=WALK_IN_CUSTOMER,
+            recent_order_id="o1",
+            **self._refs(fake_db),
+        )
+
+        added = [
+            fake_db.docs[p]
+            for p in fake_db.paths_under(f"users/{self.UID}/orders")
+            if p.endswith("/first") is False
+        ]
+        assert [d["order_id"] for d in added] != ["o1"], "must not join the previous card"
+        assert [d["order_no"] for d in added] == [2]
+
+    def test_a_named_follow_up_still_joins_the_previous_order(self):
+        """The walk-in exception must not disarm the feature for real customers."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=50, price=12)
+        fake_db.seed(
+            f"users/{self.UID}/orders/first",
+            {"customer_name": "sujal", "customer_modifier": "", "order_id": "o1", "order_no": 1},
+        )
+        fake_db.seed(f"users/{self.UID}", {"order_seq": 1})
+
+        process_transactions(
+            [self._txn(operation="subtract", item="maggi", qty=5, customer_name="sujal")],
+            recent_customer="sujal",
+            recent_order_id="o1",
+            **self._refs(fake_db),
+        )
+
+        added = [
+            fake_db.docs[p]
+            for p in fake_db.paths_under(f"users/{self.UID}/orders")
+            if fake_db.docs[p].get("item") == "maggi"
+        ]
+        assert [d["order_id"] for d in added] == ["o1"]
+
     def test_a_named_sale_never_books_to_the_walk_in_card(self):
         fake_db = FakeFirestore()
         self._seed_item(fake_db, "rice", quantity=10, price=50)

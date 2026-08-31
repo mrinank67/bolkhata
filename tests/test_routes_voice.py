@@ -10,12 +10,14 @@ regression that moves a rate-limit check after the Sarvam call would burn quota
 on requests that were meant to be rejected.
 """
 
+import datetime
 import json
 from unittest import mock
 
 import pytest
 
 import rate_limiter
+from db_operations import WALK_IN_CUSTOMER
 
 UID = "test-uid"
 # Must clear the handler's 100-byte "audio too short" floor, or every test below
@@ -250,6 +252,48 @@ class TestIntentExtraction:
 
         assert resp.status_code == 500
         assert "gsk-live-secret123" not in resp.text
+
+
+class TestRecentCustomerContext:
+    """The 2-minute window that puts "aur do de do" on the right customer.
+
+    It is carried to the LLM as a RECENT CONTEXT line in the system prompt. The
+    walk-in card is excluded: it stands in for whoever was at the counter, so
+    treating it as the customer would pile unrelated sales into one order.
+    """
+
+    def _seed_order(self, fake_db, customer):
+        fake_db.seed(
+            f"users/{UID}/orders/o1",
+            {
+                "customer_name": customer,
+                "customer_modifier": "",
+                "item": "maggi",
+                "quantity": 5,
+                "order_id": "o1",
+                "order_no": 1,
+                "timestamp": datetime.datetime.now(datetime.UTC),
+            },
+        )
+
+    def _system_prompt(self, groq):
+        call = groq.client.chat.completions.create.call_args
+        return call.kwargs["messages"][0]["content"]
+
+    def test_a_named_customer_is_carried_forward(self, authed_client, fake_db, sarvam, groq):
+        self._seed_order(fake_db, "ramesh")
+
+        _post(authed_client)
+
+        assert "RECENT CONTEXT" in self._system_prompt(groq)
+        assert "ramesh" in self._system_prompt(groq)
+
+    def test_the_walk_in_card_is_not(self, authed_client, fake_db, sarvam, groq):
+        self._seed_order(fake_db, WALK_IN_CUSTOMER)
+
+        _post(authed_client)
+
+        assert "RECENT CONTEXT" not in self._system_prompt(groq)
 
 
 class TestDebugLogging:
