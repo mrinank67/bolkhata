@@ -265,6 +265,82 @@ class TestModifyOrderItems:
         assert {fake_db.docs[p]["order_id"] for p in fake_db.paths_under(ORDERS)} == {"o1"}
 
 
+class TestRenameOrderCustomer:
+    """A voice sale with no name spoken books to the walk-in card; this endpoint
+    is how it becomes a named customer's order before the bill goes out."""
+
+    def test_moves_every_line_item_to_the_new_customer(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/a", _line(order_id="o1", customer="walk-in", item="rice"))
+        fake_db.seed(f"{ORDERS}/b", _line(order_id="o1", customer="walk-in", item="dal"))
+
+        resp = authed_client.put("/orders/o1/customer", json={"customer_name": "Ramesh"})
+
+        assert resp.status_code == 200, resp.text
+        moved = [fake_db.docs[p] for p in fake_db.paths_under(ORDERS)]
+        assert {d["customer_name"] for d in moved} == {"ramesh"}, "stored lowercased"
+
+    def test_modifier_is_stored_alongside_the_name(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/a", _line(order_id="o1", customer="walk-in"))
+
+        authed_client.put(
+            "/orders/o1/customer",
+            json={"customer_name": "Ramesh", "customer_modifier": "Delhi Wale"},
+        )
+
+        assert fake_db.docs[f"{ORDERS}/a"]["customer_modifier"] == "delhi wale"
+
+    def test_other_orders_are_untouched(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/a", _line(order_id="o1", customer="walk-in"))
+        fake_db.seed(f"{ORDERS}/b", _line(order_id="o2", customer="walk-in"))
+
+        authed_client.put("/orders/o1/customer", json={"customer_name": "Ramesh"})
+
+        assert fake_db.docs[f"{ORDERS}/b"]["customer_name"] == "walk-in"
+
+    def test_the_saved_bill_goes_stale(self, authed_client, fake_db):
+        """The customer's name is printed on the bill, so a saved one is wrong."""
+        fake_db.seed(f"{ORDERS}/a", _line(order_id="o1", customer="walk-in"))
+        fake_db.seed(f"users/{UID}/bills/o1", {"download_token": "t", "storage_path": "p"})
+
+        authed_client.put("/orders/o1/customer", json={"customer_name": "Ramesh"})
+
+        assert fake_db.docs[f"users/{UID}/bills/o1"]["stale"] is True
+
+    def test_blank_name_is_rejected(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/a", _line(order_id="o1", customer="walk-in"))
+
+        assert (
+            authed_client.put("/orders/o1/customer", json={"customer_name": "  "}).status_code
+            == 400
+        )
+        assert fake_db.docs[f"{ORDERS}/a"]["customer_name"] == "walk-in"
+
+    def test_unknown_order_is_404(self, authed_client, fake_db):
+        assert (
+            authed_client.put("/orders/nope/customer", json={"customer_name": "r"}).status_code
+            == 404
+        )
+
+    def test_cannot_rename_another_users_order(self, authed_client, fake_db):
+        fake_db.seed("users/someone-else/orders/a", _line(order_id="o1", customer="walk-in"))
+
+        authed_client.put("/orders/o1/customer", json={"customer_name": "Ramesh"})
+
+        assert fake_db.docs["users/someone-else/orders/a"]["customer_name"] == "walk-in"
+
+    def test_a_legacy_order_can_be_renamed_too(self, authed_client, fake_db):
+        """Pre-order_id rows are addressed by the synthetic customer + day key."""
+        fake_db.seed(f"{ORDERS}/a", _line(order_id=None, customer="walk-in"))
+        day = _ts(0).date().isoformat()
+
+        resp = authed_client.put(
+            f"/orders/legacy|walk-in||{day}/customer", json={"customer_name": "Ramesh"}
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert fake_db.docs[f"{ORDERS}/a"]["customer_name"] == "ramesh"
+
+
 class TestDeleteOrder:
     def test_removes_every_line_item_of_the_order(self, authed_client, fake_db):
         fake_db.seed(f"{ORDERS}/a", _line(order_id="o1", item="rice"))

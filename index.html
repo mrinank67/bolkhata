@@ -783,6 +783,26 @@
           </div>
         </div>
 
+        <!-- Change Customer Modal — renames a whole order, which is how a
+             walk-in (a voice sale with nobody named) becomes a real customer. -->
+        <div id="order-customer-modal" class="modal-overlay">
+          <div class="modal-card" style="text-align:left;">
+            <h3 class="modal-title">Change Customer</h3>
+            <div class="field-group">
+              <label class="field-label">Customer Name</label>
+              <input type="text" id="order-customer-name" placeholder="e.g. Ramesh Kirana" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">Modifier (optional)</label>
+              <input type="text" id="order-customer-modifier" placeholder="e.g. Delhi wale" />
+            </div>
+            <div class="modal-actions" style="margin-top:16px;">
+              <button id="order-customer-cancel" class="btn btn-outline">Cancel</button>
+              <button id="order-customer-save" class="btn btn-accent">Save</button>
+            </div>
+          </div>
+        </div>
+
         <!-- Delete Confirm Modal -->
         <div id="order-delete-modal" class="modal-overlay">
           <div class="modal-card">

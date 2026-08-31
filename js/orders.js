@@ -105,6 +105,11 @@ function markBillGenerated(card, pdfUrl, billNumber) {
 // Pending modal state
 let orderEditState = null;           // { mode:'edit'|'add', itemId, orderId, customerName, customerModifier }
 let orderDeleteState = null;         // { type:'item'|'order', id, label }
+let orderCustomerState = null;       // { orderId, customerName, customerModifier }
+
+// Customer a voice sale books to when nobody was named — mirrors
+// WALK_IN_CUSTOMER in db_operations.py.
+const WALK_IN_CUSTOMER = 'walk-in';
 
 const inr = (n) => `₹${(Number(n) || 0).toLocaleString('en-IN')}`;
 
@@ -271,7 +276,7 @@ function buildOrderHeaderHTML(o) {
 
   return `<div class="ledger-card-header">
     <div class="ledger-card-info">
-      <div class="ledger-card-name">${escapeHtml(displayName)}</div>
+      <div class="ledger-card-name">${escapeHtml(displayName)}<button class="order-customer-edit" title="Change customer" aria-label="Change customer">${PENCIL_SVG}</button></div>
       <div class="ledger-card-subtitle">${escapeHtml(subtitle)}</div>
     </div>
     <div class="ledger-card-right">
@@ -363,6 +368,21 @@ function wireOrderCards(listEl) {
       } else {
         card.classList.toggle('expanded');
       }
+    });
+  });
+
+  // Change the order's customer. A voice sale with nobody named books to the
+  // walk-in card, and this is how it gets a name before the bill goes out.
+  // stopPropagation, or the click also toggles/selects the card underneath.
+  listEl.querySelectorAll('.order-customer-edit').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const card = btn.closest('.order-card');
+      openCustomerModal({
+        orderId: card.dataset.orderId,
+        customerName: card.dataset.customer,
+        customerModifier: card.dataset.modifier,
+      });
     });
   });
 
@@ -595,6 +615,61 @@ $('order-edit-save').addEventListener('click', async () => {
     showToast('❌ Could not connect to server.');
   } finally {
     btn.textContent = label;
+    btn.disabled = false;
+  }
+});
+
+// ═══════ Change customer modal (whole order) ═══════
+function openCustomerModal(state) {
+  orderCustomerState = state;
+  // A walk-in card has no real name on it, so offer an empty field to type into
+  // rather than the placeholder the shopkeeper would have to clear first.
+  const name = state.customerName === WALK_IN_CUSTOMER ? '' : capitalize(state.customerName || '');
+  $('order-customer-name').value = name;
+  $('order-customer-modifier').value = state.customerModifier || '';
+  $('order-customer-modal').classList.add('open');
+  setTimeout(() => $('order-customer-name').focus(), 100);
+}
+
+$('order-customer-cancel').addEventListener('click', () => {
+  $('order-customer-modal').classList.remove('open');
+  orderCustomerState = null;
+});
+
+$('order-customer-save').addEventListener('click', async () => {
+  if (!orderCustomerState) return;
+  const name = $('order-customer-name').value.trim();
+  const modifier = $('order-customer-modifier').value.trim();
+
+  if (!name) { showToast('❌ Please enter a customer name.'); return; }
+
+  const btn = $('order-customer-save');
+  btn.innerHTML = '<div class="spinner"></div>';
+  btn.disabled = true;
+
+  try {
+    const token = await auth.currentUser.getIdToken();
+    const res = await fetch(`${API}/orders/${encodeURIComponent(orderCustomerState.orderId)}/customer`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ customer_name: name, customer_modifier: modifier }),
+    });
+    const data = await res.json();
+    if (data.status === 'success') {
+      showToast('✅ ' + data.message);
+      $('order-customer-modal').classList.remove('open');
+      // The order_id survives a rename, but a legacy order's synthetic key is
+      // built from the customer — so re-select by nothing and let the list decide.
+      if (selectedOrderId === orderCustomerState.orderId) selectedOrderId = null;
+      orderCustomerState = null;
+      loadOrders();
+    } else {
+      showToast('❌ ' + (data.detail || 'Failed to change customer.'));
+    }
+  } catch {
+    showToast('❌ Could not connect to server.');
+  } finally {
+    btn.textContent = 'Save';
     btn.disabled = false;
   }
 });

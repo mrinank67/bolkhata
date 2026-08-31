@@ -2731,6 +2731,35 @@ input::placeholder {
   color: var(--text-primary);
 }
 
+/* Pencil beside an order's customer name — renames the whole order. It is the
+   only way a walk-in card (a voice sale with nobody named) gets a real customer
+   on it before the bill is generated. Sized in em so it tracks the name, which
+   grows to 1.25rem in the desktop detail pane. */
+.order-customer-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 2px;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  vertical-align: middle;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: all var(--transition);
+}
+
+.order-customer-edit svg {
+  width: 0.8em;
+  height: 0.8em;
+}
+
+.order-customer-edit:hover {
+  color: var(--accent);
+  opacity: 1;
+}
+
 /* "Not in inventory" marker on an order line item. Orders are not restricted to
    catalogued items, so this is a note, not an error — and it lives only in the
    app: the bill PDF is built server-side from the line items and never sees it. */

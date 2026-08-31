@@ -26,6 +26,13 @@ SUPPLIER_SUFFIXES = {
     "vendors",
 }
 
+# Customer on an order nobody was named for ("do maggi de do" at the counter).
+# Every sale becomes an order, so a counter sale needs a card to land on; the
+# shopkeeper renames it from the Orders page when the walk-in turns out to be
+# someone they want to bill or chase. Lowercase because every customer_name in
+# Firestore is stored lowercased.
+WALK_IN_CUSTOMER = "walk-in"
+
 # Sort fallback for udhaar docs missing a timestamp (must be tz-aware to compare
 # with Firestore timestamps)
 _EPOCH_MIN = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
@@ -736,19 +743,19 @@ def process_transactions(
         stock_doc = stock_doc_ref.get()
         in_inventory = stock_doc.exists
 
-        # Selling to a named customer is an order, and an order records whatever
-        # the shopkeeper actually handed over — the inventory is a price/stock
-        # reference, not a menu of what may be sold. An uncatalogued item is
-        # written to the order under the spoken name and flagged (the Orders page
-        # marks it with a "!"); it moves no stock, because there is no stock doc
-        # to move and voice must not create a half-formed one.
-        is_customer_sale = operation == "subtract" and bool(customer_name)
+        # A sale is an order, and an order records whatever the shopkeeper
+        # actually handed over — the inventory is a price/stock reference, not a
+        # menu of what may be sold. An uncatalogued item is written to the order
+        # under the spoken name and flagged (the Orders page marks it with a
+        # "!"); it moves no stock, because there is no stock doc to move and
+        # voice must not create a half-formed one.
+        is_sale = operation == "subtract"
 
         # Everything else still needs the item to exist: a restock, a supplier
         # purchase or a stock inquiry is meaningless without a catalogued item,
         # and creating one from speech leaves a record with no sell price, cost
         # price, unit or category that every later screen has to defend against.
-        if not in_inventory and not is_customer_sale:
+        if not in_inventory and not is_sale:
             errors.append(f"{standard_item} inventory mein nahi hai. Pehle app mein add karein.")
             continue
 
@@ -822,6 +829,13 @@ def process_transactions(
             else ""
         )
 
+        # Who the order books to. Nobody named means a counter sale, which still
+        # belongs on the Orders page — under the walk-in card, renameable later.
+        # A modifier without a name is meaningless, so it goes with the name.
+        order_customer = customer_name or WALK_IN_CUSTOMER
+        order_modifier = customer_modifier if customer_name else ""
+        order_title = title_name or WALK_IN_CUSTOMER.capitalize()
+
         # Build result row
         if operation == "subtract" and is_credit and customer_name:
             group = get_group(
@@ -894,7 +908,10 @@ def process_transactions(
                     "Stock": stock_cell,
                 }
             )
-        elif operation == "subtract" and customer_name:
+        elif operation == "subtract":
+            # Every sale lands here, named or not: a counter sale books to the
+            # walk-in card rather than being recorded as stock movement alone,
+            # so it can be priced, corrected and billed from the Orders page.
             group = get_group(
                 "order_sale",
                 "Customer Order",
@@ -907,18 +924,18 @@ def process_transactions(
             # running "Total Ordered" is computed by summing prior matching entries.
             prior_ordered = 0
             for doc in (
-                user_orders_ref.where(filter=FieldFilter("customer_name", "==", customer_name))
+                user_orders_ref.where(filter=FieldFilter("customer_name", "==", order_customer))
                 .where(filter=FieldFilter("item", "==", standard_item))
                 .stream()
             ):
-                if doc.to_dict().get("customer_modifier", "").lower() == customer_modifier.lower():
+                if doc.to_dict().get("customer_modifier", "").lower() == order_modifier.lower():
                     prior_ordered += doc.to_dict().get("amount", 0) or 0
 
-            order_id, order_no = _order_session_for(f"{customer_name}|{customer_modifier}")
+            order_id, order_no = _order_session_for(f"{order_customer}|{order_modifier}")
             user_orders_ref.add(
                 {
-                    "customer_name": customer_name,
-                    "customer_modifier": customer_modifier,
+                    "customer_name": order_customer,
+                    "customer_modifier": order_modifier,
                     "item": standard_item,
                     "quantity": qty,
                     "amount": txn_amount or 0,
@@ -933,26 +950,13 @@ def process_transactions(
 
             group["rows"].append(
                 {
-                    "Customer": title_name,
+                    "Customer": order_title,
                     "Item": standard_item.capitalize(),
                     "Qty": qty,
                     "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
                     "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
                     "Total Ordered": f"₹{total_order_amount:,.0f}" if total_order_amount else "-",
                     "Stock": stock_cell,
-                }
-            )
-        elif operation == "subtract":
-            group = get_group(
-                "decrease", "Stock Sold", "🛒", ["Item", "Sold", "Amount", "Previous", "Current"]
-            )
-            group["rows"].append(
-                {
-                    "Item": standard_item.capitalize(),
-                    "Sold": qty,
-                    "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
-                    "Previous": current_qty,
-                    "Current": new_qty,
                 }
             )
         else:

@@ -11,6 +11,7 @@ import datetime
 import pytest
 
 from db_operations import (
+    WALK_IN_CUSTOMER,
     _format_purchase_date,
     _match_supplier,
     _normalize_supplier_name,
@@ -331,16 +332,6 @@ class TestProcessTransactions:
         assert "samosa" in errors[0]
         assert fake_db.paths_under(f"users/{self.UID}/stock") == []
 
-    def test_counter_sale_of_unknown_item_errors_and_creates_nothing(self):
-        """No customer named — it is a plain stock movement, so it still needs
-        an item to move. Only orders (see below) accept uncatalogued items."""
-        fake_db = FakeFirestore()
-        results, errors = self._run(fake_db, self._txn(operation="subtract", item="samosa", qty=2))
-
-        assert results == []
-        assert len(errors) == 1
-        assert fake_db.paths_under(f"users/{self.UID}/stock") == []
-
     def test_supplier_purchase_of_unknown_item_creates_nothing(self):
         """A supplier purchase is still a restock — it cannot conjure the item."""
         fake_db = FakeFirestore()
@@ -464,6 +455,75 @@ class TestProcessTransactions:
         (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
         assert fake_db.docs[path]["quantity"] == 3
         assert fake_db.docs[path]["amount"] == 0
+
+    def test_a_counter_sale_books_to_the_walk_in_order(self):
+        """Nobody named, item not catalogued — the old code rejected this
+        outright. A sale is an order, so it lands on a card that can be renamed
+        and billed instead of being lost to an error."""
+        fake_db = FakeFirestore()
+        results, errors = self._run(
+            fake_db, self._txn(operation="subtract", item="samosa", qty=2, rate=10)
+        )
+
+        assert errors == []
+        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        order = fake_db.docs[path]
+        assert order["customer_name"] == WALK_IN_CUSTOMER
+        assert order["customer_modifier"] == ""
+        assert order["item"] == "samosa"
+        assert order["amount"] == 20
+        assert fake_db.paths_under(f"users/{self.UID}/stock") == []
+        assert [r["Customer"] for g in results for r in g["rows"]] == ["Walk-in"]
+
+    def test_a_counter_sale_of_a_stocked_item_still_moves_stock(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "rice", quantity=10, price=50)
+        _, errors = self._run(fake_db, self._txn(operation="subtract", item="rice", qty=3))
+
+        assert errors == []
+        assert fake_db.docs[f"users/{self.UID}/stock/rice"]["quantity"] == 7
+        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        assert fake_db.docs[path]["customer_name"] == WALK_IN_CUSTOMER
+        assert fake_db.docs[path]["amount"] == 150, "priced from inventory"
+
+    def test_counter_sale_items_spoken_together_share_one_walk_in_order(self):
+        fake_db = FakeFirestore()
+        _, errors = process_transactions(
+            [
+                self._txn(operation="subtract", item="samosa", qty=2, rate=10),
+                self._txn(operation="subtract", item="kachori", qty=1, rate=15),
+            ],
+            **self._refs(fake_db),
+        )
+
+        assert errors == []
+        orders = [fake_db.docs[p] for p in fake_db.paths_under(f"users/{self.UID}/orders")]
+        assert {o["item"] for o in orders} == {"samosa", "kachori"}
+        assert len({o["order_id"] for o in orders}) == 1
+
+    def test_a_named_sale_never_books_to_the_walk_in_card(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "rice", quantity=10, price=50)
+        self._run(
+            fake_db,
+            self._txn(operation="subtract", item="rice", qty=1, customer_name="sujal"),
+        )
+
+        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        assert fake_db.docs[path]["customer_name"] == "sujal"
+
+    def test_credit_with_no_name_becomes_a_walk_in_order_not_a_ledger_debt(self):
+        """There is nobody to chase for the money, so it must not reach the
+        ledger — but the goods still left the shop, so the order stands."""
+        fake_db = FakeFirestore()
+        _, errors = self._run(
+            fake_db, self._txn(operation="subtract", item="samosa", qty=2, is_credit=True)
+        )
+
+        assert errors == []
+        assert fake_db.paths_under(f"users/{self.UID}/udhaar") == []
+        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        assert fake_db.docs[path]["customer_name"] == WALK_IN_CUSTOMER
 
     def test_a_spoken_item_close_to_a_stocked_one_still_matches_inventory(self):
         """Accepting new items must not stop STT slips resolving to real stock."""

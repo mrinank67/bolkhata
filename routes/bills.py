@@ -28,7 +28,6 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Header, HTTPException
 from firebase_admin import firestore
-from google.cloud.firestore_v1.base_query import FieldFilter
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -49,6 +48,7 @@ from routes.orders import (  # reuse the order-side helpers rather than restatin
     _bill_expiry,
     _bill_no,
     _display_price,
+    _load_order_docs,
 )
 
 router = APIRouter()
@@ -115,29 +115,6 @@ def _touch_blob(blob) -> None:
         blob.patch()
     except Exception:
         pass
-
-
-def _load_order_docs(orders_ref, order_id):
-    """Fetch all line-item docs for an order, mirroring delete_order's legacy handling."""
-    if order_id.startswith("legacy|"):
-        parts = order_id.split("|")
-        cname = parts[1] if len(parts) > 1 else ""
-        cmod = parts[2] if len(parts) > 2 else ""
-        day = parts[3] if len(parts) > 3 else ""
-        docs = []
-        for doc in orders_ref.where(filter=FieldFilter("customer_name", "==", cname)).stream():
-            d = doc.to_dict()
-            if (d.get("customer_modifier", "") or "") != cmod:
-                continue
-            ts = d.get("timestamp")
-            try:
-                doc_day = ts.date().isoformat() if ts else "unknown"
-            except AttributeError:
-                doc_day = "unknown"
-            if (not d.get("order_id") and doc_day == day) or d.get("order_id") == order_id:
-                docs.append(doc)
-        return docs
-    return list(orders_ref.where(filter=FieldFilter("order_id", "==", order_id)).stream())
 
 
 @router.post("/orders/{order_id}/bill")
