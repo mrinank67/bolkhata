@@ -271,6 +271,32 @@ def process_transactions(
         txn_rate = _to_number(txn.get("rate"))
         txn_unit = txn.get("unit") or ""
 
+        # --- A ledger line has to name someone ---
+        # Money owed to nobody can never be collected, and without a name the
+        # sale path below would book the credit to the walk-in card as a plain
+        # cash order. The name was usually spoken a sentence ago ("Ramesh ko do
+        # maggi de do" … "aur paanch khaate mein likh do"), so inherit it from
+        # the recent-context window. The walk-in card is not a person and is
+        # never inherited from (routes/voice.py does not carry it forward).
+        needs_customer = (is_credit and operation == "subtract") or operation == "payment"
+        if (
+            needs_customer
+            and not customer_name
+            and recent_customer
+            and recent_customer != WALK_IN_CUSTOMER
+        ):
+            customer_name = recent_customer
+            customer_modifier = recent_modifier or ""
+            # The pair comes from a real transaction, so it already points at one
+            # person — asking which namesake to use would be asking twice.
+            txn["_resolved"] = True
+
+        # Nobody to inherit from: ask instead of recording a debt against nobody.
+        # (A payment keeps its own "Kisne payment kiya?" message further down.)
+        if is_credit and operation == "subtract" and not customer_name:
+            errors.append("Kiske khaate mein likhna hai? (Please specify a name).")
+            continue
+
         # --- Disambiguate duplicate customer names ---
         # _resolved is set by /voice/resolve after the user picks a customer;
         # without it, picking the no-modifier option would re-trigger this prompt forever.

@@ -568,18 +568,74 @@ class TestProcessTransactions:
         (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
         assert fake_db.docs[path]["customer_name"] == "sujal"
 
-    def test_credit_with_no_name_becomes_a_walk_in_order_not_a_ledger_debt(self):
-        """There is nobody to chase for the money, so it must not reach the
-        ledger — but the goods still left the shop, so the order stands."""
+    def test_credit_with_no_name_asks_who_instead_of_booking_a_walk_in_order(self):
+        """ "5 maggi khaate mein likh do" with nobody named is a debt against
+        nobody. Booking it to the walk-in card would silently turn a credit
+        entry into a cash sale, so it asks instead of guessing."""
         fake_db = FakeFirestore()
-        _, errors = self._run(
+        results, errors = self._run(
             fake_db, self._txn(operation="subtract", item="samosa", qty=2, is_credit=True)
         )
 
-        assert errors == []
+        assert results == []
+        assert len(errors) == 1
+        assert "khaate" in errors[0]
         assert fake_db.paths_under(f"users/{self.UID}/udhaar") == []
-        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
-        assert fake_db.docs[path]["customer_name"] == WALK_IN_CUSTOMER
+        assert fake_db.paths_under(f"users/{self.UID}/orders") == []
+
+    def test_credit_with_no_name_inherits_the_recent_customer(self):
+        """The name was said a sentence ago — "Ramesh ko do maggi de do", then
+        "aur paanch khaate mein likh do"."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=50, price=12)
+        _, errors = process_transactions(
+            [self._txn(operation="subtract", item="maggi", qty=5, is_credit=True)],
+            recent_customer="ramesh",
+            recent_modifier="delhi",
+            **self._refs(fake_db),
+        )
+
+        assert errors == []
+        (udhaar,) = [fake_db.docs[p] for p in fake_db.paths_under(f"users/{self.UID}/udhaar")]
+        assert udhaar["customer_name"] == "ramesh"
+        assert udhaar["customer_modifier"] == "delhi"
+        assert udhaar["amount"] == 60
+
+    def test_credit_never_inherits_the_walk_in_card(self):
+        """A counter sale is not a person to put a debt on."""
+        fake_db = FakeFirestore()
+        _, errors = process_transactions(
+            [self._txn(operation="subtract", item="samosa", qty=2, is_credit=True)],
+            recent_customer=WALK_IN_CUSTOMER,
+            **self._refs(fake_db),
+        )
+
+        assert len(errors) == 1
+        assert fake_db.paths_under(f"users/{self.UID}/udhaar") == []
+
+    def test_a_nameless_payment_inherits_the_recent_customer(self):
+        fake_db = FakeFirestore()
+        fake_db.seed(
+            f"users/{self.UID}/udhaar/u1",
+            {"customer_name": "ramesh", "customer_modifier": "", "item": "rice", "amount": 500},
+        )
+        _, errors = process_transactions(
+            [self._txn(target="ledger", operation="payment", amount=200, is_credit=True)],
+            recent_customer="ramesh",
+            **self._refs(fake_db),
+        )
+
+        assert errors == []
+        assert fake_db.docs[f"users/{self.UID}/udhaar/u1"]["amount"] == 300
+
+    def test_a_nameless_payment_with_no_context_still_asks_who_paid(self):
+        fake_db = FakeFirestore()
+        _, errors = self._run(
+            fake_db, self._txn(target="ledger", operation="payment", amount=200, is_credit=True)
+        )
+
+        assert len(errors) == 1
+        assert "payment" in errors[0]
 
     def test_a_spoken_item_close_to_a_stocked_one_still_matches_inventory(self):
         """Accepting new items must not stop STT slips resolving to real stock."""
