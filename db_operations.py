@@ -734,17 +734,25 @@ def process_transactions(
 
         stock_doc_ref = user_stock_ref.document(standard_item)
         stock_doc = stock_doc_ref.get()
+        in_inventory = stock_doc.exists
 
-        # Items are created manually only. A voice restock of an unknown item
-        # used to create the stock doc with just a name and quantity — no sell
-        # price, cost price, unit or category — leaving a half-formed record
-        # every later screen had to defend against. Now voice only ever moves
-        # stock that already exists (the fuzzy match above is the sole gate).
-        if not stock_doc.exists:
+        # Selling to a named customer is an order, and an order records whatever
+        # the shopkeeper actually handed over — the inventory is a price/stock
+        # reference, not a menu of what may be sold. An uncatalogued item is
+        # written to the order under the spoken name and flagged (the Orders page
+        # marks it with a "!"); it moves no stock, because there is no stock doc
+        # to move and voice must not create a half-formed one.
+        is_customer_sale = operation == "subtract" and bool(customer_name)
+
+        # Everything else still needs the item to exist: a restock, a supplier
+        # purchase or a stock inquiry is meaningless without a catalogued item,
+        # and creating one from speech leaves a record with no sell price, cost
+        # price, unit or category that every later screen has to defend against.
+        if not in_inventory and not is_customer_sale:
             errors.append(f"{standard_item} inventory mein nahi hai. Pehle app mein add karein.")
             continue
 
-        stock_data = stock_doc.to_dict()
+        stock_data = stock_doc.to_dict() if in_inventory else {}
         current_qty = stock_data.get("quantity", 0)
         db_price = stock_data.get("price", 0)
 
@@ -754,8 +762,10 @@ def process_transactions(
             group["rows"].append({"Item": standard_item.capitalize(), "Current Stock": current_qty})
             continue
 
-        # Quantity — keep fractional values ("2.5 kilo") instead of collapsing to 1
-        if raw_qty == "ALL" and operation == "subtract":
+        # Quantity — keep fractional values ("2.5 kilo") instead of collapsing to 1.
+        # "sab de do" can only mean the stock on hand, so it needs a stock doc;
+        # for an uncatalogued item it falls through to the normal default.
+        if raw_qty == "ALL" and operation == "subtract" and in_inventory:
             qty = current_qty
         else:
             qty = _to_number(raw_qty, default=1)
@@ -776,26 +786,34 @@ def process_transactions(
         elif not txn_amount and db_price > 0 and operation == "subtract":
             txn_amount = db_price * qty
 
-        # Calculate new stock
-        if operation == "subtract":
-            new_qty = max(0, current_qty - qty)
-        else:
-            new_qty = current_qty + qty
+        # Calculate new stock and update Stock DB. Skipped entirely for an
+        # uncatalogued order item — writing here would conjure the half-formed
+        # stock doc this path exists to avoid. `stock_cell` is what the result
+        # table shows: a number for a tracked item, "!" for one the shop does
+        # not stock, matching the marker on the Orders page.
+        new_qty = 0
+        stock_cell = "!"
+        if in_inventory:
+            if operation == "subtract":
+                new_qty = max(0, current_qty - qty)
+            else:
+                new_qty = current_qty + qty
 
-        # Update Stock DB
-        update_data = {
-            "quantity": new_qty,
-            "item": standard_item,
-            "updated_at": firestore.SERVER_TIMESTAMP,
-        }
+            update_data = {
+                "quantity": new_qty,
+                "item": standard_item,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }
 
-        # A rate spoken on a plain inventory add is the shop's SELLING price.
-        # A rate spoken on a supplier purchase is a COST price — writing that to
-        # stock.price would make every later sale bill at wholesale cost.
-        if txn_rate > 0 and operation == "add" and not supplier_name:
-            update_data["price"] = txn_rate
+            # A rate spoken on a plain inventory add is the shop's SELLING price.
+            # A rate spoken on a supplier purchase is a COST price — writing that to
+            # stock.price would make every later sale bill at wholesale cost.
+            if txn_rate > 0 and operation == "add" and not supplier_name:
+                update_data["price"] = txn_rate
 
-        stock_doc_ref.set(update_data, merge=True)
+            stock_doc_ref.set(update_data, merge=True)
+            stock_cell = new_qty
+
         title_name = (
             f"{customer_name.capitalize()} ({customer_modifier})"
             if customer_modifier
@@ -873,7 +891,7 @@ def process_transactions(
                     "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
                     "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
                     "Total Owed": f"₹{total_owed_amount:,.0f}" if total_owed_amount else "-",
-                    "Stock": new_qty,
+                    "Stock": stock_cell,
                 }
             )
         elif operation == "subtract" and customer_name:
@@ -921,7 +939,7 @@ def process_transactions(
                     "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
                     "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
                     "Total Ordered": f"₹{total_order_amount:,.0f}" if total_order_amount else "-",
-                    "Stock": new_qty,
+                    "Stock": stock_cell,
                 }
             )
         elif operation == "subtract":

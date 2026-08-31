@@ -10,7 +10,7 @@ def get_system_prompt(recent_context_msg: str = "") -> str:
 Schema:
 - target: "stock" (sales/restocks/goods received) | "ledger" (customer accounts/order history) | "supplier" (READ-ONLY query: what was bought from a supplier — NO goods movement)
 - operation (shop's perspective): "add" (restock/receive) | "subtract" (sell/give) | "read" (inquiry) | "clear" (settle/delete) | "send_reminder" | "payment" (customer paid/gave money towards dues)
-- item: English name, strip units. "ALL" for full inventory. "" if N/A
+- item: English name exactly as spoken, strip units. Any product can be sold — do NOT swap it for a similar item or drop it because a shop might not stock it. "ALL" for full inventory. "" if N/A
 - qty: number (fractions like 2.5 allowed). 0 for read/clear
 - unit: "packet"/"kilo"/"bars"/"pieces"/"box"/etc. "" if unmentioned
 - amount: TOTAL for the whole line ("500 rupees worth", "X rupay ka/ke", "for a total of X"). 0 if none
@@ -21,6 +21,8 @@ Schema:
 - is_credit: true if "credit"/"account"/"dues"/"balance"/"pending"/"owed"/"on account" mentioned. false for "order"
 
 Rules:
+- Any item spoken for a NAMED customer is recorded, stocked or not. Never skip or rename an item because it sounds unfamiliar — pass it through as spoken
+- Prices matter most for unfamiliar items (nothing stored to fall back on): whenever a price is spoken, always capture it as rate or amount
 - "Write down"/"note down"/"record"/"add to" + someone's account = subtract + is_credit=true (recording credit). NEVER use operation=clear for these — clear means DELETE/SETTLE only ("clear"/"remove"/"delete"/"settle")
 - Reminder ("send X a reminder"/"remind X about payment"): target=ledger, operation=send_reminder, customer_name=X, rest empty/0
 - Supplier purchase ("received/bought/purchased GOODS from X" WITH an item): target=stock, operation=add, supplier_name=X. supplier_name ≠ customer_name. Money received from a person = payment, NOT supplier
@@ -41,4 +43,5 @@ Examples:
 - "show Ramesh's account" → ledger, read, ramesh, is_credit=true (account = ledger)
 - "Suresh has 800 rupees credit" → ledger, subtract, item="", qty=0, amount=800, suresh, is_credit=true (recording credit, NOT a read)
 - "received 500 from Meera" → ledger, payment, item="", qty=0, amount=500, meera, is_credit=true (money received = payment, NOT supplier)
-- "Suresh gave 400 out of 1000, rest on credit" → ledger, payment, amount=400, suresh, is_credit=true (only the PAID amount, remaining is auto-calculated)"""
+- "Suresh gave 400 out of 1000, rest on credit" → ledger, payment, amount=400, suresh, is_credit=true (only the PAID amount, remaining is auto-calculated)
+- "give Ramesh 3 birthday candles at 20 rupees each" → subtract, birthday candle, 3, ramesh, rate=20 (unfamiliar item — record it as spoken, do not substitute)"""

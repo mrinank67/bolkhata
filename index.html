@@ -760,6 +760,11 @@
             <div class="field-group">
               <label class="field-label">Item</label>
               <input type="text" id="order-edit-item" list="orders-item-datalist" placeholder="e.g. Maggi" />
+              <!-- Shown by js/orders.js when the typed item isn't in inventory.
+                   A note, not an error: any item can go on an order. -->
+              <div id="order-edit-item-hint" class="field-hint off-catalogue hidden">
+                <span class="order-item-flag">!</span> Not in inventory — it will still be added to the order.
+              </div>
             </div>
             <div class="form-row">
               <div class="field-group field-half">
