@@ -24,7 +24,8 @@ By leveraging extreme low-latency processing, BolKhata allows shopkeepers to spe
 * **Groq GPT-OSS Intent Parsing:** Extracts item names, quantities (including fractions like 2.5 kilo), unit types, transactional amounts, per-unit rates, customer/supplier names, and credit modifiers from spoken sentences.
 * **Contextual Auto-Fill:** Automatically remembers the current active customer context for 5 minutes. If a shopkeeper says "do packet aur de do" right after making a sale, the app automatically credits the correct customer.
 * **Customer Disambiguation:** When two customers share a name (e.g. two Sureshes), the app prompts the shopkeeper to pick the right one before applying credit sales, payments, settlements, or reminders.
-* **Transactions Only — Setup Is Manual:** Voice records what happens day to day (sales, credit, payments, restocks, supplier purchases, queries). It never creates an inventory item or a supplier. Those are catalogued once through the Add Item and Add Supplier forms, which capture the details speech cannot carry — selling price, cost price, unit, category, photo, mobile, GST. Speaking about an item that isn't catalogued returns "*item* inventory mein nahi hai. Pehle app mein add karein." instead of creating a half-filled record, so every voice transaction resolves against a complete catalogue.
+* **Transactions Only — Setup Is Manual:** Voice records what happens day to day (sales, credit, payments, restocks, supplier purchases, queries). It never creates an inventory item or a supplier. Those are catalogued once through the Add Item and Add Supplier forms, which capture the details speech cannot carry — selling price, cost price, unit, category, photo, mobile, GST. Restocks, supplier purchases and stock checks therefore still need a catalogued item ("*item* inventory mein nahi hai. Pehle app mein add karein.") rather than creating a half-filled record.
+* **Orders Take Anything the Customer Asks For:** A sale to a named customer is never blocked by the catalogue. A catalogued item is matched, priced and stock-adjusted as always; anything else is recorded on the order exactly as spoken, priced from whatever rate was said, and left out of stock tracking. Uncatalogued lines are marked with a **!** on the Orders page — never on the customer's bill — so they can be priced, corrected, or added to the Inventory later.
 
 ### 2. Real-Time Smart Inventory
 
@@ -75,7 +76,7 @@ Full details in [Security & Rate Limiting](docs/security.md).
 
 ## Example Voice Commands
 
-Speak naturally in Hindi or Hinglish, and BolKhata will instantly map the correct transaction. Every command below acts on an item or supplier that already exists — catalogue those once through the Add Item and Add Supplier forms, then run the shop by voice.
+Speak naturally in Hindi or Hinglish, and BolKhata will instantly map the correct transaction. Stock movements — restocks, supplier purchases, stock checks — act on an item that already exists, so catalogue those once through the Add Item and Add Supplier forms. Orders for a named customer accept any item, catalogued or not.
 
 | Transaction Type | Example Spoken Hindi Command | Extracted Intent |
 | :--- | :--- | :--- |
@@ -86,6 +87,7 @@ Speak naturally in Hindi or Hinglish, and BolKhata will instantly map the correc
 | **Payment Received** | *"Suresh ne 400 rupey diye."* | Records a 400 rupee payment, settling oldest dues first |
 | **Supplier Purchase** | *"Parle distributor se 10 packet Parle-G 120 rupey me liya."* | Increases Parle-G stock by 10, logs a 120 rupee purchase from Parle |
 | **Customer Order** | *"Raj ko do Maggi pandrah rupey wali de do."* | Logs a non-credit sale to Raj — appears as an order on the Orders page, ready to bill |
+| **Order for an Uncatalogued Item** | *"Raj ko teen birthday candle bees rupey wali de do."* | Adds the item to Raj's order at ₹20 each even though the shop doesn't stock it — flagged with a **!** on the Orders page, not on the bill |
 | **Checking Stock** | *"Toothpaste kitna bacha hai dekhna?"* | Performs instant fuzzy search and prints current stock |
 | **Order History Inquiry** | *"Nehru apartment wale Sharma ji ke orders dikhao."* | Filters and lists all orders for that specific customer |
 | **Send Reminder** | *"Suresh ko payment ka reminder bhejo."* | Builds a WhatsApp reminder with a UPI payment link |

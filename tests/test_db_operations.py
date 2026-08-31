@@ -331,7 +331,9 @@ class TestProcessTransactions:
         assert "samosa" in errors[0]
         assert fake_db.paths_under(f"users/{self.UID}/stock") == []
 
-    def test_sale_of_unknown_item_errors_and_creates_nothing(self):
+    def test_counter_sale_of_unknown_item_errors_and_creates_nothing(self):
+        """No customer named — it is a plain stock movement, so it still needs
+        an item to move. Only orders (see below) accept uncatalogued items."""
         fake_db = FakeFirestore()
         results, errors = self._run(fake_db, self._txn(operation="subtract", item="samosa", qty=2))
 
@@ -378,6 +380,104 @@ class TestProcessTransactions:
         assert fake_db.paths_under(f"users/{self.UID}/suppliers") == [
             f"users/{self.UID}/suppliers/s1"
         ]
+
+    # --- orders take anything the customer asks for ---------------------
+
+    def test_order_for_an_uncatalogued_item_is_recorded_without_creating_stock(self):
+        """Shopkeepers order things they don't stock-track. The order is the
+        record; inventory stays a reference the item simply isn't in."""
+        fake_db = FakeFirestore()
+        _, errors = self._run(
+            fake_db,
+            self._txn(operation="subtract", item="samosa", qty=2, rate=10, customer_name="sujal"),
+        )
+
+        assert errors == []
+        assert fake_db.paths_under(f"users/{self.UID}/stock") == [], "voice must not catalogue"
+        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        order = fake_db.docs[path]
+        assert order["item"] == "samosa"
+        assert order["quantity"] == 2
+        assert order["amount"] == 20
+        assert order["price"] == 10
+
+    def test_an_uncatalogued_order_item_is_flagged_in_the_result_row(self):
+        """The Stock cell carries the same "!" the Orders page shows."""
+        fake_db = FakeFirestore()
+        results, _ = self._run(
+            fake_db,
+            self._txn(operation="subtract", item="samosa", qty=2, rate=10, customer_name="sujal"),
+        )
+
+        (row,) = [r for g in results for r in g["rows"]]
+        assert row["Stock"] == "!"
+
+    def test_uncatalogued_and_stocked_items_share_one_order(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "rice", quantity=10, price=50)
+        _, errors = process_transactions(
+            [
+                self._txn(operation="subtract", item="rice", qty=2, customer_name="sujal"),
+                self._txn(
+                    operation="subtract", item="samosa", qty=4, rate=10, customer_name="sujal"
+                ),
+            ],
+            **self._refs(fake_db),
+        )
+
+        assert errors == []
+        orders = [fake_db.docs[p] for p in fake_db.paths_under(f"users/{self.UID}/orders")]
+        assert {o["item"] for o in orders} == {"rice", "samosa"}
+        assert len({o["order_id"] for o in orders}) == 1
+        assert fake_db.docs[f"users/{self.UID}/stock/rice"]["quantity"] == 8, "stocked item moves"
+
+    def test_credit_sale_of_an_uncatalogued_item_records_udhaar_and_an_order(self):
+        fake_db = FakeFirestore()
+        _, errors = self._run(
+            fake_db,
+            self._txn(
+                operation="subtract",
+                item="samosa",
+                qty=2,
+                rate=10,
+                customer_name="sujal",
+                is_credit=True,
+            ),
+        )
+
+        assert errors == []
+        (udhaar,) = [fake_db.docs[p] for p in fake_db.paths_under(f"users/{self.UID}/udhaar")]
+        assert udhaar["item"] == "samosa"
+        assert udhaar["amount"] == 20
+        assert len(fake_db.paths_under(f"users/{self.UID}/orders")) == 1
+        assert fake_db.paths_under(f"users/{self.UID}/stock") == []
+
+    def test_an_uncatalogued_item_with_no_price_still_reaches_the_order(self):
+        """Nothing to fall back on, so it lands at ₹0 for the shopkeeper to fix
+        on the Orders page — losing the line entirely would be worse."""
+        fake_db = FakeFirestore()
+        _, errors = self._run(
+            fake_db, self._txn(operation="subtract", item="samosa", qty=3, customer_name="sujal")
+        )
+
+        assert errors == []
+        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        assert fake_db.docs[path]["quantity"] == 3
+        assert fake_db.docs[path]["amount"] == 0
+
+    def test_a_spoken_item_close_to_a_stocked_one_still_matches_inventory(self):
+        """Accepting new items must not stop STT slips resolving to real stock."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "rice", quantity=10, price=50)
+        _, errors = self._run(
+            fake_db, self._txn(operation="subtract", item="ricee", qty=2, customer_name="sujal")
+        )
+
+        assert errors == []
+        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        assert fake_db.docs[path]["item"] == "rice"
+        assert fake_db.docs[path]["amount"] == 100, "priced from inventory"
+        assert fake_db.docs[f"users/{self.UID}/stock/rice"]["quantity"] == 8
 
     # --- transactions still work ---------------------------------------
 

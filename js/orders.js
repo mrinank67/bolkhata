@@ -14,6 +14,9 @@ let currentOrdersData = { orders: [], order_count: 0, total_value: 0 };
 let currentOrdersSort = 'recent';
 let ordersSearchQuery = '';
 let inventoryPrices = {};            // { itemNameLower: price }
+// Whether the inventory fetch above actually succeeded. It is best-effort, and
+// a failed fetch would otherwise flag every line item as off-catalogue.
+let inventoryLoaded = false;
 let ledgerNumbers = {};              // { "name|modifier": whatsapp_number } — for bill-send prefill
 let ledgerDues = {};                 // { "name|modifier": total_due } — this page already has the ledger
 // Which order the desktop detail pane is showing (unused below 1024px).
@@ -131,8 +134,11 @@ export async function loadOrders() {
       }
     } catch { /* best-effort — inputs just won't prefill */ }
 
-    // Build inventory price map + datalist for price defaults / autocomplete
+    // Build inventory price map + datalist for price defaults / autocomplete.
+    // Orders are not limited to catalogued items — inventory is a reference for
+    // pricing and autocomplete, and tells us which items to flag (see isOffCatalogue).
     inventoryPrices = {};
+    inventoryLoaded = false;
     let datalistHtml = '';
     try {
       const inv = await invRes.json();
@@ -142,6 +148,7 @@ export async function loadOrders() {
         inventoryPrices[name] = it.price || 0;
         datalistHtml += `<option value="${escapeHtml(capitalize(it.item))}"></option>`;
       }
+      inventoryLoaded = true;
     } catch { /* inventory is best-effort — defaults just won't prefill */ }
     $('orders-item-datalist').innerHTML = datalistHtml;
 
@@ -202,6 +209,25 @@ function renderOrders() {
 }
 
 const orderKey = (o) => `${o.customer_name}|${o.customer_modifier || ''}`;
+
+/**
+ * True when an ordered item is not in the shop's inventory.
+ *
+ * Orders accept anything the customer asks for, so this is a note, not an
+ * error: the item still bills normally, it just isn't stock-tracked. Computed
+ * fresh on every load rather than stored on the order, so adding the item to
+ * the Inventory page later clears the flag on its own. Only claimed when the
+ * inventory actually loaded — an empty map from a failed fetch would flag
+ * everything.
+ */
+function isOffCatalogue(name) {
+  if (!inventoryLoaded) return false;
+  return !((name || '').trim().toLowerCase() in inventoryPrices);
+}
+
+// The "not in inventory" marker. Deliberately UI-only — bills are rendered
+// server-side from the order's line items (routes/bills.py), which never see it.
+const OFF_CATALOGUE_FLAG = '<span class="order-item-flag" role="img" aria-label="Not in inventory" title="Not in inventory — add it from the Inventory page to track stock">!</span>';
 
 function orderCardClasses(o, isSelected) {
   return `ledger-customer-card order-card${isSelected ? ' selected' : ''}`;
@@ -276,7 +302,7 @@ function buildOrderDetailHTML(o) {
     const price = item.price || 0;
     itemsHtml += `<div class="order-item-row" data-id="${escapeHtml(item.id)}" data-item="${escapeHtml(item.item)}" data-qty="${qty}" data-price="${price}">
       <div class="order-item-info">
-        <div class="order-item-name">${escapeHtml(capitalize(item.item))}</div>
+        <div class="order-item-name">${escapeHtml(capitalize(item.item))}${isOffCatalogue(item.item) ? OFF_CATALOGUE_FLAG : ''}</div>
         <div class="order-item-meta">${qty} × ${inr(price)} = ${inr(item.amount)}</div>
       </div>
       <div class="order-item-actions">
@@ -491,19 +517,29 @@ function openEditModal(state) {
   $('order-edit-qty').value = state.qty || '';
   $('order-edit-price').value = (state.price !== undefined && state.price !== '') ? state.price : '';
   $('order-edit-save').textContent = state.mode === 'add' ? 'Add' : 'Save';
+  syncOffCatalogueHint();
   $('order-edit-modal').classList.add('open');
   setTimeout(() => $('order-edit-item').focus(), 100);
 }
 
-// Default the price from inventory when the item name is set/changed.
+// Default the price from inventory when the item name is set/changed. An item
+// the shop doesn't stock keeps whatever price was typed — it is still ordered.
 function prefillPriceFromInventory(itemInput, priceInput) {
   const name = (itemInput.value || '').trim().toLowerCase();
   if (name in inventoryPrices) priceInput.value = inventoryPrices[name];
 }
 
+// Tell the shopkeeper the typed item isn't in inventory, without blocking them.
+function syncOffCatalogueHint() {
+  const name = ($('order-edit-item').value || '').trim();
+  $('order-edit-item-hint').classList.toggle('hidden', !name || !isOffCatalogue(name));
+}
+
 $('order-edit-item').addEventListener('change', () => {
   prefillPriceFromInventory($('order-edit-item'), $('order-edit-price'));
 });
+
+$('order-edit-item').addEventListener('input', syncOffCatalogueHint);
 
 $('order-edit-cancel').addEventListener('click', () => {
   $('order-edit-modal').classList.remove('open');

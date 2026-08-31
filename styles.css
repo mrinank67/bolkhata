@@ -2731,6 +2731,46 @@ input::placeholder {
   color: var(--text-primary);
 }
 
+/* "Not in inventory" marker on an order line item. Orders are not restricted to
+   catalogued items, so this is a note, not an error — and it lives only in the
+   app: the bill PDF is built server-side from the line items and never sees it. */
+.order-item-flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: var(--amber, #f59e0b);
+  font-size: 0.65rem;
+  font-weight: 800;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: help;
+}
+
+/* Same marker in the Add/Edit Item dialog, as a hint under the item input. */
+.field-hint {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  margin-top: 5px;
+}
+
+.field-hint.off-catalogue {
+  color: var(--amber, #f59e0b);
+}
+
+.field-hint .order-item-flag {
+  margin-left: 0;
+  margin-right: 4px;
+}
+
 .order-item-meta {
   font-size: 0.72rem;
   color: var(--text-tertiary);
