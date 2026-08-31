@@ -26,13 +26,6 @@ SUPPLIER_SUFFIXES = {
     "vendors",
 }
 
-# Customer on an order nobody was named for ("do maggi de do" at the counter).
-# Every sale becomes an order, so a counter sale needs a card to land on; the
-# shopkeeper renames it from the Orders page when the walk-in turns out to be
-# someone they want to bill or chase. Lowercase because every customer_name in
-# Firestore is stored lowercased.
-WALK_IN_CUSTOMER = "walk-in"
-
 # Sort fallback for udhaar docs missing a timestamp (must be tz-aware to compare
 # with Firestore timestamps)
 _EPOCH_MIN = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
@@ -234,12 +227,10 @@ def process_transactions(
     # rather than creating a new one. It inherits that order's number too — a
     # follow-up is the same order, not a new one.
     #
-    # Never for the walk-in card: it is a stand-in for "whoever was at the
-    # counter", so appending to it would pile unrelated customers' sales into one
-    # order. Each nameless sale starts its own card. (routes/voice.py already
-    # declines to carry walk-in context forward; this is the same rule stated
-    # where the reuse actually happens.)
-    if recent_order_id and recent_customer and recent_customer != WALK_IN_CUSTOMER:
+    # Only for a named customer. A counter sale's order carries no name, so it
+    # sets no recent context and nothing appends to it — two sales a minute
+    # apart are two people at the counter, not one order in halves.
+    if recent_order_id and recent_customer:
         recent_ckey = f"{recent_customer.lower()}|{(recent_modifier or '').lower()}"
         order_sessions[recent_ckey] = (recent_order_id, _existing_order_no(recent_order_id))
 
@@ -273,18 +264,13 @@ def process_transactions(
 
         # --- A ledger line has to name someone ---
         # Money owed to nobody can never be collected, and without a name the
-        # sale path below would book the credit to the walk-in card as a plain
-        # cash order. The name was usually spoken a sentence ago ("Ramesh ko do
-        # maggi de do" … "aur paanch khaate mein likh do"), so inherit it from
-        # the recent-context window. The walk-in card is not a person and is
-        # never inherited from (routes/voice.py does not carry it forward).
+        # sale path below would book the credit as a plain nameless cash order.
+        # The name was usually spoken a sentence ago ("Ramesh ko do maggi de
+        # do" … "aur paanch khaate mein likh do"), so inherit it from
+        # the recent-context window. A counter sale leaves that window empty —
+        # its order has no customer on it — so nothing is inherited from one.
         needs_customer = (is_credit and operation == "subtract") or operation == "payment"
-        if (
-            needs_customer
-            and not customer_name
-            and recent_customer
-            and recent_customer != WALK_IN_CUSTOMER
-        ):
+        if needs_customer and not customer_name and recent_customer:
             customer_name = recent_customer
             customer_modifier = recent_modifier or ""
             # The pair comes from a real transaction, so it already points at one
@@ -861,12 +847,12 @@ def process_transactions(
             else ""
         )
 
-        # Who the order books to. Nobody named means a counter sale, which still
-        # belongs on the Orders page — under the walk-in card, renameable later.
-        # A modifier without a name is meaningless, so it goes with the name.
-        order_customer = customer_name or WALK_IN_CUSTOMER
+        # Who the order books to. A counter sale names nobody and keeps an empty
+        # customer — it is still an order card, just one without a name on it
+        # until the shopkeeper adds one. A modifier with no name is meaningless.
+        order_customer = customer_name
         order_modifier = customer_modifier if customer_name else ""
-        order_title = title_name or WALK_IN_CUSTOMER.capitalize()
+        order_title = title_name or "-"
 
         # Build result row
         if operation == "subtract" and is_credit and customer_name:
@@ -941,9 +927,9 @@ def process_transactions(
                 }
             )
         elif operation == "subtract":
-            # Every sale lands here, named or not: a counter sale books to the
-            # walk-in card rather than being recorded as stock movement alone,
-            # so it can be priced, corrected and billed from the Orders page.
+            # Every sale lands here, named or not: a counter sale books an order
+            # with no customer on it rather than being recorded as stock movement
+            # alone, so it can be priced, corrected and billed from the Orders page.
             group = get_group(
                 "order_sale",
                 "Customer Order",

@@ -92,8 +92,8 @@ class OrderItemAddRequest(OrderItemCreate):
 
 
 class OrderCustomerUpdate(BaseModel):
-    """Re-point an order at a different customer — how a walk-in order (a voice
-    sale with no name spoken) becomes a named one before it is billed."""
+    """Re-point an order at a different customer — how a customerless order (a
+    voice sale with no name spoken) becomes a named one before it is billed."""
 
     customer_name: str = Field(max_length=100)
     customer_modifier: Optional[str] = Field(default="", max_length=100)

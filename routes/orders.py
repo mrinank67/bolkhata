@@ -419,10 +419,9 @@ async def update_order_customer(
 ):
     """Re-point a whole order at a different customer.
 
-    A voice sale with no name spoken books to the walk-in card (see
-    `WALK_IN_CUSTOMER` in db_operations); this is how it becomes a real
-    customer's order before the bill goes out. Every line item carries the
-    customer, so all of them move together.
+    A voice sale with no name spoken books an order with an empty customer;
+    this is how it becomes a real customer's order before the bill goes out.
+    Every line item carries the customer, so all of them move together.
     """
     from main import db
 

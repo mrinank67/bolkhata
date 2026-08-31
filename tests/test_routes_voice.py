@@ -17,7 +17,6 @@ from unittest import mock
 import pytest
 
 import rate_limiter
-from db_operations import WALK_IN_CUSTOMER
 
 UID = "test-uid"
 # Must clear the handler's 100-byte "audio too short" floor, or every test below
@@ -258,8 +257,8 @@ class TestRecentCustomerContext:
     """The 2-minute window that puts "aur do de do" on the right customer.
 
     It is carried to the LLM as a RECENT CONTEXT line in the system prompt. The
-    walk-in card is excluded: it stands in for whoever was at the counter, so
-    treating it as the customer would pile unrelated sales into one order.
+    A counter sale's order carries no customer, so it sets no context at all —
+    that is what stops two sales a minute apart merging into one order.
     """
 
     def _seed_order(self, fake_db, customer):
@@ -288,8 +287,8 @@ class TestRecentCustomerContext:
         assert "RECENT CONTEXT" in self._system_prompt(groq)
         assert "ramesh" in self._system_prompt(groq)
 
-    def test_the_walk_in_card_is_not(self, authed_client, fake_db, sarvam, groq):
-        self._seed_order(fake_db, WALK_IN_CUSTOMER)
+    def test_a_nameless_counter_sale_is_not(self, authed_client, fake_db, sarvam, groq):
+        self._seed_order(fake_db, "")
 
         _post(authed_client)
 

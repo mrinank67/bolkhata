@@ -2731,9 +2731,18 @@ input::placeholder {
   color: var(--text-primary);
 }
 
+/* An order with no customer on it — a counter sale nobody was named for. The
+   placeholder is UI only: the record's customer really is empty, and bills fall
+   back to a plain "Customer" heading. */
+.order-card-unnamed {
+  color: var(--text-tertiary);
+  font-weight: 500;
+  font-style: italic;
+}
+
 /* Pencil beside an order's customer name — renames the whole order. It is the
-   only way a walk-in card (a voice sale with nobody named) gets a real customer
-   on it before the bill is generated. Sized in em so it tracks the name, which
+   only way a nameless card (a voice sale with nobody named) gets a customer on
+   it before the bill is generated. Sized in em so it tracks the name, which
    grows to 1.25rem in the desktop detail pane. */
 .order-customer-edit {
   display: inline-flex;

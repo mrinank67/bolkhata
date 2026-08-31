@@ -26,7 +26,7 @@ By leveraging extreme low-latency processing, BolKhata allows shopkeepers to spe
 * **Customer Disambiguation:** When two customers share a name (e.g. two Sureshes), the app prompts the shopkeeper to pick the right one before applying credit sales, payments, settlements, or reminders.
 * **Transactions Only — Setup Is Manual:** Voice records what happens day to day (sales, credit, payments, restocks, supplier purchases, queries). It never creates an inventory item or a supplier. Those are catalogued once through the Add Item and Add Supplier forms, which capture the details speech cannot carry — selling price, cost price, unit, category, photo, mobile, GST. Restocks, supplier purchases and stock checks therefore still need a catalogued item ("*item* inventory mein nahi hai. Pehle app mein add karein.") rather than creating a half-filled record.
 * **Orders Take Anything the Customer Asks For:** A sale is never blocked by the catalogue. A catalogued item is matched, priced and stock-adjusted as always; anything else is recorded on the order exactly as spoken, priced from whatever rate was said, and left out of stock tracking. Uncatalogued lines are marked with a **!** on the Orders page — never on the customer's bill — so they can be priced, corrected, or added to the Inventory later.
-* **Counter Sales Become Walk-in Orders:** A sale that names nobody ("do maggi de do") lands on a **Walk-in** order card instead of vanishing into a stock adjustment, so it can still be priced and billed. Anything spoken in the next two minutes joins the same card, and the pencil beside the customer name moves the whole order onto a real customer before the bill goes out. Credit is the exception: a debt has to belong to someone, so "khaate mein likh do" with nobody named takes the customer from the last two minutes of conversation, and asks whose account it is when there is nobody to inherit.
+* **Counter Sales Are Orders Too:** A sale that names nobody ("do maggi de do") still lands on an order card — one with no customer on it — instead of vanishing into a stock adjustment, so it can be priced and billed. Each one is its own card, and the pencil beside the customer name puts a name on the whole order before the bill goes out (an unnamed bill simply reads "Customer"). Credit is the exception: a debt has to belong to someone, so "khaate mein likh do" with nobody named takes the customer from the last two minutes of conversation, and asks whose account it is when there is nobody to inherit.
 
 ### 2. Real-Time Smart Inventory
 
@@ -81,7 +81,7 @@ Speak naturally in Hindi or Hinglish, and BolKhata will instantly map the correc
 
 | Transaction Type | Example Spoken Hindi Command | Extracted Intent |
 | :--- | :--- | :--- |
-| **Standard Cash Sale** | *"Do Colgate aur ek Maggi de do."* | Sells 2 Colgate & 1 Maggi (decreases stock, books a Walk-in order ready to bill) |
+| **Standard Cash Sale** | *"Do Colgate aur ek Maggi de do."* | Sells 2 Colgate & 1 Maggi (decreases stock, books an unnamed order ready to bill) |
 | **Credit Sale (Udhaar)** | *"Suresh ke khate me ek Lux sabun likh do."* | Credits 1 Lux to Suresh (decreases stock, logs to ledger) |
 | **Contextual Sale** | *"Ramesh Delhi wale ke khate me 50 rupey ki 2 Maggi likho."* | Accounts for local modifiers (Delhi wale Ramesh) & custom pricing |
 | **Amount-Only Credit** | *"Suresh pe 800 rupey ka udhaar likho."* | Adds an 800 rupee lump-sum due to Suresh's ledger |

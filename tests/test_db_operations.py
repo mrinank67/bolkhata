@@ -11,7 +11,6 @@ import datetime
 import pytest
 
 from db_operations import (
-    WALK_IN_CUSTOMER,
     _format_purchase_date,
     _match_supplier,
     _normalize_supplier_name,
@@ -456,10 +455,10 @@ class TestProcessTransactions:
         assert fake_db.docs[path]["quantity"] == 3
         assert fake_db.docs[path]["amount"] == 0
 
-    def test_a_counter_sale_books_to_the_walk_in_order(self):
+    def test_a_counter_sale_books_an_order_with_no_customer(self):
         """Nobody named, item not catalogued — the old code rejected this
-        outright. A sale is an order, so it lands on a card that can be renamed
-        and billed instead of being lost to an error."""
+        outright. A sale is an order, so it lands on a nameless card that can
+        be named and billed instead of being lost to an error."""
         fake_db = FakeFirestore()
         results, errors = self._run(
             fake_db, self._txn(operation="subtract", item="samosa", qty=2, rate=10)
@@ -468,12 +467,12 @@ class TestProcessTransactions:
         assert errors == []
         (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
         order = fake_db.docs[path]
-        assert order["customer_name"] == WALK_IN_CUSTOMER
+        assert order["customer_name"] == ""
         assert order["customer_modifier"] == ""
         assert order["item"] == "samosa"
         assert order["amount"] == 20
         assert fake_db.paths_under(f"users/{self.UID}/stock") == []
-        assert [r["Customer"] for g in results for r in g["rows"]] == ["Walk-in"]
+        assert [r["Customer"] for g in results for r in g["rows"]] == ["-"]
 
     def test_a_counter_sale_of_a_stocked_item_still_moves_stock(self):
         fake_db = FakeFirestore()
@@ -483,10 +482,10 @@ class TestProcessTransactions:
         assert errors == []
         assert fake_db.docs[f"users/{self.UID}/stock/rice"]["quantity"] == 7
         (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
-        assert fake_db.docs[path]["customer_name"] == WALK_IN_CUSTOMER
+        assert fake_db.docs[path]["customer_name"] == ""
         assert fake_db.docs[path]["amount"] == 150, "priced from inventory"
 
-    def test_counter_sale_items_spoken_together_share_one_walk_in_order(self):
+    def test_counter_sale_items_spoken_together_share_one_order(self):
         fake_db = FakeFirestore()
         _, errors = process_transactions(
             [
@@ -509,7 +508,7 @@ class TestProcessTransactions:
         fake_db.seed(
             f"users/{self.UID}/orders/first",
             {
-                "customer_name": WALK_IN_CUSTOMER,
+                "customer_name": "",
                 "customer_modifier": "",
                 "item": "maggi",
                 "order_id": "o1",
@@ -518,9 +517,11 @@ class TestProcessTransactions:
         )
         fake_db.seed(f"users/{self.UID}", {"order_seq": 1})
 
+        # A nameless order sets no recent context — this is what routes/voice.py
+        # reads back off that first order.
         process_transactions(
             [self._txn(operation="subtract", item="maggi", qty=5)],
-            recent_customer=WALK_IN_CUSTOMER,
+            recent_customer="",
             recent_order_id="o1",
             **self._refs(fake_db),
         )
@@ -534,7 +535,7 @@ class TestProcessTransactions:
         assert [d["order_no"] for d in added] == [2]
 
     def test_a_named_follow_up_still_joins_the_previous_order(self):
-        """The walk-in exception must not disarm the feature for real customers."""
+        """The counter-sale exception must not disarm this for real customers."""
         fake_db = FakeFirestore()
         self._seed_item(fake_db, "maggi", quantity=50, price=12)
         fake_db.seed(
@@ -557,7 +558,7 @@ class TestProcessTransactions:
         ]
         assert [d["order_id"] for d in added] == ["o1"]
 
-    def test_a_named_sale_never_books_to_the_walk_in_card(self):
+    def test_a_named_sale_keeps_its_customer(self):
         fake_db = FakeFirestore()
         self._seed_item(fake_db, "rice", quantity=10, price=50)
         self._run(
@@ -568,9 +569,9 @@ class TestProcessTransactions:
         (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
         assert fake_db.docs[path]["customer_name"] == "sujal"
 
-    def test_credit_with_no_name_asks_who_instead_of_booking_a_walk_in_order(self):
+    def test_credit_with_no_name_asks_who_instead_of_booking_an_order(self):
         """ "5 maggi khaate mein likh do" with nobody named is a debt against
-        nobody. Booking it to the walk-in card would silently turn a credit
+        nobody. Booking it as a nameless order would silently turn a credit
         entry into a cash sale, so it asks instead of guessing."""
         fake_db = FakeFirestore()
         results, errors = self._run(
@@ -600,18 +601,6 @@ class TestProcessTransactions:
         assert udhaar["customer_name"] == "ramesh"
         assert udhaar["customer_modifier"] == "delhi"
         assert udhaar["amount"] == 60
-
-    def test_credit_never_inherits_the_walk_in_card(self):
-        """A counter sale is not a person to put a debt on."""
-        fake_db = FakeFirestore()
-        _, errors = process_transactions(
-            [self._txn(operation="subtract", item="samosa", qty=2, is_credit=True)],
-            recent_customer=WALK_IN_CUSTOMER,
-            **self._refs(fake_db),
-        )
-
-        assert len(errors) == 1
-        assert fake_db.paths_under(f"users/{self.UID}/udhaar") == []
 
     def test_a_nameless_payment_inherits_the_recent_customer(self):
         fake_db = FakeFirestore()

@@ -107,10 +107,6 @@ let orderEditState = null;           // { mode:'edit'|'add', itemId, orderId, cu
 let orderDeleteState = null;         // { type:'item'|'order', id, label }
 let orderCustomerState = null;       // { orderId, customerName, customerModifier }
 
-// Customer a voice sale books to when nobody was named — mirrors
-// WALK_IN_CUSTOMER in db_operations.py.
-const WALK_IN_CUSTOMER = 'walk-in';
-
 const inr = (n) => `₹${(Number(n) || 0).toLocaleString('en-IN')}`;
 
 export async function loadOrders() {
@@ -255,9 +251,15 @@ function orderCardAttrs(o) {
 }
 
 function buildOrderHeaderHTML(o) {
+  // A counter sale books an order with no customer on it. The name line still
+  // has to render something clickable, or the card looks broken and the pencil
+  // that puts a name on it has nothing to sit beside.
   const displayName = o.customer_modifier
     ? `${capitalize(o.customer_name)} (${o.customer_modifier})`
     : capitalize(o.customer_name);
+  const nameHtml = displayName
+    ? escapeHtml(displayName)
+    : '<span class="order-card-unnamed">No name</span>';
   // The order number doubles as the bill number (order #7 → bill BK-007), so
   // showing it lets a shopkeeper match a bill in hand to a card on this page.
   const orderNo = o.order_no ? `Order #${o.order_no}` : '';
@@ -276,7 +278,7 @@ function buildOrderHeaderHTML(o) {
 
   return `<div class="ledger-card-header">
     <div class="ledger-card-info">
-      <div class="ledger-card-name">${escapeHtml(displayName)}<button class="order-customer-edit" title="Change customer" aria-label="Change customer">${PENCIL_SVG}</button></div>
+      <div class="ledger-card-name">${nameHtml}<button class="order-customer-edit" title="Change customer" aria-label="Change customer">${PENCIL_SVG}</button></div>
       <div class="ledger-card-subtitle">${escapeHtml(subtitle)}</div>
     </div>
     <div class="ledger-card-right">
@@ -371,8 +373,8 @@ function wireOrderCards(listEl) {
     });
   });
 
-  // Change the order's customer. A voice sale with nobody named books to the
-  // walk-in card, and this is how it gets a name before the bill goes out.
+  // Change the order's customer. A voice sale with nobody named books a
+  // nameless card, and this is how it gets a name before the bill goes out.
   // stopPropagation, or the click also toggles/selects the card underneath.
   listEl.querySelectorAll('.order-customer-edit').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -429,8 +431,10 @@ function wireOrderCards(listEl) {
   listEl.querySelectorAll('.order-delete-order-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const card = btn.closest('.order-card');
+      // A counter sale's order has no customer to name in the prompt.
       const name = capitalize(card.dataset.customer);
-      openDeleteModal({ type: 'order', id: card.dataset.orderId, label: `Delete the entire order for ${name}?` });
+      const label = name ? `Delete the entire order for ${name}?` : 'Delete this entire order?';
+      openDeleteModal({ type: 'order', id: card.dataset.orderId, label });
     });
   });
 
@@ -507,7 +511,10 @@ function wireOrderCards(listEl) {
         }
         const phone = waNumber.startsWith('+') ? waNumber.substring(1)
           : (waNumber.length === 10 ? '91' + waNumber : waNumber);
-        const message = `Namaste ${customer} ji,\n\nAapka bill yahan dekhein:\n${pdf_url}\n\nDhanyavaad,\nBolKhata`;
+        // "Namaste ji" rather than "Namaste  ji" when the order is a counter
+        // sale nobody was named for.
+        const greeting = customer ? `Namaste ${customer} ji` : 'Namaste ji';
+        const message = `${greeting},\n\nAapka bill yahan dekhein:\n${pdf_url}\n\nDhanyavaad,\nBolKhata`;
         window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
       } catch (e) {
         showToast('❌ ' + (e.message || 'Could not generate bill.'));
@@ -622,10 +629,7 @@ $('order-edit-save').addEventListener('click', async () => {
 // ═══════ Change customer modal (whole order) ═══════
 function openCustomerModal(state) {
   orderCustomerState = state;
-  // A walk-in card has no real name on it, so offer an empty field to type into
-  // rather than the placeholder the shopkeeper would have to clear first.
-  const name = state.customerName === WALK_IN_CUSTOMER ? '' : capitalize(state.customerName || '');
-  $('order-customer-name').value = name;
+  $('order-customer-name').value = capitalize(state.customerName || '');
   $('order-customer-modifier').value = state.customerModifier || '';
   $('order-customer-modal').classList.add('open');
   setTimeout(() => $('order-customer-name').focus(), 100);

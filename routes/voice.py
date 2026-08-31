@@ -14,7 +14,7 @@ from firebase_admin import firestore
 from groq import Groq
 
 from auth import verify_token
-from db_operations import WALK_IN_CUSTOMER, process_transactions
+from db_operations import process_transactions
 from models import ResolveTransactionRequest
 from prompts import get_system_prompt
 from rate_limiter import (
@@ -166,14 +166,13 @@ async def process_voice(
             data = latest_doc.to_dict()
             ts = data.get("timestamp")
             if ts and (now - ts).total_seconds() < 120:  # 2 minutes
-                cname = data.get("customer_name", "")
-                # The walk-in card is not a person. Two counter sales a minute
-                # apart are almost always two customers in the queue, so nothing
-                # carries over from one: no follow-up context for the LLM, and
-                # no order to append to (see the recent_order_id guard below).
-                if cname != WALK_IN_CUSTOMER:
-                    recent_customer = cname
-                    recent_modifier = data.get("customer_modifier", "")
+                # A counter sale's order has no customer on it, so this stays
+                # empty: nothing carries over from one. Two counter sales a
+                # minute apart are almost always two people in the queue, and
+                # neither the LLM's follow-up context nor the order-reuse below
+                # should tie them together.
+                recent_customer = data.get("customer_name", "")
+                recent_modifier = data.get("customer_modifier", "")
 
         # Carry the recent order's id forward so a follow-up command for the same
         # customer appends to that order instead of starting a new one. Guarded so
