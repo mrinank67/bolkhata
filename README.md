@@ -32,6 +32,7 @@ By leveraging extreme low-latency processing, BolKhata allows shopkeepers to spe
 
 * **Fuzzy Match Engine:** Uses dynamic fuzzy matching (thefuzz) to automatically resolve spoken slang, variations, or typos (e.g., "magi" -> "Maggi") to standard stored item IDs.
 * **Add Item with Photo:** A floating + button on the Inventory page opens a form to catalogue a product in seconds — take a photo, type the name and selling price, save. Cost price, unit (PCS/Box/Pack), opening stock, and category are optional; the photo is optional too. This is the **only** way an item enters the catalogue, and items created here are immediately available to both voice and manual billing.
+* **Quick Add for the First Catalogue Pass:** Stocking the app for the first time means entering the whole shop, and closing and reopening the form for every packet is the slowest thing a new shopkeeper does. The **⚡ Quick Add** toggle on the Inventory page turns the form into a production line: it opens straight away, and each save clears it and reopens it with the cursor already in the name field, counting up in the title as it goes ("Add Item · 14 added"). The unit and category carry over between items, since a catalogue pass runs in stretches — all the biscuits, all sold by the box. On a keyboard, Enter saves. Toggle it off to go back to adding one item at a time; the setting survives a reload, so a refresh mid-pass doesn't lose your place.
 * **In-App Camera:** Product photos are captured through a live preview *inside the page*, not by handing off to the device camera app — so nothing is written to the phone's gallery or storage. Existing photos can still be picked from the gallery.
 * **Visual Stock Grid:** A responsive dashboard displaying inventory tiles color-coded by stock level (out-of-stock, low stock, healthy stock), each showing its product thumbnail with a neutral placeholder for items saved without a photo.
 * **Two-Stage Image Compression:** Photos are downscaled in the browser before upload (a ~20x reduction — a 3.5 MB phone photo uploads as ~170 KB) and then re-encoded server-side into a 1024px WebP plus a 256px grid thumbnail, roughly 140 KB of storage per item. Both are served with immutable cache headers so repeat views of the inventory grid cost no Firebase egress.
@@ -73,6 +74,17 @@ By leveraging extreme low-latency processing, BolKhata allows shopkeepers to spe
 
 Full details in [Security & Rate Limiting](docs/security.md).
 
+### 7. Support Console
+
+A shopkeeper who calls for help can't screenshare, and "it didn't work" is the whole bug report. The console at `/admin` closes that gap — it is a separate page, never linked from the app and unreachable without the `admin` Firebase custom claim.
+
+* **See What Voice Actually Heard:** Every voice request writes a diagnostic record — the transcript, the raw intent the LLM returned, what was applied, why it failed, and how long each stage took. Failures are logged too; those are the ones being complained about. No audio is ever stored, and the records self-delete after 30 days.
+* **Find a Shop:** Look a shopkeeper up by phone, email, or uid. A bare 10-digit number is retried with `+91`, so the number they read out over the phone is enough.
+* **Fix It Remotely:** An operator can read and correct a shop's records — inventory, orders, ledger, suppliers — through the shop's *own* endpoints, carrying an `X-Acting-Uid` header. There are no separate admin write paths, so a support edit passes exactly the validation a shopkeeper's does and cannot skip an invariant.
+* **Audited, and Voice Is Off Limits:** Every impersonated request, reads included, is recorded in an append-only audit trail. `/process_voice` ignores the header outright — a transaction can never be injected into a shop's books as though the shopkeeper spoke it. A request carrying the header without the claim is refused, never quietly served as your own shop.
+
+Endpoints in the [API Reference](docs/api-reference.md#support-console); the isolation rules in [Security](docs/security.md).
+
 ---
 
 ## Example Voice Commands
@@ -106,7 +118,7 @@ backend on Vercel, with Firebase for auth, data, and file storage. Speech goes
 through Sarvam AI for transcription and Groq's GPT-OSS 20B for intent
 extraction; bills are rendered server-side with ReportLab.
 
-Every push and pull request runs 460 automated tests, Ruff and ESLint, secret
+Every push and pull request runs 682 automated tests, Ruff and ESLint, secret
 scanning, and CodeQL static analysis before anything can reach production.
 
 ---

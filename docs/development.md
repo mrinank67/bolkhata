@@ -51,7 +51,7 @@ line there whenever you introduce a new variable.
 ## Running the Checks
 
 ```bash
-pytest                              # full suite (460 tests, no network, no live data)
+pytest                              # full suite (682 tests, no network, no live data)
 pytest --cov=. --cov-report=term-missing
 ruff check .                        # Python lint
 ruff format --check tests/          # test formatting (only tests/ is format-gated)
@@ -73,7 +73,7 @@ detection); the test suite runs at push time instead.
 
 Every push and pull request runs a CI pipeline before anything can reach production. `main` is protected — all checks must pass before a merge is allowed.
 
-* **Test Suite:** 460 automated tests covering the ledger math, rate limiting, image sanitization, token verification, and every API route. They run against an in-memory database double with all external services stubbed, so no test spends an API quota or touches live shop data. Run on Python 3.12 (the realistic Vercel runtime) and 3.14.
+* **Test Suite:** 682 automated tests covering the ledger math, rate limiting, image sanitization, token verification, and every API route. They run against an in-memory database double with all external services stubbed, so no test spends an API quota or touches live shop data. Run on Python 3.12 (the realistic Vercel runtime) and 3.14.
 * **Route Coverage:** `vercel.json` lists every API path by hand, and auth is enforced inside each route handler rather than centrally. Two tests catch a new endpoint that was added without a deploy route (which would 404 only in production) or without an auth check (which would expose another shop's data).
 * **Config Drift:** Every environment variable the code reads must be documented in `.env.example`, and the deployment configs must parse — a malformed `vercel.json` otherwise breaks the deploy with no earlier warning.
 * **Secret Scanning:** Full git history is scanned for leaked credentials on every run, with an explicit check that the Firebase Admin key and `.env` are never committed.
