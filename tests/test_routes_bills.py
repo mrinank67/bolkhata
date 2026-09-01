@@ -10,7 +10,7 @@ from unittest import mock
 
 import pytest
 
-from routes.bills import _money, _num, _qty, _titlecase
+from routes.bills import _money, _num, _qty, _titlecase, _total_qty
 
 UID = "test-uid"
 ORDERS = f"users/{UID}/orders"
@@ -109,6 +109,28 @@ class TestFormatters:
     )
     def test_qty_names_the_unit_it_counts(self, line, expected):
         assert _qty(line) == expected
+
+    @pytest.mark.parametrize(
+        ("units", "total", "expected"),
+        [
+            # One unit across the bill: the TOTAL row says it too, or the line
+            # above reads "10 dozen" and the total under it reads "10".
+            (["dozen"], 10, "10 dozen"),
+            (["dozen", "dozen"], 12, "12 dozen"),
+            (["box"], 1, "1 box"),
+            (["pcs", ""], 7, "7"),
+            ([""], 7, "7"),
+            # Mixed units cannot be summed into anything true.
+            (["dozen", "box"], 15, ""),
+            (["dozen", "pcs"], 15, ""),
+        ],
+    )
+    def test_total_qty_only_names_a_unit_the_whole_bill_agrees_on(self, units, total, expected):
+        items = [{"quantity": 1, "unit": u} for u in units]
+        assert _total_qty(items, total) == expected
+
+    def test_total_qty_of_an_empty_bill_is_the_plain_number(self):
+        assert _total_qty([], 0) == "0"
 
 
 class TestGenerateBill:
