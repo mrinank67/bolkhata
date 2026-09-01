@@ -11,6 +11,7 @@ from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from thefuzz import process
 
+from models import normalize_unit
 from routes.orders import _allocate_order_no  # one order-numbering path for the whole app
 
 SUPPLIER_SUFFIXES = {
@@ -261,6 +262,11 @@ def process_transactions(
         txn_amount = _to_number(txn.get("amount"))
         txn_rate = _to_number(txn.get("rate"))
         txn_unit = txn.get("unit") or ""
+        # The ledger keeps the spoken word ("kilo"); an order line needs the
+        # canonical pack unit, so "boxes" becomes "box" and "kilo" becomes a
+        # plain count. Without this every voice sale landed unitless, and ten
+        # dozen clutches read as ten clutches on the order and on the bill.
+        order_unit = normalize_unit(txn_unit)
 
         # --- A ledger line has to name someone ---
         # Money owed to nobody can never be collected, and without a name the
@@ -903,6 +909,7 @@ def process_transactions(
                         "customer_modifier": customer_modifier,
                         "item": standard_item,
                         "quantity": qty,
+                        "unit": order_unit,
                         "amount": txn_amount or 0,
                         "price": txn_rate
                         or ((txn_amount / qty) if (txn_amount and qty) else (db_price or 0)),
@@ -934,7 +941,7 @@ def process_transactions(
                 "order_sale",
                 "Customer Order",
                 "🛍️",
-                ["Customer", "Item", "Qty", "Rate", "Amount", "Total Ordered", "Stock"],
+                ["Customer", "Item", "Qty", "Unit", "Rate", "Amount", "Total Ordered", "Stock"],
             )
 
             # Log every sale as its own order entry (a transaction record),
@@ -956,6 +963,7 @@ def process_transactions(
                     "customer_modifier": order_modifier,
                     "item": standard_item,
                     "quantity": qty,
+                    "unit": order_unit,
                     "amount": txn_amount or 0,
                     "price": txn_rate
                     or ((txn_amount / qty) if (txn_amount and qty) else (db_price or 0)),
@@ -971,6 +979,7 @@ def process_transactions(
                     "Customer": order_title,
                     "Item": standard_item.capitalize(),
                     "Qty": qty,
+                    "Unit": txn_unit or "-",
                     "Rate": f"₹{txn_rate:,.0f}" if txn_rate else "-",
                     "Amount": f"₹{txn_amount:,.0f}" if txn_amount else "-",
                     "Total Ordered": f"₹{total_order_amount:,.0f}" if total_order_amount else "-",

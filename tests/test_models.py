@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from models import (
+    ALLOWED_UNITS,
     MAX_AMOUNT,
     MAX_QTY,
     ClearDuesRequest,
@@ -19,12 +20,59 @@ from models import (
     PurchaseRequest,
     SupplierCreateRequest,
     UserSettingsRequest,
+    normalize_unit,
 )
 
 
 def test_shared_bounds_are_the_documented_values():
     assert MAX_QTY == 100_000
     assert MAX_AMOUNT == 10_000_000
+
+
+class TestNormalizeUnit:
+    """The voice prompt asks the LLM for a natural-language unit ("pieces",
+    "boxes"), but an order line has to land in ALLOWED_UNITS or the Orders edit
+    sheet rewrites it on the next save."""
+
+    @pytest.mark.parametrize(
+        ("spoken", "expected"),
+        [
+            ("pieces", "pcs"),
+            ("piece", "pcs"),
+            ("pc", "pcs"),
+            ("nag", "pcs"),
+            ("boxes", "box"),
+            ("Boxes", "box"),
+            ("  BOXES  ", "box"),
+            ("carton", "box"),
+            ("peti", "box"),
+            ("dozens", "dozen"),
+            ("dz", "dozen"),
+            ("darjan", "dozen"),
+            ("packets", "pack"),
+            ("pkt", "pack"),
+        ],
+    )
+    def test_spoken_words_map_onto_the_canonical_unit(self, spoken, expected):
+        assert normalize_unit(spoken) == expected
+
+    @pytest.mark.parametrize("canonical", sorted(ALLOWED_UNITS))
+    def test_a_canonical_unit_is_returned_unchanged(self, canonical):
+        assert normalize_unit(canonical) == canonical
+
+    @pytest.mark.parametrize("spoken", ["kilo", "kg", "litre", "bars", "gram", "metre"])
+    def test_a_unit_with_no_pack_equivalent_becomes_a_plain_count(self, spoken):
+        """Forcing "kilo" into one of the four would be a lie about the sale.
+        The spoken word survives on the ledger entry, which displays it."""
+        assert normalize_unit(spoken) == ""
+
+    @pytest.mark.parametrize("spoken", [None, "", "   "])
+    def test_no_unit_spoken_is_a_plain_count(self, spoken):
+        assert normalize_unit(spoken) == ""
+
+    def test_every_output_is_storable_on_an_order(self):
+        words = ["pieces", "boxes", "dozens", "packets", "kilo", "", None, "nonsense"]
+        assert {normalize_unit(w) for w in words} <= ALLOWED_UNITS
 
 
 class TestQuantityAndAmountCeilings:

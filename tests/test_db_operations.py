@@ -391,6 +391,98 @@ class TestProcessTransactions:
         assert order["amount"] == 20
         assert order["price"] == 10
 
+    def test_a_spoken_unit_is_carried_onto_the_order_line(self):
+        """The LLM answers in natural language; the order line needs the
+        canonical unit, or ten dozen clutches read as ten clutches."""
+        fake_db = FakeFirestore()
+        self._run(
+            fake_db,
+            self._txn(
+                operation="subtract",
+                item="clutches",
+                qty=10,
+                unit="dozen",
+                rate=132,
+                customer_name="sujal",
+            ),
+        )
+
+        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        assert fake_db.docs[path]["unit"] == "dozen"
+
+    def test_one_utterance_can_book_three_items_in_three_different_units(self):
+        """The case that exposed this: every line landed unitless, so a sale of
+        10 dozen and 15 boxes read as 10 and 15 on the order and on the bill."""
+        fake_db = FakeFirestore()
+        spoken = [
+            ("flika", 20, "pieces", 350),
+            ("clutches", 10, "dozen", 132),
+            ("ashi scrunchies", 15, "boxes", 106),
+        ]
+        process_transactions(
+            [
+                self._txn(
+                    operation="subtract",
+                    item=item,
+                    qty=qty,
+                    unit=unit,
+                    rate=rate,
+                    customer_name="sujal",
+                )
+                for item, qty, unit, rate in spoken
+            ],
+            **self._refs(fake_db),
+        )
+
+        orders = [fake_db.docs[p] for p in fake_db.paths_under(f"users/{self.UID}/orders")]
+        assert {(o["item"], o["unit"]) for o in orders} == {
+            ("flika", "pcs"),
+            ("clutches", "dozen"),
+            ("ashi scrunchies", "box"),
+        }
+        assert len({o["order_id"] for o in orders}) == 1, "one utterance, one order"
+
+    def test_a_credit_sale_carries_the_unit_onto_its_order_line_too(self):
+        """A credit sale dual-writes a ledger entry and an order; the order half
+        needs the canonical unit even though the ledger keeps the spoken word."""
+        fake_db = FakeFirestore()
+        self._run(
+            fake_db,
+            self._txn(
+                operation="subtract",
+                item="clutches",
+                qty=10,
+                unit="boxes",
+                rate=132,
+                customer_name="sujal",
+                is_credit=True,
+            ),
+        )
+
+        (order_path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        (udhaar_path,) = fake_db.paths_under(f"users/{self.UID}/udhaar")
+        assert fake_db.docs[order_path]["unit"] == "box"
+        assert fake_db.docs[udhaar_path]["unit"] == "boxes", "ledger shows what was said"
+
+    def test_a_unit_with_no_pack_equivalent_leaves_the_order_line_a_plain_count(self):
+        """ "2 kilo rice" is not two of any pack unit. Better an honest bare
+        count than a line that claims boxes."""
+        fake_db = FakeFirestore()
+        self._run(
+            fake_db,
+            self._txn(
+                operation="subtract",
+                item="rice",
+                qty=2,
+                unit="kilo",
+                rate=50,
+                customer_name="sujal",
+            ),
+        )
+
+        (path,) = fake_db.paths_under(f"users/{self.UID}/orders")
+        assert fake_db.docs[path]["unit"] == ""
+
     def test_an_uncatalogued_order_item_is_flagged_in_the_result_row(self):
         """The Stock cell carries the same "!" the Orders page shows."""
         fake_db = FakeFirestore()
