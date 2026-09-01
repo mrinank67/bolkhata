@@ -57,12 +57,33 @@ def _find_user(target: str):
     return None, None
 
 
+def _mask_email(email: str) -> str:
+    """j***@example.com — enough to recognise, not enough to harvest."""
+    local, sep, domain = email.partition("@")
+    if not sep or not local:
+        return "***"
+    return f"{local[0]}***@{domain}"
+
+
+def _mask_phone(phone: str) -> str:
+    """***3210 — the last four digits are what a person actually recognises."""
+    return f"***{phone[-4:]}" if len(phone) > 4 else "***"
+
+
 def _describe(user) -> str:
+    """One line the operator can recognise the account by, without spilling PII.
+
+    The uid is opaque and safe to print; the email and phone are masked. Printing
+    them in full bought nothing — the operator typed the identifier they were
+    searching for, so this output only has to confirm *which* account matched —
+    and it lands in terminal scrollback and gets pasted into support tickets.
+    docs/security.md holds the same line for transcripts and download-token URLs.
+    """
     bits = [user.uid]
     if user.email:
-        bits.append(user.email)
+        bits.append(_mask_email(user.email))
     if user.phone_number:
-        bits.append(user.phone_number)
+        bits.append(_mask_phone(user.phone_number))
     return "  ".join(bits)
 
 
