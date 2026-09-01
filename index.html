@@ -285,8 +285,19 @@
               <option value="stock-desc">Stock (High-Low)</option>
               <option value="recent">Recently Added</option>
             </select>
+            <!-- Quick Add keeps the item sheet open after each save, for the
+                 initial catalogue pass. dashboard.js owns the state. -->
+            <button id="inventory-quickadd-toggle" class="quickadd-toggle" type="button"
+                    aria-pressed="false" aria-label="Quick Add"
+                    title="Add many items in a row">
+              <span class="quickadd-toggle-icon">⚡</span>
+              <span class="quickadd-toggle-label">Quick Add</span>
+            </button>
             <button id="dashboard-refresh-btn" class="dashboard-refresh-btn" aria-label="Refresh"><span class="refresh-icon">↻</span></button>
           </div>
+        </div>
+        <div id="inventory-quickadd-hint" class="quickadd-hint hidden">
+          ⚡ Quick Add is on — the sheet stays open after each save. Tap Quick Add again when you're done.
         </div>
         <div id="inventory-grid" class="inventory-grid">
           <div class="inventory-empty">Loading inventory…</div>
@@ -302,7 +313,9 @@
         <!-- Add Inventory Item Modal -->
         <div id="inventory-add-modal" class="modal-overlay">
           <div class="modal-card modal-card-scroll" style="text-align:left;">
-            <h3 class="modal-title">Add Item</h3>
+            <!-- The text is rewritten by dashboard.js in Quick Add mode to carry
+                 a running count ("Add Item · 3 added"). -->
+            <h3 class="modal-title" id="inventory-add-title">Add Item</h3>
 
             <div class="field-group">
               <label class="field-label">Photo</label>
