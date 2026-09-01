@@ -95,6 +95,23 @@ def _qty(it) -> str:
     return f"{_num(qty)} {word}"
 
 
+def _total_qty(items, total_qty) -> str:
+    """The TOTAL row's Qty cell, named the same way the lines above it are.
+
+    Only when every line counts the same thing, though: ten dozen plus five
+    boxes is not fifteen of anything, so a mixed bill leaves the cell blank
+    rather than print a sum that reads as a quantity. The Rate cell beside it is
+    already blank on this row for the same reason.
+    """
+    if not items:
+        return _num(total_qty)
+    units = {(it.get("unit") or "").strip().lower() for it in items}
+    units = {u if u in _UNIT_PLURAL else "" for u in units}  # "" and "pcs" agree
+    if len(units) != 1:
+        return ""
+    return _qty({"quantity": total_qty, "unit": units.pop()})
+
+
 def _download_token(uid: str, order_id: str) -> str:
     """The bill's Firebase Storage download token.
 
@@ -376,7 +393,7 @@ def _render_bill_pdf(
         [
             "",
             Paragraph("<b>TOTAL</b>", cell),
-            _num(total_qty),
+            _total_qty(items, total_qty),
             "",
             Paragraph(f"<b>{_money(total_amount)}</b>", cell),
         ]
