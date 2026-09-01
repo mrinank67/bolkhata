@@ -108,6 +108,39 @@ class LedgerEntryRequest(BaseModel):
     due_note: Optional[str] = Field(default="", max_length=300)
 
 
+class LedgerEntryUpdate(BaseModel):
+    """PUT /ledger/entry/{id} — a partial correction to one udhaar line.
+
+    Every field is optional and None means "leave it alone", so a client that
+    only knows about the amount cannot blank out the due note. reminder_schedule
+    and reminder_sent are absent on purpose: those are set for a whole customer
+    by /ledger/whatsapp-reminder, not per line.
+    """
+
+    customer_name: Optional[str] = Field(default=None, max_length=100)
+    customer_modifier: Optional[str] = Field(default=None, max_length=100)
+    item: Optional[str] = Field(default=None, max_length=100)
+    quantity: Optional[int] = Field(default=None, ge=0, le=_MAX_QTY)
+    unit: Optional[str] = Field(default=None, max_length=30)
+    amount: Optional[float] = Field(default=None, ge=0, le=_MAX_AMOUNT)
+    whatsapp_number: Optional[str] = Field(default=None, max_length=16)
+    due_note: Optional[str] = Field(default=None, max_length=300)
+
+
+class PurchaseUpdate(BaseModel):
+    """PUT /suppliers/purchase/{id} — a partial correction to one purchase record.
+
+    supplier_name is included because a purchase can be voice-recorded against a
+    fuzzily-matched supplier; re-pointing it is the fix. The purchase carries the
+    name as a string rather than a foreign key, so this is a plain field write.
+    """
+
+    supplier_name: Optional[str] = Field(default=None, max_length=100)
+    item_name: Optional[str] = Field(default=None, max_length=100)
+    quantity: Optional[int] = Field(default=None, gt=0, le=_MAX_QTY)
+    amount: Optional[float] = Field(default=None, ge=0, le=_MAX_AMOUNT)
+
+
 class ClearDuesRequest(BaseModel):
     customer_name: str = Field(max_length=100)
     customer_modifier: Optional[str] = Field(default="", max_length=100)

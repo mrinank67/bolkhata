@@ -41,7 +41,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from auth import get_bucket, verify_token
+from auth import get_bucket, resolve_uid
 from routes.orders import (  # reuse the order-side helpers rather than restating them
     _allocate_order_no,
     _bill_blob_path,
@@ -154,10 +154,14 @@ def _touch_blob(blob) -> None:
 
 
 @router.post("/orders/{order_id}/bill")
-async def generate_bill(order_id: str, authorization: str = Header(None)):
+async def generate_bill(
+    order_id: str,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     user_ref = db.collection("users").document(uid)
     orders_ref = user_ref.collection("orders")
 
@@ -263,7 +267,11 @@ async def generate_bill(order_id: str, authorization: str = Header(None)):
 
 
 @router.post("/orders/{order_id}/bill/touch")
-async def touch_bill(order_id: str, authorization: str = Header(None)):
+async def touch_bill(
+    order_id: str,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     """Restart a bill's 30-day retention window because someone just used it.
 
     Deliberately cheap — one Firestore write and one Storage metadata patch, no
@@ -271,7 +279,7 @@ async def touch_bill(order_id: str, authorization: str = Header(None)):
     """
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     bill_ref = db.collection("users").document(uid).collection("bills").document(order_id)
 
     if not bill_ref.get().exists:

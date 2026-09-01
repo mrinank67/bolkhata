@@ -28,7 +28,8 @@ The limiter is fail-open: if its Firestore transaction fails, the request procee
 
 * **Input Validation:** All write endpoints enforce bounds (non-negative quantities/amounts, length caps, UPI VPA format) via Pydantic models. Multipart endpoints get no Pydantic validation, so `POST /inventory` re-asserts the same bounds by hand and additionally validates the item name as a Firestore document ID.
 * **Hardened Frontend:** All user-derived strings are HTML-escaped before rendering; CORS is restricted to local development origins plus an optional `ALLOWED_ORIGINS` allowlist.
-* **Privacy:** Voice transcripts and parsed intents are only logged when `DEBUG_LOGS=1`; production logs contain timings only.
+* **Privacy:** Voice transcripts and parsed intents are stored in `users/{uid}/voice_logs`, the diagnostic record the support console reads, and deleted by a Firestore TTL 30 days later. Audio is never stored, anywhere. They are still only *printed* to the function logs when `DEBUG_LOGS=1`; production stdout contains timings only. `DELETE /history` deliberately does not clear them — they are operational records with their own retention, not the user-facing history screen.
+* **Support Access:** Acting on another shop requires the `admin` Firebase custom claim (`scripts/grant_admin.py`). Any request carrying an `X-Acting-Uid` header without that claim is refused with 403 rather than falling back to the caller's own uid. Every impersonated request — reads included — is recorded in the top-level `admin_audit` collection. Voice is exempt: `/process_voice` and `/voice/resolve` ignore the header, so a transaction can never be injected into a shop's books as though the shopkeeper spoke it.
 * **Download Tokens:** Firebase download-token URLs (bills and item photos) are public-but-unguessable, bypass `storage.rules` entirely, and never expire — so they must never be logged, and deleting a record must delete its blobs.
 
 ## Automated Security Checks

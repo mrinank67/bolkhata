@@ -43,12 +43,16 @@ REQUESTS = [
         None,
         None,
     ),
+    ("PUT", "/suppliers/purchase/{purchase_id}", {"quantity": 2}, None, None),
+    ("DELETE", "/suppliers/purchase/{purchase_id}", None, None, None),
     ("POST", "/suppliers/add", {"name": "Sharma Traders"}, None, None),
     ("PUT", "/suppliers/{supplier_id}", {"name": "Sharma Traders"}, None, None),
     ("DELETE", "/suppliers/{supplier_id}", None, None, None),
     ("GET", "/ledger/customers", None, None, None),
     ("POST", "/ledger/entry", {"customer_name": "c", "item": "rice", "quantity": 1}, None, None),
     ("POST", "/ledger/clear", {"customer_name": "c", "amount": 100}, None, None),
+    ("PUT", "/ledger/entry/{entry_id}", {"amount": 100}, None, None),
+    ("DELETE", "/ledger/entry/{entry_id}", None, None, None),
     (
         "POST",
         "/ledger/whatsapp-reminder",
@@ -82,6 +86,15 @@ REQUESTS = [
         {"audio": ("clip.webm", b"\x00\x01\x02", "audio/webm")},
     ),
     ("POST", "/voice/resolve", {"transaction": {}, "selected_modifier": ""}, None, None),
+    # The support panel. These demand more than a token — require_admin() also
+    # wants the admin custom claim — but they must still 401 without one, so
+    # they belong in this registry like any other authenticated route.
+    ("GET", "/admin/me", None, None, None),
+    ("GET", "/admin/users", None, None, None),
+    ("GET", "/admin/users/{uid}/overview", None, None, None),
+    ("GET", "/admin/users/{uid}/voice-logs", None, None, None),
+    ("GET", "/admin/users/{uid}/bills", None, None, None),
+    ("GET", "/admin/audit", None, None, None),
 ]
 
 
@@ -90,6 +103,9 @@ def _concrete(path: str) -> str:
         path.replace("{item_id}", "sample-item")
         .replace("{supplier_id}", "sample-supplier")
         .replace("{order_id}", "sample-order")
+        .replace("{entry_id}", "sample-entry")
+        .replace("{purchase_id}", "sample-purchase")
+        .replace("{uid}", "sample-uid")
     )
 
 

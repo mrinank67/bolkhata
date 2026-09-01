@@ -6,6 +6,7 @@ patterns this codebase actually uses, so it stays small enough to trust:
     db.collection(c).document(d).collection(c2).document(d2)
     ref.get() / .set(data, merge=) / .update(data) / .delete()
     collection.stream() / .order_by(f, direction=) / .limit(n) / .where(filter=)
+    collection.select([fields])                 (projection; counting)
     collection.add(data) / .document()          (auto-id)
     collection.list_documents()                 (includes "missing" parents)
     db.transaction()                            (see note below)
@@ -139,12 +140,26 @@ class _Query:
         self._filters: list[tuple[str, str, object]] = []
         self._order: tuple[str, str] | None = None
         self._limit: int | None = None
+        self._select: list[str] | None = None
 
     def _clone(self) -> _Query:
         q = _Query(self._collection)
         q._filters = list(self._filters)
         q._order = self._order
         q._limit = self._limit
+        q._select = None if self._select is None else list(self._select)
+        return q
+
+    def select(self, field_paths) -> _Query:
+        """Return only the named fields — select([]) fetches ids alone.
+
+        routes/admin.py counts a shop's collections this way so a shop with
+        thousands of order lines is not pulled across in full just to be
+        counted. Modelled here so a test can tell an empty projection from an
+        empty collection.
+        """
+        q = self._clone()
+        q._select = list(field_paths)
         return q
 
     def where(self, field=None, op=None, value=None, *, filter=None) -> _Query:
@@ -181,6 +196,8 @@ class _Query:
 
         for doc_id, data in docs:
             ref = self._collection.document(doc_id)
+            if self._select is not None:
+                data = {k: v for k, v in data.items() if k in self._select}
             yield FakeSnapshot(doc_id, dict(data), ref)
 
 
@@ -284,6 +301,9 @@ class FakeCollectionRef:
 
     def limit(self, n: int):
         return _Query(self).limit(n)
+
+    def select(self, field_paths):
+        return _Query(self).select(field_paths)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<FakeCollectionRef {self.path}>"

@@ -10,11 +10,12 @@ from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from auth import verify_token
+from auth import resolve_uid
 from db_operations import apply_payment
 from models import (
     ClearDuesRequest,
     LedgerEntryRequest,
+    LedgerEntryUpdate,
     PayLinkRequest,
     UserSettingsRequest,
     WhatsAppReminderRequest,
@@ -42,10 +43,13 @@ router = APIRouter()
 
 
 @router.get("/ledger/customers")
-async def get_ledger_customers(authorization: str = Header(None)):
+async def get_ledger_customers(
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     udhaar_ref = db.collection("users").document(uid).collection("udhaar")
     docs = udhaar_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
 
@@ -111,10 +115,14 @@ async def get_ledger_customers(authorization: str = Header(None)):
 
 
 @router.post("/ledger/entry")
-async def add_ledger_entry(req: LedgerEntryRequest, authorization: str = Header(None)):
+async def add_ledger_entry(
+    req: LedgerEntryRequest,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
 
     if not req.customer_name.strip() or not req.item.strip():
         raise HTTPException(status_code=400, detail="Customer name and item are required.")
@@ -142,7 +150,11 @@ async def add_ledger_entry(req: LedgerEntryRequest, authorization: str = Header(
 
 
 @router.post("/ledger/clear")
-async def clear_ledger_dues(req: ClearDuesRequest, authorization: str = Header(None)):
+async def clear_ledger_dues(
+    req: ClearDuesRequest,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     """Record a payment against a customer's dues (full settle or partial clear).
 
     Shares apply_payment() with the voice "payment" flow, so manual and voice
@@ -150,7 +162,7 @@ async def clear_ledger_dues(req: ClearDuesRequest, authorization: str = Header(N
     """
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     udhaar_ref = db.collection("users").document(uid).collection("udhaar")
 
     matched, total_owed, paid, remaining = apply_payment(
@@ -175,10 +187,14 @@ async def clear_ledger_dues(req: ClearDuesRequest, authorization: str = Header(N
 
 
 @router.post("/ledger/whatsapp-reminder")
-async def schedule_whatsapp_reminder(req: WhatsAppReminderRequest, authorization: str = Header(None)):
+async def schedule_whatsapp_reminder(
+    req: WhatsAppReminderRequest,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
 
     # Save reminder schedule to all entries for this customer
     udhaar_ref = db.collection("users").document(uid).collection("udhaar")
@@ -189,13 +205,18 @@ async def schedule_whatsapp_reminder(req: WhatsAppReminderRequest, authorization
     updated = 0
     for doc in docs:
         data = doc.to_dict()
-        if req.customer_modifier and data.get("customer_modifier", "").lower() != req.customer_modifier.lower():
+        if (
+            req.customer_modifier
+            and data.get("customer_modifier", "").lower() != req.customer_modifier.lower()
+        ):
             continue
-        doc.reference.update({
-            "whatsapp_number": req.whatsapp_number,
-            "reminder_schedule": req.reminder_schedule,
-            "reminder_sent": False,
-        })
+        doc.reference.update(
+            {
+                "whatsapp_number": req.whatsapp_number,
+                "reminder_schedule": req.reminder_schedule,
+                "reminder_sent": False,
+            }
+        )
         updated += 1
 
     # Placeholder — no actual WhatsApp API integration
@@ -206,14 +227,94 @@ async def schedule_whatsapp_reminder(req: WhatsAppReminderRequest, authorization
     }
 
 
+@router.put("/ledger/entry/{entry_id}")
+async def update_ledger_entry(
+    entry_id: str,
+    req: LedgerEntryUpdate,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
+    """Correct one udhaar line.
+
+    The only other way a line changes is apply_payment(), which settles debts
+    oldest-first and cannot express "that said 5 kg but it was 3". A mistyped
+    entry previously had no correction path at all.
+
+    timestamp is deliberately left alone: get_ledger_customers() orders by it,
+    and rewriting it would jump a corrected line to the top of the customer's
+    history and reorder what apply_payment() settles first.
+    """
+    from main import db
+
+    uid = resolve_uid(authorization, x_acting_uid)
+    entry_ref = db.collection("users").document(uid).collection("udhaar").document(entry_id)
+    snap = entry_ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Ledger entry not found.")
+
+    updates = {}
+    if req.customer_name is not None:
+        if not req.customer_name.strip():
+            raise HTTPException(status_code=400, detail="Customer name cannot be empty.")
+        updates["customer_name"] = req.customer_name.strip().lower()
+    if req.customer_modifier is not None:
+        updates["customer_modifier"] = req.customer_modifier.strip().lower()
+    if req.item is not None:
+        if not req.item.strip():
+            raise HTTPException(status_code=400, detail="Item cannot be empty.")
+        updates["item"] = req.item.strip().lower()
+    if req.quantity is not None:
+        updates["quantity"] = req.quantity
+    if req.unit is not None:
+        updates["unit"] = req.unit.strip()
+    if req.amount is not None:
+        updates["amount"] = req.amount
+    if req.whatsapp_number is not None:
+        updates["whatsapp_number"] = req.whatsapp_number.strip()
+    if req.due_note is not None:
+        updates["due_note"] = req.due_note.strip()
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update.")
+
+    entry_ref.update(updates)
+    return {"status": "success", "id": entry_id}
+
+
+@router.delete("/ledger/entry/{entry_id}")
+async def delete_ledger_entry(
+    entry_id: str,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
+    """Remove one udhaar line outright — a duplicate, or a debt entered by mistake.
+
+    Distinct from settling it: a settled debt was paid, a deleted one never
+    existed, and the ledger totals should not show it as income either way.
+    """
+    from main import db
+
+    uid = resolve_uid(authorization, x_acting_uid)
+    entry_ref = db.collection("users").document(uid).collection("udhaar").document(entry_id)
+    if not entry_ref.get().exists:
+        raise HTTPException(status_code=404, detail="Ledger entry not found.")
+
+    entry_ref.delete()
+    return {"status": "success", "id": entry_id}
+
+
 PAY_LINK_MAX_AGE = 24 * 60 * 60  # 24 hours
 
 
 @router.post("/pay/create")
-async def create_pay_link(req: PayLinkRequest, authorization: str = Header(None)):
+async def create_pay_link(
+    req: PayLinkRequest,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
 
     # The payee UPI ID comes from the caller's saved settings, never from the
     # request body — otherwise any account could mint official-looking
@@ -225,7 +326,9 @@ async def create_pay_link(req: PayLinkRequest, authorization: str = Header(None)
 
     # pn (payee display name) is also fixed server-side so a crafted request
     # can't impersonate another brand on the payment page
-    token = _get_pay_serializer().dumps({"pa": upi_id, "pn": "BolKhata", "am": req.am, "tn": req.tn})
+    token = _get_pay_serializer().dumps(
+        {"pa": upi_id, "pn": "BolKhata", "am": req.am, "tn": req.tn}
+    )
     return {"token": token}
 
 
@@ -237,7 +340,9 @@ async def pay_page(token: str = Query(..., description="Signed payment token")):
     try:
         data = _get_pay_serializer().loads(token, max_age=PAY_LINK_MAX_AGE)
     except SignatureExpired:
-        return _pay_error_page("This payment link has expired. Please ask the sender for a new link.")
+        return _pay_error_page(
+            "This payment link has expired. Please ask the sender for a new link."
+        )
     except BadSignature:
         return _pay_error_page("This payment link is invalid.")
     except HTTPException:
@@ -284,7 +389,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
   <div class="amount">₹{amount}</div>
   <div class="to">Pay to</div>
   <div class="upi-id">{upi_id}</div>
-  <div class="note">{note if note else ''}</div>
+  <div class="note">{note if note else ""}</div>
   <a class="pay-btn" href="{upi_uri}">Pay Now</a>
   <div class="footer">Powered by BolKhata</div>
 </div>
@@ -294,6 +399,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 
 def _pay_error_page(message: str) -> str:
     from html import escape
+
     msg = escape(message)
     return f"""<!DOCTYPE html>
 <html lang="hi">
@@ -321,10 +427,13 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 
 
 @router.get("/settings")
-async def get_settings(authorization: str = Header(None)):
+async def get_settings(
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     doc = db.collection("users").document(uid).get()
     data = doc.to_dict() if doc.exists else {}
     return {
@@ -336,12 +445,16 @@ async def get_settings(authorization: str = Header(None)):
 
 
 @router.put("/settings")
-async def update_settings(req: UserSettingsRequest, authorization: str = Header(None)):
+async def update_settings(
+    req: UserSettingsRequest,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     import re
 
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     upi_id = (req.upi_id or "").strip()
     # VPA format: handle@psp (e.g. 98765@ybl, shopname@okhdfcbank)
     if upi_id and not re.fullmatch(r"[A-Za-z0-9._\-]{2,256}@[A-Za-z]{2,64}", upi_id):

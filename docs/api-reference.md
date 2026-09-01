@@ -16,6 +16,8 @@ Adding a new API **path** also requires an explicit `src`/`dest` mapping in `ver
 | `/confirm_clear_inventory` | `POST` | Deletes the entire stock collection (requires UI verification) |
 | `/suppliers` | `GET` | Lists wholesale purchase history and compiles monthly totals |
 | `/suppliers/purchase` | `POST` | Logs a wholesale transaction, automatically updating related item stock |
+| `/suppliers/purchase/{purchase_id}` | `PUT` | Corrects one purchase record, moving stock by the difference |
+| `/suppliers/purchase/{purchase_id}` | `DELETE` | Removes one purchase and takes its quantity back out of stock (clamped at zero) |
 | `/suppliers/list` | `GET` | Retrieves saved wholesale vendors |
 | `/suppliers/add` | `POST` | Registers a new wholesale vendor in the directory |
 | `/suppliers/{supplier_id}` | `PUT` | Edits a saved vendor's name, mobile, and GST (rejects duplicate names) |
@@ -23,6 +25,8 @@ Adding a new API **path** also requires an explicit `src`/`dest` mapping in `ver
 | `/ledger/customers` | `GET` | Compiles a list of active udhaar accounts, dues, and itemizations |
 | `/ledger/entry` | `POST` | Manually writes credit/udhaar entries directly |
 | `/ledger/clear` | `POST` | Settles a customer's dues — full or partial (FIFO), shared with the voice payment flow |
+| `/ledger/entry/{entry_id}` | `PUT` | Corrects one udhaar line (partial update; the timestamp is never rewritten) |
+| `/ledger/entry/{entry_id}` | `DELETE` | Removes one udhaar line. Distinct from settling it — a deleted debt was never owed, a settled one was paid |
 | `/ledger/whatsapp-reminder` | `POST` | Saves a customer's WhatsApp number and reminder schedule |
 | `/orders` | `GET` | Lists customer orders grouped by order, with per-order totals and a grand total |
 | `/orders` | `POST` | Creates a new order from one or more line items |
@@ -37,4 +41,21 @@ Adding a new API **path** also requires an explicit `src`/`dest` mapping in `ver
 | `/pay` | `GET` | Public payment page; validates the signed token and renders a UPI deep link |
 | `/settings` | `GET` / `PUT` | Reads or updates the shopkeeper's UPI ID (validated VPA format) and shop "Bill From" profile (name, mobile, address) |
 | `/history` | `GET` | Pulls the last 50 speech transaction logs and parsing errors |
-| `/history` | `DELETE` | Clears the voice processing history |
+| `/history` | `DELETE` | Clears the voice processing history. Deliberately leaves `voice_logs` alone |
+
+## Support Console
+
+These require the `admin` custom claim (`scripts/grant_admin.py`) and return **403** without it. The uid is a path parameter here, because these routes are *about* a shop rather than acting as one.
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/admin/me` | `GET` | Confirms the caller's claim server-side; the console renders nothing until this returns 200 |
+| `/admin/users?q=` | `GET` | Finds a shop by phone, email, or uid via Firebase Auth. A bare 10-digit number is retried with `+91`. Empty `q` lists recent signups |
+| `/admin/users/{uid}/overview` | `GET` | Account, shop settings, per-collection counts, and today's voice usage |
+| `/admin/users/{uid}/voice-logs` | `GET` | The diagnostic records: transcript, intent, outcome, timings. Optional `status` filter and `limit` |
+| `/admin/users/{uid}/bills` | `GET` | Bill metadata. The `download_token` is deliberately omitted — with the storage path it reconstructs a public, never-expiring URL |
+| `/admin/audit` | `GET` | Impersonation trail, newest first. Optional `acting_uid` filter |
+
+### Acting on a shop
+
+Everything else is done through the **ordinary** endpoints above with an `X-Acting-Uid: <uid>` header, so admin edits go through the same validation and the same invariants as the shopkeeper's own. Sending the header without the admin claim is a 403, never a fallback to your own shop. `/process_voice` and `/voice/resolve` ignore it.

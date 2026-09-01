@@ -56,6 +56,11 @@ _patcher.stop()
 assert main.db is _FAKE_DB, "main.db was not replaced by the fake — patch order is wrong"
 
 TEST_UID = "test-uid"
+ADMIN_UID = "admin-uid"
+# The shop a support session is acting on — deliberately neither TEST_UID nor
+# ADMIN_UID, so a test that asserts a write landed here cannot pass by accident
+# because the seam silently fell back to the caller's own uid.
+TARGET_UID = "target-uid"
 
 # Paths Starlette/FastAPI mount for themselves. No test in this suite is about
 # the docs UI, and none of them are deployed behind vercel.json rules.
@@ -146,8 +151,26 @@ def authed_client(client):
 
 
 @pytest.fixture
+def admin_client(client):
+    """Client whose token carries the admin custom claim.
+
+    Same patch point as authed_client — the decoded token gains ``admin: True``,
+    which is exactly what a real token granted by scripts/grant_admin.py looks
+    like to the server.
+    """
+    with mock.patch("auth.auth.verify_id_token", return_value={"uid": ADMIN_UID, "admin": True}):
+        client.headers.update({"Authorization": "Bearer admin-token"})
+        yield client
+
+
+@pytest.fixture
 def user_path() -> str:
     return f"users/{TEST_UID}"
+
+
+@pytest.fixture
+def target_path() -> str:
+    return f"users/{TARGET_UID}"
 
 
 @pytest.fixture(autouse=True)

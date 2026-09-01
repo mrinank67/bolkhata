@@ -25,6 +25,7 @@ from rate_limiter import (
     check_user_cooldown,
     record_rate_limit_hit,
 )
+from voice_log import emit_voice_log, ms, write_voice_log
 
 router = APIRouter()
 
@@ -36,6 +37,11 @@ _sarvam_api_key = None
 # about latency far more than deliberation, so reasoning effort is pinned low.
 GROQ_MODEL = "openai/gpt-oss-20b"
 GROQ_REASONING_EFFORT = "low"
+
+# Sarvam speech-to-text model. Named here rather than inline in the request so
+# the voice log records which model produced a transcript — the first thing
+# worth knowing when transcription quality changes after an upgrade.
+STT_MODEL = "saaras:v3"
 
 
 def _get_groq_client():
@@ -70,6 +76,35 @@ async def process_voice(
 
     uid = verify_token(authorization)
 
+    # Diagnostic context accumulated as the request learns things, so the log
+    # written at any exit point carries everything known by that point. A dict
+    # rather than locals because the earliest exits (rate limits) happen before
+    # the transcript, the intent or even the audio size exist.
+    ctx: dict = {"stt_model": STT_MODEL, "llm_model": GROQ_MODEL}
+
+    def _log(status: str, **fields):
+        emit_voice_log(
+            db,
+            background_tasks,
+            uid,
+            status,
+            total_ms=ms(start_total, time.time()),
+            **{**ctx, **fields},
+        )
+
+    def _log_now(status: str, **fields):
+        """The same entry, written before the handler raises.
+
+        A background task does not survive an exception — see write_voice_log().
+        """
+        write_voice_log(
+            db,
+            uid,
+            status,
+            total_ms=ms(start_total, time.time()),
+            **{**ctx, **fields},
+        )
+
     # ── Rate Limit Checks (before any external API calls) ──
     # 1. Per-user cooldown + daily cap
     allowed, retry_after = check_user_cooldown(db, uid)
@@ -79,6 +114,7 @@ async def process_voice(
             message = "Aaj ki voice limit khatam ho gayi. Please try again tomorrow."
         else:
             message = f"Thoda ruko! Try again in {retry_after:.0f}s."
+        _log("rate_limited", error_detail=f"user cooldown/daily cap, retry_after={retry_after}")
         return JSONResponse(
             status_code=429,
             content={
@@ -93,6 +129,7 @@ async def process_voice(
     allowed, retry_after = check_global_rate_limit(db, SARVAM_RPM)
     if not allowed:
         print(f"⚠️ Sarvam STT rate limit hit — retry_after={retry_after}s")
+        _log("rate_limited", error_detail=f"global sarvam rpm, retry_after={retry_after}")
         return JSONResponse(
             status_code=429,
             content={
@@ -107,6 +144,7 @@ async def process_voice(
     allowed, retry_after = check_global_rate_limit(db, GROQ_RPM)
     if not allowed:
         print(f"⚠️ Groq RPM rate limit hit — retry_after={retry_after}s")
+        _log("rate_limited", error_detail=f"global groq rpm, retry_after={retry_after}")
         return JSONResponse(
             status_code=429,
             content={
@@ -120,6 +158,7 @@ async def process_voice(
     allowed, retry_after = check_global_rate_limit(db, GROQ_RPD)
     if not allowed:
         print(f"⚠️ Groq daily rate limit hit — retry_after={retry_after}s")
+        _log("rate_limited", error_detail=f"global groq rpd, retry_after={retry_after}")
         return JSONResponse(
             status_code=429,
             content={
@@ -193,12 +232,22 @@ async def process_voice(
     except Exception as e:
         print("Error fetching recent context:", e)
 
+    # The context injected into the prompt is the first thing to check when an
+    # utterance lands on the wrong customer, so it is logged whatever happens next.
+    ctx["recent_customer"] = recent_customer or None
+    ctx["recent_modifier"] = recent_modifier or None
+    ctx["recent_order_id"] = recent_order_id or None
+
     # --- STEP 1: Speech-to-Text via Sarvam AI ---
     t1 = time.time()
     try:
         audio_bytes = await audio.read()
+        ctx["audio_size"] = len(audio_bytes)
+        ctx["audio_mime"] = audio.content_type
+        ctx["audio_filename"] = audio.filename
 
         if len(audio_bytes) < 100:
+            _log("audio_too_short")
             return {
                 "status": "error",
                 "message": "Audio too short. Please hold the button while speaking.",
@@ -206,6 +255,7 @@ async def process_voice(
 
         # Push-to-talk clips are well under 1 MB; cap before spending Sarvam quota
         if len(audio_bytes) > 2 * 1024 * 1024:
+            _log("audio_too_long")
             return {
                 "status": "error",
                 "message": "Audio too long. Please keep messages under 30 seconds.",
@@ -214,7 +264,7 @@ async def process_voice(
         url = "https://api.sarvam.ai/speech-to-text"
         files = {"file": (audio.filename, audio_bytes, audio.content_type)}
         data = {
-            "model": "saaras:v3",
+            "model": STT_MODEL,
             "language_code": "unknown",
             "mode": "translate",
             "with_diarization": "false",
@@ -232,6 +282,11 @@ async def process_voice(
             files_retry = {"file": (audio.filename, audio_bytes, audio.content_type)}
             response = requests.post(url, headers=headers, data=data, files=files_retry)
             if response.status_code == 429:
+                _log(
+                    "rate_limited",
+                    stt_ms=ms(t1, time.time()),
+                    error_detail="sarvam 429 after one retry",
+                )
                 return JSONResponse(
                     status_code=429,
                     content={
@@ -247,6 +302,8 @@ async def process_voice(
         result = response.json()
         hindi_text = result.get("transcript", result.get("text", ""))
 
+        ctx["stt_ms"] = ms(t1, time.time())
+        ctx["transcript"] = hindi_text
         print(f"⏱️ STT (Sarvam): {time.time() - t1:.2f}s")
         if _debug_logs():
             print(f"Heard: {hindi_text}")
@@ -255,10 +312,14 @@ async def process_voice(
         print(f"❌ SARVAM STT ERROR: {e!s}")
         if hasattr(e, "response") and e.response is not None:
             print(f"Response: {e.response.text}")
+        # The client is told nothing beyond "it failed"; the log is where the
+        # actual reason lives, which is the whole point of writing one.
+        _log_now("stt_error", stt_ms=ms(t1, time.time()), error_detail=f"{type(e).__name__}: {e!s}")
         # Don't leak internal error details to the client
         raise HTTPException(status_code=500, detail="Speech recognition failed. Please try again.")
 
     if not hindi_text.strip():
+        _log("stt_empty")
         return {"status": "error", "message": "Could not hear anything clearly."}
 
     # --- STEP 2: Intent Extraction via Groq LLM ---
@@ -303,6 +364,10 @@ async def process_voice(
 
         json_str = chat_completion.choices[0].message.content
         intent = json.loads(json_str)
+        ctx["llm_ms"] = ms(t2, time.time())
+        # The raw string, not the parsed dict: when the LLM emits something the
+        # schema does not describe, the exact text is what explains the outcome.
+        ctx["intent"] = json_str
         print(f"⏱️ LLM (Groq {GROQ_MODEL}): {time.time() - t2:.2f}s")
         if _debug_logs():
             print(f"Understood Intent: {intent}")
@@ -312,6 +377,11 @@ async def process_voice(
         # If it's still a 429 after retry, return proper 429 to client
         err_status = getattr(e, "status_code", None)
         if err_status == 429:
+            _log(
+                "rate_limited",
+                llm_ms=ms(t2, time.time()),
+                error_detail="groq 429 after one retry",
+            )
             return JSONResponse(
                 status_code=429,
                 content={
@@ -321,6 +391,7 @@ async def process_voice(
                 },
                 headers={"Retry-After": "5"},
             )
+        _log_now("llm_error", llm_ms=ms(t2, time.time()), error_detail=f"{type(e).__name__}: {e!s}")
         raise HTTPException(status_code=500, detail="Failed to understand the intent.")
 
     # --- STEP 3: Standardization & Database Loop ---
@@ -361,6 +432,17 @@ async def process_voice(
 
     print(f"⏱️ Firestore DB Ops: {time.time() - t3:.2f}s")
     print(f"⏱️ TOTAL VOICE PROCESS: {time.time() - start_total:.2f}s")
+
+    # Logged even when the pipeline succeeded but produced nothing: "I said it
+    # and nothing happened" is a complaint, and an empty result list with a
+    # readable transcript and intent is what explains it.
+    _log(
+        "ok",
+        db_ms=ms(t3, time.time()),
+        transaction_count=len(transactions),
+        results=result_list,
+        errors=errors,
+    )
 
     return {
         "status": "success",
@@ -413,5 +495,19 @@ async def resolve_transaction(
             )
 
         background_tasks.add_task(write_history)
+
+    # The disambiguation round-trip is its own log entry: it is the second half
+    # of an earlier /process_voice request, and without it the log would show an
+    # ambiguous utterance that apparently never resolved.
+    emit_voice_log(
+        db,
+        background_tasks,
+        uid,
+        "resolve",
+        intent=json.dumps({"transactions": [txn]}, default=str),
+        selected_modifier=req.selected_modifier or None,
+        results=result_list,
+        errors=errors,
+    )
 
     return {"status": "success", "results": result_list, "errors": errors}
