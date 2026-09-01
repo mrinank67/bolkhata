@@ -89,6 +89,7 @@ async function touchBill(orderId) {
 function markBillGenerated(card, pdfUrl, billNumber) {
   card.dataset.billUrl = pdfUrl;
   card.dataset.billFresh = '1';
+  if (billNumber) card.dataset.billNo = billNumber;
   const genBtn = card.querySelector('.order-generate-bill-btn');
   if (genBtn) {
     genBtn.dataset.mode = 'show';
@@ -249,10 +250,12 @@ function orderCardAttrs(o) {
   const bill = o.bill || null;
   const billFresh = !!(bill && bill.pdf_url && !bill.stale);
   const billUrl = (bill && bill.pdf_url) || '';
+  const billNo = (bill && bill.bill_number) || '';
   return `data-order-id="${escapeHtml(o.order_id)}"
     data-customer="${escapeHtml(o.customer_name)}"
     data-modifier="${escapeHtml(o.customer_modifier || '')}"
     data-bill-url="${escapeHtml(billUrl)}"
+    data-bill-no="${escapeHtml(billNo)}"
     data-bill-fresh="${billFresh ? '1' : ''}"`;
 }
 
@@ -512,11 +515,13 @@ function wireOrderCards(listEl) {
         saveWhatsAppNumber(card.dataset.customer, card.dataset.modifier, waNumber);
         // Reuse the already-generated bill if it's current; otherwise generate now.
         let pdf_url = (card.dataset.billFresh && card.dataset.billUrl) ? card.dataset.billUrl : '';
+        // Reusing a fresh bill never calls generateBill(), so its number comes off
+        // the card — put there by the last render or by markBillGenerated().
+        let bill_number = card.dataset.billNo || '';
         if (pdf_url) {
           // Sharing a link counts as using it — keep it alive for another 30 days.
           touchBill(orderId);
         } else {
-          let bill_number;
           ({ pdf_url, bill_number } = await generateBill(orderId));
           markBillGenerated(card, pdf_url, bill_number);
         }
@@ -525,7 +530,13 @@ function wireOrderCards(listEl) {
         // "Namaste ji" rather than "Namaste  ji" when the order is a counter
         // sale nobody was named for.
         const greeting = customer ? `Namaste ${customer} ji` : 'Namaste ji';
-        const message = `${greeting},\n\nAapka bill yahan dekhein:\n${pdf_url}\n\nDhanyavaad,\nBolKhata`;
+        // Name the bill in the message: it is what lets the customer match the
+        // link to the paper slip in their hand, and to quote back later. A bill
+        // that somehow arrived here unnumbered keeps the plain wording.
+        const billLine = bill_number
+          ? `Aapka bill ${bill_number} yahan dekhein:`
+          : 'Aapka bill yahan dekhein:';
+        const message = `${greeting},\n\n${billLine}\n${pdf_url}\n\nDhanyavaad,\nBolKhata`;
         window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
       } catch (e) {
         showToast('❌ ' + (e.message || 'Could not generate bill.'));
