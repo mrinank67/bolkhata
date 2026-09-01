@@ -24,6 +24,45 @@ _MAX_AMOUNT = MAX_AMOUNT
 ALLOWED_UNITS = {"", "pcs", "dozen", "box", "pack"}
 MAX_UNIT_LEN = 30
 
+# Spoken unit words → the canonical pack unit. The voice prompt deliberately
+# lets the LLM answer in natural language ("pieces", "boxes", "kilo") because the
+# ledger shows that word to the shopkeeper verbatim — but an order line has to
+# land inside ALLOWED_UNITS or the Orders edit sheet, whose selector only offers
+# those four, silently rewrites it on the next save.
+_UNIT_SYNONYMS = {
+    "pc": "pcs",
+    "piece": "pcs",
+    "pieces": "pcs",
+    "nag": "pcs",
+    "adad": "pcs",
+    "unit": "pcs",
+    "units": "pcs",
+    "dozens": "dozen",
+    "dz": "dozen",
+    "darjan": "dozen",
+    "boxes": "box",
+    "carton": "box",
+    "cartons": "box",
+    "peti": "box",
+    "packs": "pack",
+    "packet": "pack",
+    "packets": "pack",
+    "pkt": "pack",
+}
+
+
+def normalize_unit(raw) -> str:
+    """A spoken unit word as one of ALLOWED_UNITS.
+
+    A word with no pack-unit equivalent — "kilo", "bars", "litre" — becomes ""
+    (a plain count) rather than being forced into a unit it does not mean. The
+    raw word is still kept verbatim on the ledger entry, which displays it.
+    """
+    u = (raw or "").strip().lower()
+    if u in ALLOWED_UNITS:
+        return u
+    return _UNIT_SYNONYMS.get(u, "")
+
 
 class InventoryItemUpdate(BaseModel):
     """PUT /inventory/{id}, bound as a multipart Form model.
