@@ -34,6 +34,20 @@ gcloud storage buckets update gs://<FIREBASE_STORAGE_BUCKET> \
   --lifecycle-file=storage.lifecycle.json
 ```
 
+## The Same Mechanism Guards the Voice Logs
+
+`users/{uid}/voice_logs` holds transcripts and parsed intents for the support
+console (see [architecture](architecture.md)). They carry an `expires_at` 30 days
+out for the same reason bills do — but a **TTL policy is per collection group**,
+so the rule above does not cover them. This is required too, or transcripts
+accumulate forever:
+
+```bash
+gcloud firestore fields ttls update expires_at --collection-group=voice_logs --enable-ttl
+```
+
+Nothing else is needed: no audio is stored, so there is no Storage half.
+
 `daysSinceCustomTime` matches **only** objects that carry a `customTime`, which
 bill generation and `/bill/touch` set and nothing else does — so item photos in
 the same bucket are unaffected. The lifecycle window is 31 days against

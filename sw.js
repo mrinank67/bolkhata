@@ -1,4 +1,4 @@
-const CACHE_VERSION = "bolkhata-v19";
+const CACHE_VERSION = "bolkhata-v20";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
@@ -68,6 +68,16 @@ self.addEventListener("fetch", e => {
   // already handles them. Caching them here too would double the storage used
   // on the device AND force every thumbnail to re-download on each version bump.
   if (url.hostname === "firebasestorage.googleapis.com") return;
+
+  // The support panel and its API. This worker's scope is "/", so it controls
+  // /admin even though admin.html never registers it — and without this the
+  // network-first branch below would write another shop's ledger into this
+  // device's Cache Storage, where it would outlive the support session.
+  // admin.html is deliberately absent from STATIC_ASSETS for the same reason.
+  if (url.pathname === "/admin" || url.pathname.startsWith("/admin/") ||
+      url.pathname === "/admin.html") {
+    return;
+  }
 
   if (
     url.pathname.startsWith("/process_voice") ||

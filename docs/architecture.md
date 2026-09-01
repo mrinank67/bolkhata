@@ -30,6 +30,7 @@
 * `index.html` + `styles.css` + `app.js` — Main SPA shell.
 * `js/` — `auth.js` (Firebase auth), `config.js` (fetches `/config`), `layout.js` (viewport tier state), `recording.js` (push-to-talk audio capture), `dashboard.js` (inventory grid + Add Item modal), `camera.js` (in-app `getUserMedia` camera), `image-compress.js` (canvas downscale for gallery picks), `ledger.js` (udhaar panel), `orders.js` (orders page + bill generation/share), `units.js` (the pack-unit vocabulary every unit selector is built from), `suppliers.js`, `history.js`, `theme.js`, `idle-timer.js`, `ui.js`.
 * `sw.js` + `manifest.json` — PWA support with offline asset caching.
+* `admin.html` + `admin.css` + `js/admin/` — the support console, served at `/admin` and deliberately unreachable from the app's own navigation. `core.js` holds the `adminFetch()` wrapper that attaches `X-Acting-Uid`, `voice.js` renders the heard → understood → applied view, `panels.js` the editable records, `main.js` the session and tabs. It reuses `js/config.js`, `js/theme.js`, `js/idle-timer.js` and `styles.css`; nothing in `js/*.js` may import from `js/admin/`.
 
 ## Voice Processing Pipeline
 
@@ -40,6 +41,7 @@
 3. Groq GPT-OSS 20B → structured JSON transactions (target/operation/item/qty/customer/supplier).
 4. `process_transactions()` applies each transaction: fuzzy-match items, update stock, log credit/orders.
 5. History saved as a background task.
+6. A diagnostic record is written to `voice_logs` (`voice_log.py`) at **every** exit point, not just this one — see below.
 
 Voice **records transactions only — it never creates an inventory item or a supplier directory entry.** Both are catalogued through the manual forms, which capture the fields speech cannot carry (price, cost price, unit, category, photo; mobile, GST). `process_transactions()` enforces this: an unknown item name on a restock, supplier purchase or stock inquiry is rejected with an error rather than creating a stock doc, and any `target="supplier"` operation other than `read` is rejected.
 
@@ -54,7 +56,8 @@ Everything is per-user, under `users/{uid}/`:
 * `udhaar/{auto_id}` — credit entries: `customer_name`, `customer_modifier`, `item`, `quantity`, `amount`, `whatsapp_number`.
 * `orders/{auto_id}` — customer order line items; items sharing an `order_id` form one order (legacy docs without it group by customer + day). Every line item also carries `order_no`, the shop's running order count, allocated once when the order is created and shared by all its items.
 * `bills/{order_id}` — per-bill metadata: `download_token`, `storage_path`, `generated_at`, `expires_at`, `stale`. The PDF itself lives in Firebase Storage at `users/{uid}/bills/{order_id}.pdf`. Deliberately **disposable** — see [Bill Retention](bill-retention.md).
-* `history/{auto_id}` — voice processing logs.
+* `history/{auto_id}` — voice processing logs, the user-facing History screen. Written only when a request produced results or errors, and clearable by the shopkeeper.
+* `voice_logs/{auto_id}` — the support console's diagnostic record of one voice request: `transcript`, `intent` (raw LLM text), `status`, `error_detail`, per-stage timings, model names, audio size/mime, and the recent-customer context injected into the prompt. Written on **every** outcome including the failures — that is the point, since the request being complained about is the one that went wrong. No audio is stored. Deleted by a Firestore TTL on `expires_at` after 30 days; `DELETE /history` deliberately leaves it alone.
 * `suppliers/{auto_id}` — saved supplier directory entries.
 * `suppliers_purchases/{auto_id}` — wholesale purchase records.
 * `_meta/voice_cooldown`, `_meta/image_upload_limit` — per-user rate limit state, one document per feature.
@@ -66,7 +69,11 @@ Everything is per-user, under `users/{uid}/`:
 * Route handlers import `db` from `main` at call time (`from main import db`) to avoid circular imports — this is intentional, not a bug.
 * The rate limiter is fail-open: if a Firestore transaction fails, the request proceeds rather than blocking users.
 * Groq and Sarvam clients are lazily initialized (not at import time) to work with `load_dotenv()` ordering.
-* All API routes that mutate data require Firebase auth via `verify_token(authorization)`.
+* All API routes that mutate data require Firebase auth. Handlers call `resolve_uid(authorization, x_acting_uid)` — `verify_token()` is the uid-only form it wraps, still used directly by the two voice endpoints.
+* **`X-Acting-Uid` is the support seam, and the most dangerous header in the app.** `auth.resolve_uid()` returns the caller's own uid when the header is absent, and the target's only when the token carries the `admin` custom claim; a non-admin who sends it gets a **403, never a silent fallback** to their own uid, because a fallback would make a support bug look like a successful edit. This is why the console needs no duplicate write endpoints — an admin edits an order through `PUT /orders/item/{id}` like everyone else, so `_mark_bill_stale()`, `_load_order_docs()` and the rest apply unchanged. `/process_voice` and `/voice/resolve` deliberately do **not** accept the header. Every impersonated request is audited by the middleware in `main.py` into the top-level `admin_audit` collection.
+* **The audit ContextVar holds a mutable dict, and must keep doing so.** Starlette runs the endpoint in a child task, so a `ContextVar.set()` inside `resolve_uid()` is invisible to the middleware that called it — context propagates down, not up. The middleware seeds an empty dict per request and `resolve_uid()` fills it in; the shared object is what crosses the boundary.
+* **A voice log written from a path that raises must be written synchronously** (`write_voice_log`, not `emit_voice_log`). FastAPI builds an error response from the exception handler, which carries no background tasks, so a deferred write on the STT/LLM crash paths is silently dropped — losing exactly the two entries support needs most.
+* **The support console must stay invisible from the main app.** `admin.html` is never linked from `index.html`, never precached in `sw.js`, and `sw.js` skips `/admin*` entirely — its scope is `/`, so it controls the console page whether or not that page registers it, and without the skip the network-first branch would cache another shop's ledger into the operator's device. `tests/test_admin_isolation.py` asserts all of this.
 * Order edits (`routes/orders.py`) deliberately never write to `stock/` — stock reconciliation belongs to the billing/voice flow, not order CRUD, so editing an order can't desync inventory.
 * Bill generation is idempotent: `bill_number` and `download_token` are allocated once per `order_id` inside a Firestore transaction and reused, and the storage upload embeds that token via `firebaseStorageDownloadTokens` so the permanent link survives overwrites. Currency renders as `Rs.` — ReportLab's bundled fonts lack the ₹ glyph.
 * `vercel.json` must be updated when adding a new API **path** — each needs an explicit `src`/`dest` mapping to `main.py` (the `/orders` and `/orders/(.*)` rules already cover the orders and bill endpoints). The `src` patterns are method-agnostic, so adding a new *method* on an already-mapped path needs no change (`POST /inventory` rides the existing `/inventory` rule).

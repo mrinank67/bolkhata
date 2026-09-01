@@ -15,7 +15,7 @@ from fastapi import APIRouter, Header, HTTPException
 from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from auth import get_bucket, verify_token
+from auth import get_bucket, resolve_uid
 from models import (
     ALLOWED_UNITS,
     OrderCreateRequest,
@@ -200,10 +200,13 @@ def _attach_bills(user_ref, order_list: list) -> None:
 
 
 @router.get("/orders")
-async def get_orders(authorization: str = Header(None)):
+async def get_orders(
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     user_ref = db.collection("users").document(uid)
     orders_ref = user_ref.collection("orders")
     docs = orders_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
@@ -271,10 +274,14 @@ async def get_orders(authorization: str = Header(None)):
 
 
 @router.post("/orders")
-async def create_order(req: OrderCreateRequest, authorization: str = Header(None)):
+async def create_order(
+    req: OrderCreateRequest,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
 
     if not req.customer_name.strip():
         raise HTTPException(status_code=400, detail="Customer name is required.")
@@ -318,11 +325,14 @@ async def create_order(req: OrderCreateRequest, authorization: str = Header(None
 
 @router.post("/orders/{order_id}/items")
 async def add_order_item(
-    order_id: str, req: OrderItemAddRequest, authorization: str = Header(None)
+    order_id: str,
+    req: OrderItemAddRequest,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
 ):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     orders_ref = db.collection("users").document(uid).collection("orders")
 
     item = req.item.strip().lower()
@@ -367,10 +377,15 @@ async def add_order_item(
 
 
 @router.put("/orders/item/{item_id}")
-async def update_order_item(item_id: str, req: OrderItemUpdate, authorization: str = Header(None)):
+async def update_order_item(
+    item_id: str,
+    req: OrderItemUpdate,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     orders_ref = db.collection("users").document(uid).collection("orders")
     doc_ref = orders_ref.document(item_id)
     doc = doc_ref.get()
@@ -418,10 +433,14 @@ async def update_order_item(item_id: str, req: OrderItemUpdate, authorization: s
 
 
 @router.delete("/orders/item/{item_id}")
-async def delete_order_item(item_id: str, authorization: str = Header(None)):
+async def delete_order_item(
+    item_id: str,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     orders_ref = db.collection("users").document(uid).collection("orders")
     doc_ref = orders_ref.document(item_id)
 
@@ -437,7 +456,10 @@ async def delete_order_item(item_id: str, authorization: str = Header(None)):
 
 @router.put("/orders/{order_id}/customer")
 async def update_order_customer(
-    order_id: str, req: OrderCustomerUpdate, authorization: str = Header(None)
+    order_id: str,
+    req: OrderCustomerUpdate,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
 ):
     """Re-point a whole order at a different customer.
 
@@ -447,7 +469,7 @@ async def update_order_customer(
     """
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     orders_ref = db.collection("users").document(uid).collection("orders")
 
     cname = req.customer_name.strip().lower()
@@ -475,10 +497,14 @@ async def update_order_customer(
 
 
 @router.delete("/orders/{order_id}")
-async def delete_order(order_id: str, authorization: str = Header(None)):
+async def delete_order(
+    order_id: str,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     orders_ref = db.collection("users").document(uid).collection("orders")
 
     docs = _load_order_docs(orders_ref, order_id)

@@ -7,10 +7,12 @@ This is the main entry point. All route logic is in the routes/ package.
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from firebase_admin import firestore
 
-from auth import init_firebase
+from auth import acting_context, init_firebase
+from routes.admin import router as admin_router
 from routes.bills import router as bills_router
 from routes.history import router as history_router
 from routes.inventory import router as inventory_router
@@ -48,6 +50,54 @@ app.include_router(suppliers_router)
 app.include_router(ledger_router)
 app.include_router(orders_router)
 app.include_router(bills_router)
+app.include_router(admin_router)
+
+
+@app.middleware("http")
+async def audit_admin_impersonation(request: Request, call_next):
+    """Record every request an admin made while acting as another shop.
+
+    Here rather than inside resolve_uid() because the interesting facts — which
+    endpoint, and whether it actually succeeded — only exist once the response
+    does. resolve_uid() leaves the two uids in a ContextVar on its way past.
+
+    Reads are audited as well as writes: opening a shopkeeper's ledger is
+    precisely the access that should leave a trace.
+    """
+    # A fresh slot per request, which resolve_uid() fills in if — and only if —
+    # an admin actually acted as someone. See the note on acting_context: it has
+    # to be a mutable object, because context does not propagate back up out of
+    # the child task that runs the endpoint.
+    identity: dict = {}
+    acting_context.set(identity)
+
+    response = await call_next(request)
+
+    if not identity:
+        # No acting header, or the caller was refused before resolve_uid()
+        # reached the point of filling it in.
+        return response
+
+    try:
+        db.collection("admin_audit").add(
+            {
+                "admin_uid": identity["admin_uid"],
+                "acting_uid": identity["acting_uid"],
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "at": firestore.SERVER_TIMESTAMP,
+            }
+        )
+    except Exception as e:
+        # Fail-open, like the rate limiter: an audit write must never block
+        # someone repairing a live shop. It is loud in the function logs instead.
+        print(
+            f"⚠️ admin audit write failed "
+            f"({identity['admin_uid']} -> {identity['acting_uid']}): {e!s}"
+        )
+
+    return response
 
 
 @app.get("/config")

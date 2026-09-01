@@ -8,18 +8,45 @@ from fastapi import APIRouter, Header, HTTPException
 from firebase_admin import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from auth import verify_token
+from auth import resolve_uid
 from db_operations import _normalize_supplier_name
-from models import PurchaseRequest, SupplierCreateRequest
+from models import PurchaseRequest, PurchaseUpdate, SupplierCreateRequest
 
 router = APIRouter()
 
 
+def _restock(stock_ref, item_key: str, delta: int) -> None:
+    """Apply a purchase's stock effect, or undo it.
+
+    A purchase raises stock when it is recorded, so a correction has to move
+    stock the same way or the shopkeeper is left with the inflated count that
+    made them call in the first place. Clamped at zero because the goods may
+    already have been sold since — going negative would replace one wrong number
+    with another.
+    """
+    if not delta:
+        return
+    doc_ref = stock_ref.document(item_key)
+    snap = doc_ref.get()
+    if not snap.exists:
+        return
+    current = (snap.to_dict() or {}).get("quantity", 0) or 0
+    doc_ref.update(
+        {
+            "quantity": max(0, current + delta),
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+    )
+
+
 @router.get("/suppliers")
-async def get_suppliers(authorization: str = Header(None)):
+async def get_suppliers(
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     purchases_ref = db.collection("users").document(uid).collection("suppliers_purchases")
     docs = purchases_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).stream()
 
@@ -95,10 +122,14 @@ async def get_suppliers(authorization: str = Header(None)):
 
 
 @router.post("/suppliers/purchase")
-async def add_supplier_purchase(req: PurchaseRequest, authorization: str = Header(None)):
+async def add_supplier_purchase(
+    req: PurchaseRequest,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
 
     if not req.supplier_name.strip() or not req.item_name.strip():
         raise HTTPException(status_code=400, detail="Supplier name and item name are required.")
@@ -145,12 +176,122 @@ async def add_supplier_purchase(req: PurchaseRequest, authorization: str = Heade
     }
 
 
+@router.put("/suppliers/purchase/{purchase_id}")
+async def update_supplier_purchase(
+    purchase_id: str,
+    req: PurchaseUpdate,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
+    """Correct one purchase record, moving stock by the difference.
+
+    Recording a purchase raises stock, so a wrong quantity leaves the inventory
+    wrong too. Editing the quantity here applies only the delta; re-pointing the
+    purchase at a different item moves the whole quantity between the two.
+
+    timestamp is left alone — get_suppliers() sorts and buckets the monthly
+    totals by it, so rewriting it would move a corrected purchase into the wrong
+    month.
+    """
+    from main import db
+
+    uid = resolve_uid(authorization, x_acting_uid)
+    user_ref = db.collection("users").document(uid)
+    purchase_ref = user_ref.collection("suppliers_purchases").document(purchase_id)
+    snap = purchase_ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Purchase not found.")
+
+    old = snap.to_dict() or {}
+    old_item = (old.get("item_name") or "").strip().lower()
+    old_qty = old.get("quantity", 0) or 0
+    stock_ref = user_ref.collection("stock")
+
+    updates = {}
+    if req.supplier_name is not None:
+        if not req.supplier_name.strip():
+            raise HTTPException(status_code=400, detail="Supplier name cannot be empty.")
+        updates["supplier_name"] = req.supplier_name.strip()
+    if req.amount is not None:
+        updates["amount"] = req.amount
+
+    new_item = old_item
+    if req.item_name is not None:
+        new_item = req.item_name.strip().lower()
+        if not new_item:
+            raise HTTPException(status_code=400, detail="Item name cannot be empty.")
+        # Same rule as recording a purchase: it restocks an existing item, it
+        # never creates one, or the shop ends up with a priceless, unitless item.
+        if new_item != old_item and not stock_ref.document(new_item).get().exists:
+            raise HTTPException(
+                status_code=404,
+                detail=f"'{req.item_name.strip()}' is not in your inventory. Add the item first.",
+            )
+        updates["item_name"] = new_item
+
+    new_qty = req.quantity if req.quantity is not None else old_qty
+    if req.quantity is not None:
+        updates["quantity"] = new_qty
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update.")
+
+    purchase_ref.update(updates)
+
+    if new_item != old_item:
+        _restock(stock_ref, old_item, -old_qty)
+        _restock(stock_ref, new_item, new_qty)
+    else:
+        _restock(stock_ref, old_item, new_qty - old_qty)
+
+    return {"status": "success", "id": purchase_id}
+
+
+@router.delete("/suppliers/purchase/{purchase_id}")
+async def delete_supplier_purchase(
+    purchase_id: str,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
+    """Remove one purchase record and take its quantity back out of stock.
+
+    Until now a single mistaken purchase could only be removed by deleting the
+    whole supplier, which took every other purchase from them with it.
+
+    No blob cleanup: proof_image_url exists on the record but nothing ever
+    uploads one — both writers store "". If a proof-photo upload is ever added,
+    this is where the blob has to be deleted, because a Firebase download-token
+    URL never expires and bypasses storage.rules.
+    """
+    from main import db
+
+    uid = resolve_uid(authorization, x_acting_uid)
+    user_ref = db.collection("users").document(uid)
+    purchase_ref = user_ref.collection("suppliers_purchases").document(purchase_id)
+    snap = purchase_ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Purchase not found.")
+
+    data = snap.to_dict() or {}
+    purchase_ref.delete()
+    _restock(
+        user_ref.collection("stock"),
+        (data.get("item_name") or "").strip().lower(),
+        -(data.get("quantity", 0) or 0),
+    )
+
+    return {"status": "success", "id": purchase_id}
+
+
 @router.get("/suppliers/list")
-async def list_saved_suppliers(authorization: str = Header(None)):
+async def list_saved_suppliers(
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     """List all saved suppliers in the user's directory."""
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     suppliers_ref = db.collection("users").document(uid).collection("suppliers")
     docs = suppliers_ref.order_by("created_at", direction=firestore.Query.DESCENDING).stream()
 
@@ -175,11 +316,15 @@ async def list_saved_suppliers(authorization: str = Header(None)):
 
 
 @router.post("/suppliers/add")
-async def add_supplier(req: SupplierCreateRequest, authorization: str = Header(None)):
+async def add_supplier(
+    req: SupplierCreateRequest,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     """Add a new supplier to the user's directory."""
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
 
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="Supplier name is required.")
@@ -215,12 +360,15 @@ async def add_supplier(req: SupplierCreateRequest, authorization: str = Header(N
 
 @router.put("/suppliers/{supplier_id}")
 async def update_supplier(
-    supplier_id: str, req: SupplierCreateRequest, authorization: str = Header(None)
+    supplier_id: str,
+    req: SupplierCreateRequest,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
 ):
     """Edit a saved supplier's name, mobile, and GST number."""
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
 
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="Supplier name is required.")
@@ -259,11 +407,15 @@ async def update_supplier(
 
 
 @router.delete("/suppliers/{supplier_id}")
-async def delete_supplier(supplier_id: str, authorization: str = Header(None)):
+async def delete_supplier(
+    supplier_id: str,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     """Delete a supplier from the user's directory."""
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     doc_ref = db.collection("users").document(uid).collection("suppliers").document(supplier_id)
     doc = doc_ref.get()
 

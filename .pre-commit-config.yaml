@@ -26,9 +26,15 @@ repos:
       - id: check-case-conflict
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.6
+    # Keep in step with requirements-dev.txt. The hook runs in its own isolated
+    # environment built from this rev, not from the venv, so a drift here makes
+    # the local gate quietly weaker than CI: at v0.9.6 this hook passed a
+    # redundant int() cast that CI's 0.16.4 rejected as RUF046.
+    rev: v0.16.4
     hooks:
-      - id: ruff
+      # `ruff-check` since v0.16; the old `ruff` id still works but is a
+      # deprecated alias and will be dropped.
+      - id: ruff-check
         args: [--fix]
       - id: ruff-format
         # Runs on staged files only, so application code gets formatted

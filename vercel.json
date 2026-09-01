@@ -31,6 +31,14 @@
     {
       "src": "styles.css",
       "use": "@vercel/static"
+    },
+    {
+      "src": "admin.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "admin.css",
+      "use": "@vercel/static"
     }
   ],
   "headers": [
@@ -45,6 +53,19 @@
       "source": "/index.html",
       "headers": [
         { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/admin.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" }
+      ]
+    },
+    {
+      "source": "/admin.css",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, must-revalidate" }
       ]
     },
     {
@@ -149,6 +170,26 @@
     },
     {
       "src": "/settings",
+      "dest": "/main.py"
+    },
+    {
+      "src": "/ledger/(.*)",
+      "dest": "/main.py"
+    },
+    {
+      "src": "/admin.html",
+      "dest": "/admin.html"
+    },
+    {
+      "src": "/admin.css",
+      "dest": "/admin.css"
+    },
+    {
+      "src": "/admin",
+      "dest": "/admin.html"
+    },
+    {
+      "src": "/admin/(.*)",
       "dest": "/main.py"
     },
     {

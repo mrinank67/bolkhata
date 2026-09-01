@@ -46,7 +46,7 @@ line there whenever you introduce a new variable.
 | Variable | Purpose |
 | :--- | :--- |
 | `ALLOWED_ORIGINS` | Comma-separated extra CORS origins. Localhost is always allowed, and the deployed frontend is same-origin, so this is usually empty |
-| `DEBUG_LOGS` | Set to `1` to log transcripts and parsed intents. This is PII — keep it off in production |
+| `DEBUG_LOGS` | Set to `1` to *print* transcripts and parsed intents to stdout. This is PII — keep it off in production. Note this is only about the function logs: transcripts and intents are stored in `users/{uid}/voice_logs` regardless, for the support console, with a 30-day TTL |
 
 ## Running the Checks
 

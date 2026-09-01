@@ -11,7 +11,7 @@ from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from firebase_admin import firestore
 
-from auth import get_bucket, verify_token
+from auth import get_bucket, resolve_uid
 from image_utils import ImageRejected, process_item_image
 from models import ALLOWED_UNITS, MAX_AMOUNT, MAX_QTY, InventoryItemUpdate
 from rate_limiter import (
@@ -122,10 +122,13 @@ def _rate_limited(message: str, retry_after: float) -> JSONResponse:
 
 
 @router.post("/confirm_clear_inventory")
-async def confirm_clear_inventory(authorization: str = Header(None)):
+async def confirm_clear_inventory(
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     user_stock_ref = db.collection("users").document(uid).collection("stock")
     all_docs = list(user_stock_ref.stream())
 
@@ -156,10 +159,13 @@ async def confirm_clear_inventory(authorization: str = Header(None)):
 
 
 @router.get("/inventory")
-async def get_inventory(authorization: str = Header(None)):
+async def get_inventory(
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     user_stock_ref = db.collection("users").document(uid).collection("stock")
     docs = user_stock_ref.stream()
 
@@ -214,6 +220,7 @@ async def create_inventory_item(
     category: str = Form(""),
     image: Optional[UploadFile] = File(None),
     authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
 ):
     """Create a stock item, optionally with a product photo (multipart/form-data).
 
@@ -226,7 +233,7 @@ async def create_inventory_item(
     from main import db
 
     # 1. Auth first: an unauthenticated caller can't even cause a rate-limit write.
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
 
     # 2. Rate limits before any storage or image work. Only charged when a photo
     #    is actually attached — a photo-less create shouldn't spend the image budget.
@@ -352,6 +359,7 @@ async def update_inventory_item(
     item_id: str,
     req: Annotated[InventoryItemUpdate, Form()],
     authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
 ):
     """Update an item's name, quantity, price and/or photo (multipart/form-data).
 
@@ -362,7 +370,7 @@ async def update_inventory_item(
     """
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     user_stock_ref = db.collection("users").document(uid).collection("stock")
     doc_ref = user_stock_ref.document(item_id)
     doc = doc_ref.get()
@@ -496,11 +504,15 @@ async def update_inventory_item(
 
 
 @router.delete("/inventory/{item_id}")
-async def delete_inventory_item(item_id: str, authorization: str = Header(None)):
+async def delete_inventory_item(
+    item_id: str,
+    authorization: str = Header(None),
+    x_acting_uid: str = Header(None),
+):
     """Delete a single inventory item."""
     from main import db
 
-    uid = verify_token(authorization)
+    uid = resolve_uid(authorization, x_acting_uid)
     user_stock_ref = db.collection("users").document(uid).collection("stock")
     doc_ref = user_stock_ref.document(item_id)
     doc = doc_ref.get()
