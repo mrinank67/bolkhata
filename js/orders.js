@@ -6,6 +6,9 @@
 import { $, auth, API } from "./config.js";
 import { showToast, escapeHtml, capitalize, WA_SVG } from "./ui.js";
 import { isWide, onLayoutChange } from "./layout.js";
+import {
+  UNIT_MANY, packUnit, perUnit, qtyWithUnit, unitOptionsHtml
+} from "./units.js";
 
 // Pencil glyph — diagonal with the writing tip at the bottom-left (Feather "edit-2").
 const PENCIL_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
@@ -14,6 +17,7 @@ let currentOrdersData = { orders: [], order_count: 0, total_value: 0 };
 let currentOrdersSort = 'recent';
 let ordersSearchQuery = '';
 let inventoryPrices = {};            // { itemNameLower: price }
+let inventoryUnits = {};             // { itemNameLower: unit } — 'dozen', 'box', …
 // Whether the inventory fetch above actually succeeded. It is best-effort, and
 // a failed fetch would otherwise flag every line item as off-catalogue.
 let inventoryLoaded = false;
@@ -85,6 +89,7 @@ async function touchBill(orderId) {
 function markBillGenerated(card, pdfUrl, billNumber) {
   card.dataset.billUrl = pdfUrl;
   card.dataset.billFresh = '1';
+  if (billNumber) card.dataset.billNo = billNumber;
   const genBtn = card.querySelector('.order-generate-bill-btn');
   if (genBtn) {
     genBtn.dataset.mode = 'show';
@@ -139,6 +144,7 @@ export async function loadOrders() {
     // Orders are not limited to catalogued items — inventory is a reference for
     // pricing and autocomplete, and tells us which items to flag (see isOffCatalogue).
     inventoryPrices = {};
+    inventoryUnits = {};
     inventoryLoaded = false;
     let datalistHtml = '';
     try {
@@ -147,6 +153,7 @@ export async function loadOrders() {
         const name = (it.item || '').toLowerCase();
         if (!name) continue;
         inventoryPrices[name] = it.price || 0;
+        inventoryUnits[name] = packUnit(it.unit);
         datalistHtml += `<option value="${escapeHtml(capitalize(it.item))}"></option>`;
       }
       inventoryLoaded = true;
@@ -243,10 +250,12 @@ function orderCardAttrs(o) {
   const bill = o.bill || null;
   const billFresh = !!(bill && bill.pdf_url && !bill.stale);
   const billUrl = (bill && bill.pdf_url) || '';
+  const billNo = (bill && bill.bill_number) || '';
   return `data-order-id="${escapeHtml(o.order_id)}"
     data-customer="${escapeHtml(o.customer_name)}"
     data-modifier="${escapeHtml(o.customer_modifier || '')}"
     data-bill-url="${escapeHtml(billUrl)}"
+    data-bill-no="${escapeHtml(billNo)}"
     data-bill-fresh="${billFresh ? '1' : ''}"`;
 }
 
@@ -307,10 +316,14 @@ function buildOrderDetailHTML(o) {
   for (const item of (o.items || [])) {
     const qty = item.quantity || 0;
     const price = item.price || 0;
-    itemsHtml += `<div class="order-item-row" data-id="${escapeHtml(item.id)}" data-item="${escapeHtml(item.item)}" data-qty="${qty}" data-price="${price}">
+    // The unit is the line's own, not the inventory item's: an off-catalogue
+    // item has no stock row to read one from, and a stocked item's unit can
+    // change later without rewriting orders already placed in the old one.
+    const unit = packUnit(item.unit);
+    itemsHtml += `<div class="order-item-row" data-id="${escapeHtml(item.id)}" data-item="${escapeHtml(item.item)}" data-qty="${qty}" data-price="${price}" data-unit="${escapeHtml(unit)}">
       <div class="order-item-info">
         <div class="order-item-name">${escapeHtml(capitalize(item.item))}${isOffCatalogue(item.item) ? OFF_CATALOGUE_FLAG : ''}</div>
-        <div class="order-item-meta">${qty} × ${inr(price)} = ${inr(item.amount)}</div>
+        <div class="order-item-meta">${qtyWithUnit(qty, unit)} × ${inr(price)}${unit ? '/' + unit : ''} = ${inr(item.amount)}</div>
       </div>
       <div class="order-item-actions">
         <button class="order-item-edit" title="Edit">${PENCIL_SVG}</button>
@@ -402,6 +415,7 @@ function wireOrderCards(listEl) {
         item: row.dataset.item,
         qty: row.dataset.qty,
         price: row.dataset.price,
+        unit: row.dataset.unit,
       });
     });
   });
@@ -501,11 +515,13 @@ function wireOrderCards(listEl) {
         saveWhatsAppNumber(card.dataset.customer, card.dataset.modifier, waNumber);
         // Reuse the already-generated bill if it's current; otherwise generate now.
         let pdf_url = (card.dataset.billFresh && card.dataset.billUrl) ? card.dataset.billUrl : '';
+        // Reusing a fresh bill never calls generateBill(), so its number comes off
+        // the card — put there by the last render or by markBillGenerated().
+        let bill_number = card.dataset.billNo || '';
         if (pdf_url) {
           // Sharing a link counts as using it — keep it alive for another 30 days.
           touchBill(orderId);
         } else {
-          let bill_number;
           ({ pdf_url, bill_number } = await generateBill(orderId));
           markBillGenerated(card, pdf_url, bill_number);
         }
@@ -514,7 +530,13 @@ function wireOrderCards(listEl) {
         // "Namaste ji" rather than "Namaste  ji" when the order is a counter
         // sale nobody was named for.
         const greeting = customer ? `Namaste ${customer} ji` : 'Namaste ji';
-        const message = `${greeting},\n\nAapka bill yahan dekhein:\n${pdf_url}\n\nDhanyavaad,\nBolKhata`;
+        // Name the bill in the message: it is what lets the customer match the
+        // link to the paper slip in their hand, and to quote back later. A bill
+        // that somehow arrived here unnumbered keeps the plain wording.
+        const billLine = bill_number
+          ? `Aapka bill ${bill_number} yahan dekhein:`
+          : 'Aapka bill yahan dekhein:';
+        const message = `${greeting},\n\n${billLine}\n${pdf_url}\n\nDhanyavaad,\nBolKhata`;
         window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
       } catch (e) {
         showToast('❌ ' + (e.message || 'Could not generate bill.'));
@@ -543,17 +565,32 @@ function openEditModal(state) {
   $('order-edit-item').value = state.item ? capitalize(state.item) : '';
   $('order-edit-qty').value = state.qty || '';
   $('order-edit-price').value = (state.price !== undefined && state.price !== '') ? state.price : '';
+  // Editing keeps the line's own unit; adding starts at plain pieces and picks
+  // up the inventory item's unit as soon as a stocked name is typed.
+  $('order-edit-unit').value = packUnit(state.unit) || 'pcs';
+  syncEditUnitLabels();
   $('order-edit-save').textContent = state.mode === 'add' ? 'Add' : 'Save';
   syncOffCatalogueHint();
   $('order-edit-modal').classList.add('open');
   setTimeout(() => $('order-edit-item').focus(), 100);
 }
 
-// Default the price from inventory when the item name is set/changed. An item
-// the shop doesn't stock keeps whatever price was typed — it is still ordered.
-function prefillPriceFromInventory(itemInput, priceInput) {
+// Default the price (and unit) from inventory when the item name is set or
+// changed. An item the shop doesn't stock keeps whatever was typed or picked —
+// it is still ordered, which is why the unit selector has to live here too.
+function prefillFromInventory(itemInput, priceInput, unitSelect) {
   const name = (itemInput.value || '').trim().toLowerCase();
-  if (name in inventoryPrices) priceInput.value = inventoryPrices[name];
+  if (!(name in inventoryPrices)) return;
+  priceInput.value = inventoryPrices[name];
+  if (unitSelect) unitSelect.value = inventoryUnits[name] || 'pcs';
+}
+
+// Say the unit out loud in the labels: "2" on a dozen line means two dozen at
+// the price of one dozen, and the shopkeeper should see that before typing.
+function syncEditUnitLabels() {
+  const u = packUnit($('order-edit-unit').value);
+  $('order-edit-qty-label').textContent = u ? `Quantity (${UNIT_MANY[u]})` : 'Quantity';
+  $('order-edit-price-label').textContent = u ? `Price (₹${perUnit(u)})` : 'Price (₹ each)';
 }
 
 // Tell the shopkeeper the typed item isn't in inventory, without blocking them.
@@ -563,8 +600,11 @@ function syncOffCatalogueHint() {
 }
 
 $('order-edit-item').addEventListener('change', () => {
-  prefillPriceFromInventory($('order-edit-item'), $('order-edit-price'));
+  prefillFromInventory($('order-edit-item'), $('order-edit-price'), $('order-edit-unit'));
+  syncEditUnitLabels();
 });
+
+$('order-edit-unit').addEventListener('change', syncEditUnitLabels);
 
 $('order-edit-item').addEventListener('input', syncOffCatalogueHint);
 
@@ -578,6 +618,7 @@ $('order-edit-save').addEventListener('click', async () => {
   const item = $('order-edit-item').value.trim();
   const qty = parseInt($('order-edit-qty').value) || 0;
   const price = parseFloat($('order-edit-price').value) || 0;
+  const unit = $('order-edit-unit').value;
 
   if (!item || qty <= 0) {
     showToast('❌ Please fill item and quantity.');
@@ -597,7 +638,7 @@ $('order-edit-save').addEventListener('click', async () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          item, quantity: qty, price,
+          item, quantity: qty, price, unit,
           customer_name: orderEditState.customerName,
           customer_modifier: orderEditState.customerModifier,
         }),
@@ -606,7 +647,7 @@ $('order-edit-save').addEventListener('click', async () => {
       res = await fetch(`${API}/orders/item/${encodeURIComponent(orderEditState.itemId)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ item, quantity: qty, price }),
+        body: JSON.stringify({ item, quantity: qty, price, unit }),
       });
     }
     const data = await res.json();
@@ -728,13 +769,15 @@ function addOrderItemRow(prefill = {}) {
   row.innerHTML = `
     <input type="text" class="order-new-item" list="orders-item-datalist" placeholder="Item" value="${escapeHtml(prefill.item || '')}" />
     <input type="number" class="order-new-qty" placeholder="Qty" min="1" value="${prefill.qty || ''}" />
+    <select class="order-new-unit inventory-sort-select" title="Quantity type" aria-label="Quantity type">${unitOptionsHtml(prefill.unit)}</select>
     <input type="number" class="order-new-price" placeholder="₹" min="0" value="${prefill.price ?? ''}" />
     <button type="button" class="order-new-remove" title="Remove">✕</button>`;
   container.appendChild(row);
 
   const itemInput = row.querySelector('.order-new-item');
   const priceInput = row.querySelector('.order-new-price');
-  itemInput.addEventListener('change', () => prefillPriceFromInventory(itemInput, priceInput));
+  const unitSelect = row.querySelector('.order-new-unit');
+  itemInput.addEventListener('change', () => prefillFromInventory(itemInput, priceInput, unitSelect));
   row.querySelector('.order-new-remove').addEventListener('click', () => row.remove());
 }
 
@@ -762,7 +805,8 @@ $('order-modal-save').addEventListener('click', async () => {
     const item = row.querySelector('.order-new-item').value.trim();
     const qty = parseInt(row.querySelector('.order-new-qty').value) || 0;
     const price = parseFloat(row.querySelector('.order-new-price').value) || 0;
-    if (item && qty > 0) items.push({ item, quantity: qty, price });
+    const unit = row.querySelector('.order-new-unit').value;
+    if (item && qty > 0) items.push({ item, quantity: qty, price, unit });
   });
 
   if (!customer) { showToast('❌ Please enter a customer name.'); return; }

@@ -357,12 +357,10 @@
             <div class="form-row">
               <div class="field-group field-half">
                 <label class="field-label">Unit</label>
-                <select id="inventory-add-unit" class="inventory-sort-select" style="width:100%;">
-                  <option value="pcs">PCS</option>
-                  <option value="dozen">Dozen</option>
-                  <option value="box">Box</option>
-                  <option value="pack">Pack</option>
-                </select>
+                <!-- Options are filled by js/units.js (data-unit-select), which is
+                     the single source of the unit list the server also validates. -->
+                <select id="inventory-add-unit" class="inventory-sort-select" style="width:100%;"
+                        data-unit-select></select>
               </div>
               <div class="field-group field-half">
                 <label class="field-label" id="inventory-add-qty-label">Opening Stock</label>
@@ -426,13 +424,20 @@
             </div>
             <div class="form-row">
               <div class="field-group field-half">
+                <!-- Changing the unit here rewrites the labels below, exactly as the
+                     add sheet does: "12" on a dozen item means 12 dozen. -->
+                <label class="field-label">Unit</label>
+                <select id="inventory-edit-unit" class="inventory-sort-select" style="width:100%;"
+                        data-unit-select></select>
+              </div>
+              <div class="field-group field-half">
                 <label class="field-label" id="inventory-edit-qty-label">Quantity</label>
                 <input type="number" id="inventory-edit-qty" placeholder="0" min="0" inputmode="numeric" />
               </div>
-              <div class="field-group field-half">
-                <label class="field-label" id="inventory-edit-price-label">Price (₹)</label>
-                <input type="number" id="inventory-edit-price" placeholder="0" min="0" step="0.01" inputmode="decimal" />
-              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label" id="inventory-edit-price-label">Price (₹)</label>
+              <input type="number" id="inventory-edit-price" placeholder="0" min="0" step="0.01" inputmode="decimal" />
             </div>
             <div class="modal-actions" style="margin-top:16px;">
               <button id="inventory-edit-delete" class="btn btn-danger">🗑️ Delete</button>
@@ -768,13 +773,21 @@
             </div>
             <div class="form-row">
               <div class="field-group field-half">
-                <label class="field-label">Quantity</label>
-                <input type="number" id="order-edit-qty" placeholder="2" min="1" />
+                <!-- An off-catalogue item has no inventory row to inherit a unit
+                     from, so the order line carries its own. A stocked item
+                     prefills from inventory and can still be overridden here. -->
+                <label class="field-label">Unit</label>
+                <select id="order-edit-unit" class="inventory-sort-select" style="width:100%;"
+                        data-unit-select></select>
               </div>
               <div class="field-group field-half">
-                <label class="field-label">Price (₹ each)</label>
-                <input type="number" id="order-edit-price" placeholder="12" min="0" />
+                <label class="field-label" id="order-edit-qty-label">Quantity</label>
+                <input type="number" id="order-edit-qty" placeholder="2" min="1" />
               </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label" id="order-edit-price-label">Price (₹ each)</label>
+              <input type="number" id="order-edit-price" placeholder="12" min="0" />
             </div>
             <div class="modal-actions" style="margin-top:16px;">
               <button id="order-edit-cancel" class="btn btn-outline">Cancel</button>

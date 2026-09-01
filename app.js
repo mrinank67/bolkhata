@@ -26,6 +26,12 @@ import "./js/suppliers.js";
 import "./js/ledger.js";
 import "./js/orders.js";
 
+// Every unit ("quantity type") selector on the page draws its options from the
+// one list in js/units.js — the inventory add/edit sheets and the order sheets
+// alike. Done here rather than per-module so it happens exactly once.
+import { fillUnitSelects } from "./js/units.js";
+fillUnitSelects();
+
 // ═══════ PWA SERVICE WORKER — AUTO-UPDATE ═══════
 if ("serviceWorker" in navigator) {
   let refreshing = false;

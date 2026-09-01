@@ -2885,13 +2885,23 @@ input::placeholder {
 
 .order-new-item-row {
   display: grid;
-  grid-template-columns: 1fr 64px 72px 32px;
+  grid-template-columns: 1fr 52px 74px 66px 32px;
   gap: 6px;
   align-items: center;
 }
 
-.order-new-item-row input {
+.order-new-item-row input,
+.order-new-item-row select {
   width: 100%;
+}
+
+/* The unit select sits in a row of inputs, so it has to match their height and
+   give the chevron room rather than keep the sort-row padding it inherits. */
+.order-new-item-row .order-new-unit {
+  height: 38px;
+  padding: 6px 22px 6px 8px;
+  background-position: right 4px center;
+  font-size: 0.8rem;
 }
 
 .order-new-remove {

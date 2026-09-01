@@ -1,4 +1,4 @@
-const CACHE_VERSION = "bolkhata-v18";
+const CACHE_VERSION = "bolkhata-v19";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
@@ -18,6 +18,7 @@ const STATIC_ASSETS = [
   "/js/suppliers.js",
   "/js/ledger.js",
   "/js/orders.js",
+  "/js/units.js",
   "/styles.css",
   "/manifest.json",
   "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"

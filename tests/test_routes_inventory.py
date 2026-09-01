@@ -294,6 +294,44 @@ class TestUpdateAndDelete:
         assert not doc["image_path"] and not doc["image_thumb_path"]
         assert authed_client.get("/inventory").json()["inventory"][0].get("thumb_url") is None
 
+    def test_update_unit(self, authed_client, fake_db):
+        """The edit sheet has a unit selector too, not just the add sheet."""
+        fake_db.seed(f"{STOCK}/eggs", {"item": "eggs", "quantity": 10, "unit": "pcs"})
+
+        resp = authed_client.put("/inventory/eggs", data={"unit": "Dozen"})
+
+        assert resp.status_code == 200, resp.text
+        assert fake_db.docs[f"{STOCK}/eggs"]["unit"] == "dozen", "normalised to lowercase"
+
+    @pytest.mark.parametrize("unit", ["kg", "litre", "nonsense"])
+    def test_disallowed_unit_is_400_with_a_readable_message(self, authed_client, fake_db, unit):
+        """A 422 would carry a list as `detail`, which the PWA's toast cannot print."""
+        fake_db.seed(f"{STOCK}/eggs", {"item": "eggs", "quantity": 10, "unit": "dozen"})
+
+        resp = authed_client.put("/inventory/eggs", data={"unit": unit})
+
+        assert resp.status_code == 400
+        assert isinstance(resp.json()["detail"], str)
+        assert fake_db.docs[f"{STOCK}/eggs"]["unit"] == "dozen", "left untouched"
+
+    def test_omitting_the_unit_leaves_it_alone(self, authed_client, fake_db):
+        """An older client that posts no `unit` must not silently clear one."""
+        fake_db.seed(f"{STOCK}/eggs", {"item": "eggs", "quantity": 10, "unit": "dozen"})
+
+        authed_client.put("/inventory/eggs", data={"quantity": 12})
+
+        assert fake_db.docs[f"{STOCK}/eggs"]["unit"] == "dozen"
+
+    def test_rename_keeps_a_newly_picked_unit_over_the_carried_one(self, authed_client, fake_db):
+        """A rename is delete + recreate, and _CARRY_ON_RENAME copies the old
+        unit across — the one chosen in the sheet has to win."""
+        fake_db.seed(f"{STOCK}/eggs", {"item": "eggs", "quantity": 4, "unit": "pcs"})
+
+        resp = authed_client.put("/inventory/eggs", data={"item": "farm eggs", "unit": "dozen"})
+
+        assert resp.status_code == 200, resp.text
+        assert fake_db.docs[f"{STOCK}/farm eggs"]["unit"] == "dozen"
+
     def test_rename_carries_the_photo_over(self, authed_client, fake_db):
         fake_db.seed(
             f"{STOCK}/rice",

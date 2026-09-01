@@ -17,6 +17,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 from auth import get_bucket, verify_token
 from models import (
+    ALLOWED_UNITS,
     OrderCreateRequest,
     OrderCustomerUpdate,
     OrderItemAddRequest,
@@ -94,6 +95,20 @@ def _display_price(data: dict) -> float:
     qty = data.get("quantity") or 0
     amount = data.get("amount") or 0
     return (amount / qty) if qty else 0
+
+
+def _clean_unit(unit) -> str:
+    """A line item's pack unit, normalised — or a 400 naming the allowed ones.
+
+    Order lines carry their own unit rather than reading the inventory item's:
+    an off-catalogue item has no stock row to read one from, and changing a
+    stocked item's unit later must not re-scale orders already placed in the old
+    one.
+    """
+    u = (unit or "").strip().lower()
+    if u not in ALLOWED_UNITS:
+        raise HTTPException(status_code=400, detail="Unit must be PCS, Dozen, Box or Pack.")
+    return u
 
 
 def _order_id_for_doc(data: dict) -> str:
@@ -237,6 +252,7 @@ async def get_orders(authorization: str = Header(None)):
                 "id": doc.id,
                 "item": data.get("item", ""),
                 "quantity": data.get("quantity", 0),
+                "unit": data.get("unit", ""),
                 "price": _display_price(data),
                 "amount": amount,
             }
@@ -283,6 +299,7 @@ async def create_order(req: OrderCreateRequest, authorization: str = Header(None
                 "customer_modifier": cmod,
                 "item": item,
                 "quantity": it.quantity,
+                "unit": _clean_unit(it.unit),
                 "amount": round(it.price * it.quantity, 2),
                 "price": it.price,
                 "order_id": order_id,
@@ -336,6 +353,7 @@ async def add_order_item(
             "customer_modifier": cmod,
             "item": item,
             "quantity": req.quantity,
+            "unit": _clean_unit(req.unit),
             "amount": round(req.price * req.quantity, 2),
             "price": req.price,
             "order_id": order_id,
@@ -366,9 +384,11 @@ async def update_order_item(item_id: str, req: OrderItemUpdate, authorization: s
     old_item = data.get("item", "")
     old_qty = data.get("quantity", 0) or 0
     old_price = _display_price(data)
+    old_unit = data.get("unit", "") or ""
     new_item = req.item.strip().lower() if req.item is not None else old_item
     new_qty = req.quantity if req.quantity is not None else old_qty
     new_price = req.price if req.price is not None else old_price
+    new_unit = _clean_unit(req.unit) if req.unit is not None else old_unit
 
     # Only write (and invalidate the bill) when something the bill shows actually
     # changed — re-saving identical values is a no-op, so the saved bill stays fresh.
@@ -376,6 +396,7 @@ async def update_order_item(item_id: str, req: OrderItemUpdate, authorization: s
         new_item != old_item
         or (new_qty or 0) != (old_qty or 0)
         or round(new_price or 0, 2) != round(old_price or 0, 2)
+        or new_unit != old_unit
     )
 
     # Do NOT touch `timestamp` here. Orders without an order_id group by
@@ -386,6 +407,7 @@ async def update_order_item(item_id: str, req: OrderItemUpdate, authorization: s
             {
                 "item": new_item,
                 "quantity": new_qty,
+                "unit": new_unit,
                 "price": new_price,
                 "amount": round((new_price or 0) * (new_qty or 0), 2),
             }

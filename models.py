@@ -16,6 +16,14 @@ MAX_AMOUNT = 10_000_000
 _MAX_QTY = MAX_QTY
 _MAX_AMOUNT = MAX_AMOUNT
 
+# A pack unit is a counting unit, not a conversion factor: a "dozen" line holds
+# a quantity of dozens at a price per dozen, never 12 pieces at price/12. Shared
+# by inventory items and order line items — an order can name a unit for an item
+# the shop doesn't stock, which is the only place that unit is ever recorded.
+# js/units.js is the client-side twin; keep the two lists in step.
+ALLOWED_UNITS = {"", "pcs", "dozen", "box", "pack"}
+MAX_UNIT_LEN = 30
+
 
 class InventoryItemUpdate(BaseModel):
     """PUT /inventory/{id}, bound as a multipart Form model.
@@ -31,6 +39,10 @@ class InventoryItemUpdate(BaseModel):
     item: Optional[str] = Field(default=None, max_length=100)
     quantity: Optional[int] = Field(default=None, ge=0, le=_MAX_QTY)
     price: Optional[float] = Field(default=None, ge=0, le=_MAX_AMOUNT)
+    # Left out of the sheet entirely (an older client, say) means "don't touch";
+    # the value itself is checked against ALLOWED_UNITS in the route so a bad one
+    # is a readable 400 rather than a 422 the toast can't print.
+    unit: Optional[str] = Field(default=None, max_length=MAX_UNIT_LEN)
     image: Optional[UploadFile] = None
     # Only meaningful when no replacement photo is attached; an attached image
     # always wins, so "replace" never has to be spelled as remove-then-add.
@@ -76,6 +88,10 @@ class OrderItemCreate(BaseModel):
     item: str = Field(max_length=100)
     quantity: int = Field(gt=0, le=_MAX_QTY)
     price: float = Field(ge=0, le=_MAX_AMOUNT)
+    # The line's own unit, not the inventory item's. An order can be placed for
+    # something the shop doesn't stock, and then this is the only record of what
+    # the quantity counts. "" is plain pieces.
+    unit: Optional[str] = Field(default="", max_length=MAX_UNIT_LEN)
 
 
 class OrderCreateRequest(BaseModel):
@@ -103,6 +119,8 @@ class OrderItemUpdate(BaseModel):
     item: Optional[str] = Field(default=None, max_length=100)
     quantity: Optional[int] = Field(default=None, gt=0, le=_MAX_QTY)
     price: Optional[float] = Field(default=None, ge=0, le=_MAX_AMOUNT)
+    # None means "leave the line's unit alone"; "" means plain pieces.
+    unit: Optional[str] = Field(default=None, max_length=MAX_UNIT_LEN)
 
 
 class UserSettingsRequest(BaseModel):

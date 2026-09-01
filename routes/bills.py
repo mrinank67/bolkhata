@@ -76,6 +76,25 @@ def _money(n) -> str:
     return f"Rs. {_num(n)}"
 
 
+# Plural forms for the pack units; "pcs" and "" print as a bare number, the way
+# every bill did before line items could carry a unit.
+_UNIT_PLURAL = {"dozen": "dozen", "box": "boxes", "pack": "packs"}
+
+
+def _qty(it) -> str:
+    """The Qty cell: "5 dozen" when the line names a unit, else plain "5".
+
+    Without it a bill for "5 dozen eggs @ Rs. 60" reads as five eggs at sixty
+    rupees each — the quantity and the rate are both per dozen.
+    """
+    qty = it.get("quantity", 0) or 0
+    unit = (it.get("unit") or "").strip().lower()
+    if unit not in _UNIT_PLURAL:
+        return _num(qty)
+    word = unit if abs(float(qty)) == 1 else _UNIT_PLURAL[unit]
+    return f"{_num(qty)} {word}"
+
+
 def _download_token(uid: str, order_id: str) -> str:
     """The bill's Firebase Storage download token.
 
@@ -147,6 +166,7 @@ async def generate_bill(order_id: str, authorization: str = Header(None)):
             {
                 "item": data.get("item", ""),
                 "quantity": qty,
+                "unit": data.get("unit", "") or "",
                 "price": _display_price(data),
                 "amount": amount,
             }
@@ -347,7 +367,7 @@ def _render_bill_pdf(
             [
                 str(i),
                 Paragraph(_titlecase(it["item"]), cell),
-                _num(it["quantity"]),
+                _qty(it),
                 _num(it["price"]),
                 _num(it["amount"]),
             ]
@@ -365,7 +385,9 @@ def _render_bill_pdf(
     n = len(data) - 1  # index of the TOTAL row
     items_table = Table(
         data,
-        colWidths=[cw * 0.10, cw * 0.45, cw * 0.13, cw * 0.16, cw * 0.16],
+        # Qty is wider than it was: it now carries a unit word ("5 dozen"),
+        # and the item name gives up the space.
+        colWidths=[cw * 0.09, cw * 0.39, cw * 0.20, cw * 0.16, cw * 0.16],
     )
     items_table.setStyle(
         TableStyle(
