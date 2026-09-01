@@ -675,10 +675,18 @@ input::placeholder {
   padding-right: 10px;
 }
 
-/* Inventory page: scrollable */
+/* Inventory page: scrollable.
+   Three rows — header, the Quick Add hint strip, then the grid. The hint is
+   `display: none` most of the time, which takes it out of grid flow entirely,
+   so the grid is pinned to row 3 rather than left to auto-place: otherwise it
+   would fall back into row 2 and lose the `1fr` that makes the page scroll. */
 #page-inventory {
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   overflow-y: auto;
+}
+
+#inventory-grid {
+  grid-row: 3;
 }
 
 /* History page grid is defined in the HISTORY PAGE section below */
@@ -1730,6 +1738,83 @@ input::placeholder {
 
 .dashboard-refresh-btn.spinning .refresh-icon {
   animation: spin 0.8s ease;
+}
+
+/* ── Quick Add toggle ──
+   A pill sized to match .inventory-sort-select and .dashboard-refresh-btn
+   beside it. A <button aria-pressed> rather than a checkbox: the app has no
+   checkbox styling anywhere, and every other toggle here is a button. */
+.quickadd-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
+  transition: all var(--transition);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.quickadd-toggle:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.quickadd-toggle:active {
+  transform: scale(0.95);
+}
+
+/* "On" has to be unmistakable — it changes what the Save button does. */
+.quickadd-toggle[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Declared after the :hover rule above, which it ties on specificity and would
+   otherwise let repaint the pill grey while it is on. */
+.quickadd-toggle[aria-pressed="true"]:hover {
+  /* A literal, as .btn-accent:hover does — there is no darker-accent token. */
+  background: #4f52e0;
+  border-color: #4f52e0;
+}
+
+.quickadd-toggle-icon,
+.quickadd-toggle-label {
+  pointer-events: none;
+}
+
+/* Three controls now share the inventory header. On a small phone the word
+   goes and the bolt carries the button, which keeps the sort select readable. */
+@media (max-width: 480px) {
+  .quickadd-toggle {
+    padding: 0 9px;
+  }
+
+  .quickadd-toggle-label {
+    display: none;
+  }
+}
+
+/* Explains why the sheet no longer closes, and where the off switch is. */
+.quickadd-hint {
+  margin: 0 4px 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.5;
 }
 
 /* Inventory Grid */

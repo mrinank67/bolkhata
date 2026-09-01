@@ -16,6 +16,16 @@ import {
 let currentInventory = [];
 let currentSort = 'name-asc';
 
+// ── Quick Add mode ──
+// The initial catalogue pass is the slowest thing a new shopkeeper does: every
+// item means tap the FAB, wait for the grid to reload, type, save, watch the
+// sheet close. Quick Add keeps the sheet open and skips the per-item refetch,
+// so a 50-SKU shop is one continuous run of typing.
+const QUICKADD_KEY = "bk-quickadd";
+let quickAdd = false;        // hydrated from localStorage at module load
+let quickAddCount = 0;       // items saved since this sheet was opened
+let quickAddDirty = false;   // local appends are pending an authoritative refetch
+
 export async function loadDashboardInventory() {
   const inventoryGrid = $("inventory-grid");
   inventoryGrid.innerHTML = '<div class="inventory-empty">Loading inventory…</div>';
@@ -409,10 +419,62 @@ $("inventory-sort").addEventListener("change", (e) => {
   renderDashboardInventory();
 });
 
+// ── Quick Add mode ──
+// Persisted the way theme.js persists the theme — same try/catch on every
+// localStorage touch (Safari private mode throws), same bk- key prefix. It
+// survives a reload on purpose: an accidental refresh halfway through
+// cataloguing a shop shouldn't silently drop the user back to one-at-a-time.
+function getQuickAdd() {
+  try {
+    return localStorage.getItem(QUICKADD_KEY) === "on";
+  } catch {
+    return false;
+  }
+}
+
+function applyQuickAdd(on) {
+  quickAdd = on;
+  const btn = $("inventory-quickadd-toggle");
+  btn.setAttribute("aria-pressed", String(on));
+  // The strip explains why the sheet stops closing, and points at the off switch.
+  $("inventory-quickadd-hint").classList.toggle("hidden", !on);
+}
+
+function setQuickAdd(on) {
+  try {
+    localStorage.setItem(QUICKADD_KEY, on ? "on" : "off");
+  } catch { /* private mode: the mode still works, it just won't persist */ }
+  applyQuickAdd(on);
+}
+
+/** Replace the locally-appended rows with what the server actually has.
+ *  Called once when a Quick Add run ends, instead of after every save. */
+function reconcileInventory() {
+  if (!quickAddDirty) return;
+  quickAddDirty = false;
+  loadDashboardInventory();
+}
+
+$("inventory-quickadd-toggle").addEventListener("click", () => {
+  setQuickAdd(!quickAdd);
+  // Turning it on starts the run straight away — nobody flips this switch and
+  // then wants to hunt for the +. Turning it off ends the run, so the
+  // optimistically-rendered tiles get replaced by the server's version.
+  // Deliberately not done on page load: a persisted "on" must not greet the
+  // shopkeeper with a modal every time the app opens.
+  if (quickAdd) openInventoryAddModal();
+  else reconcileInventory();
+});
+
+applyQuickAdd(getQuickAdd());
+
 // ── Add Inventory Item Modal ──
 function closeAddModal() {
   addPicker.close();
   $("inventory-add-modal").classList.remove("open");
+  // Whichever way the sheet closed — Done, Cancel — this is where a Quick Add
+  // run ends and the optimistic tiles get replaced by the server's version.
+  reconcileInventory();
 }
 
 // Retitle the price/stock fields for the chosen unit, so "Dozen" asks for the
@@ -428,18 +490,80 @@ function syncAddUnitLabels() {
 
 $("inventory-add-unit").addEventListener("change", syncAddUnitLabels);
 
+// Title carries the run's tally so the shopkeeper can see the pass adding up
+// without closing the sheet; "Cancel" becomes "Done" because in Quick Add
+// nothing is being abandoned — the saved items are already saved.
+function syncAddSheetChrome() {
+  $("inventory-add-title").textContent =
+    quickAdd && quickAddCount > 0 ? `Add Item · ${quickAddCount} added` : "Add Item";
+  $("inventory-add-cancel").textContent = quickAdd ? "Done" : "Cancel";
+}
+
+/** Clear the sheet for the next item in a Quick Add run.
+ *  Unit and category deliberately survive: a catalogue pass runs in stretches
+ *  ("all the biscuits, all sold by the box"), so re-picking them every item is
+ *  exactly the typing this mode exists to remove. */
+function resetAddSheetForNext() {
+  ["inventory-add-name", "inventory-add-price", "inventory-add-cost",
+   "inventory-add-qty"].forEach(id => { $(id).value = ""; });
+  addPicker.open(null);            // drops the photo and resets the picker
+  syncAddUnitLabels();             // the kept unit still names the price/stock labels
+  $("inventory-add-name").focus();
+}
+
 function openInventoryAddModal() {
   ["inventory-add-name", "inventory-add-price", "inventory-add-cost",
    "inventory-add-qty", "inventory-add-category"].forEach(id => { $(id).value = ""; });
   $("inventory-add-unit").value = "pcs";
   syncAddUnitLabels();
   addPicker.open(null);
+  quickAddCount = 0;               // each opening of the sheet is its own run
+  syncAddSheetChrome();
   $("inventory-add-modal").classList.add("open");
   setTimeout(() => $("inventory-add-name").focus(), 100);
 }
 
 $("inventory-add-btn").addEventListener("click", openInventoryAddModal);
 $("inventory-add-cancel").addEventListener("click", closeAddModal);
+
+// Enter saves, so a whole item can be entered without leaving the keyboard.
+// Scoped to Quick Add: in normal mode the sheet behaves exactly as before.
+// The sheet is a div, not a <form>, so there is no implicit submission to lean
+// on. Numeric fields carry inputmode="numeric", whose phone keypad often has no
+// Enter at all — this is a desktop and tablet shortcut, and Save stays primary.
+$("inventory-add-modal").addEventListener("keydown", (e) => {
+  if (!quickAdd || e.key !== "Enter" || e.target.tagName !== "INPUT") return;
+  const btn = $("inventory-add-save");
+  if (btn.disabled) return;        // mid-save, or serving an upload cooldown
+  e.preventDefault();
+  btn.click();
+});
+
+/** Show a just-created item without re-fetching the whole inventory.
+ *
+ *  The name and the photo URLs are the server's own, straight off the response,
+ *  so the tile is keyed on the real document id (which IS the normalized item
+ *  name — see _normalize_item_id in routes/inventory.py) and a tap opens the
+ *  right edit sheet. The rest is what we posted, normalized the way the server
+ *  normalizes it: category truncated to MAX_CATEGORY_LEN. `updated_at` is
+ *  milliseconds, matching GET /inventory (`ts_obj.timestamp() * 1000`), so the
+ *  "recent" sort holds until the reconciling fetch replaces the row.
+ */
+function appendLocalItem(sent, data) {
+  currentInventory.push({
+    item: data.item,
+    quantity: sent.quantity,
+    price: sent.price,
+    cost_price: sent.cost_price,
+    unit: sent.unit,
+    category: sent.category.slice(0, 50),
+    updated_at: Date.now(),
+    ...(data.image_url ? { image_url: data.image_url } : {}),
+    ...(data.thumb_url ? { thumb_url: data.thumb_url } : {})
+  });
+  quickAddDirty = true;
+  renderDashboardInventory();
+}
 
 $("inventory-add-save").addEventListener("click", async () => {
   const name = $("inventory-add-name").value.trim();
@@ -461,13 +585,24 @@ $("inventory-add-save").addEventListener("click", async () => {
 
   try {
     const token = await auth.currentUser.getIdToken();
+    // Collected once, so Quick Add can render the new tile from the same values
+    // it posted rather than re-fetching the list to find out what it just sent.
+    const sent = {
+      name,
+      price,
+      cost_price: parseFloat($("inventory-add-cost").value) || 0,
+      unit: $("inventory-add-unit").value,
+      quantity: parseInt($("inventory-add-qty").value) || 0,
+      category: $("inventory-add-category").value.trim()
+    };
+
     const form = new FormData();
-    form.append("item", name);
-    form.append("price", String(price));
-    form.append("cost_price", String(parseFloat($("inventory-add-cost").value) || 0));
-    form.append("unit", $("inventory-add-unit").value);
-    form.append("quantity", String(parseInt($("inventory-add-qty").value) || 0));
-    form.append("category", $("inventory-add-category").value.trim());
+    form.append("item", sent.name);
+    form.append("price", String(sent.price));
+    form.append("cost_price", String(sent.cost_price));
+    form.append("unit", sent.unit);
+    form.append("quantity", String(sent.quantity));
+    form.append("category", sent.category);
     addPicker.attachTo(form);
 
     // No Content-Type header: the browser must set the multipart boundary itself.
@@ -489,9 +624,20 @@ $("inventory-add-save").addEventListener("click", async () => {
     const data = await res.json();
     if (res.ok && data.status === 'success') {
       showToast('✅ ' + data.message);
-      closeAddModal();
-      loadDashboardInventory();
+      if (quickAdd) {
+        // Stay open for the next item. The grid updates from what we just sent,
+        // so a 50-item pass costs 50 POSTs and one GET instead of 50 of each.
+        quickAddCount++;
+        appendLocalItem(sent, data);
+        resetAddSheetForNext();
+        syncAddSheetChrome();
+      } else {
+        closeAddModal();
+        loadDashboardInventory();
+      }
     } else {
+      // A rejection (duplicate name, bad value) leaves the sheet exactly as
+      // typed, in both modes, so the fix is an edit rather than a re-entry.
       showToast('❌ ' + (data.detail || data.message || 'Could not add item.'));
     }
   } catch {
