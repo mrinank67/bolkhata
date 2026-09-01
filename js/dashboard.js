@@ -9,20 +9,12 @@ import {
   captureFrame, cameraErrorMessage
 } from "./camera.js";
 import { compressImage } from "./image-compress.js";
+import {
+  UNIT_ONE, UNIT_MANY, packUnit, perUnit
+} from "./units.js";
 
 let currentInventory = [];
 let currentSort = 'name-asc';
-
-// Pack units: quantity counts packs and price is per pack, so a dozen item is
-// "5 dozen @ ₹100" — never 60 pieces at ₹8.33. "" and "pcs" are the plain
-// per-piece case and keep the original wording ("₹100/item", bare qty).
-const UNIT_ONE = { dozen: 'dozen', box: 'box', pack: 'pack' };
-const UNIT_MANY = { dozen: 'dozen', box: 'boxes', pack: 'packs' };
-
-function packUnit(unit) {
-  const u = (unit || '').toLowerCase();
-  return UNIT_ONE[u] ? u : '';
-}
 
 export async function loadDashboardInventory() {
   const inventoryGrid = $("inventory-grid");
@@ -268,14 +260,23 @@ function openInventoryEditModal(item) {
   // The thumbnail, not the full-size image: the grid has already fetched and
   // cached it, so the saved photo appears the instant the sheet opens.
   editPicker.open(item.thumb_url || null);
-  // Name the unit in the labels — editing "12" on a dozen item means 12 dozen,
-  // and the shopkeeper should see that before typing.
-  const u = packUnit(item.unit);
-  $("inventory-edit-qty-label").textContent = u ? `Quantity (${UNIT_MANY[u]})` : 'Quantity';
-  $("inventory-edit-price-label").textContent = u ? `Price (₹ per ${UNIT_ONE[u]})` : 'Price (₹)';
+  // An item saved before units existed, or one saved as plain pieces, both land
+  // on "pcs" — the select has no empty option, and "" and "pcs" mean the same.
+  $("inventory-edit-unit").value = packUnit(item.unit) || "pcs";
+  syncEditUnitLabels();
   $("inventory-edit-modal").classList.add("open");
   setTimeout(() => $("inventory-edit-name").focus(), 100);
 }
+
+// Name the unit in the labels — editing "12" on a dozen item means 12 dozen,
+// and the shopkeeper should see that before typing.
+function syncEditUnitLabels() {
+  const u = packUnit($("inventory-edit-unit").value);
+  $("inventory-edit-qty-label").textContent = u ? `Quantity (${UNIT_MANY[u]})` : 'Quantity';
+  $("inventory-edit-price-label").textContent = `Price (₹${perUnit(u)})`;
+}
+
+$("inventory-edit-unit").addEventListener("change", syncEditUnitLabels);
 
 function closeEditModal() {
   editPicker.close();
@@ -310,6 +311,7 @@ $("inventory-edit-save").addEventListener("click", async () => {
     form.append("item", newName);
     form.append("quantity", String(newQty));
     form.append("price", String(newPrice));
+    form.append("unit", $("inventory-edit-unit").value);
     editPicker.attachTo(form);
 
     // No Content-Type header: the browser must set the multipart boundary itself.
@@ -417,7 +419,7 @@ function closeAddModal() {
 // price of one dozen (₹100 for a dozen apples) and stock counts dozens.
 function syncAddUnitLabels() {
   const u = packUnit($("inventory-add-unit").value);
-  const per = u ? ` per ${UNIT_ONE[u]}` : "";
+  const per = perUnit(u);
   $("inventory-add-price-label").textContent = `Sell Price${per} (₹) *`;
   $("inventory-add-cost-label").textContent = `Cost Price${per} (₹)`;
   $("inventory-add-qty-label").textContent =

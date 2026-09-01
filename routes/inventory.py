@@ -13,7 +13,7 @@ from firebase_admin import firestore
 
 from auth import get_bucket, verify_token
 from image_utils import ImageRejected, process_item_image
-from models import MAX_AMOUNT, MAX_QTY, InventoryItemUpdate
+from models import ALLOWED_UNITS, MAX_AMOUNT, MAX_QTY, InventoryItemUpdate
 from rate_limiter import (
     IMAGE_UPLOAD_RPD,
     IMAGE_UPLOAD_RPM,
@@ -29,9 +29,6 @@ router = APIRouter()
 # cost, and per-request storage cost — all of which hold on any host.
 MAX_UPLOAD_BYTES = 3 * 1024 * 1024
 
-# A pack unit is a counting unit, not a conversion factor: a "dozen" item holds
-# a quantity of dozens and a price per dozen, never 12 pieces at price/12.
-ALLOWED_UNITS = {"", "pcs", "dozen", "box", "pack"}
 MAX_CATEGORY_LEN = 50
 
 # Fields carried across a rename. The doc id IS the item name, so renaming means
@@ -378,6 +375,15 @@ async def update_inventory_item(
     new_quantity = req.quantity
     new_price = req.price
 
+    # The one bound this endpoint still asserts by hand: a Literal on the model
+    # would answer with a 422 whose `detail` is a list, and the PWA prints
+    # `detail` verbatim into a toast. Same message as the create route.
+    new_unit = req.unit
+    if new_unit is not None:
+        new_unit = new_unit.strip().lower()
+        if new_unit not in ALLOWED_UNITS:
+            raise HTTPException(status_code=400, detail="Unit must be PCS, Dozen, Box or Pack.")
+
     # Name conflicts are settled before any image work, so a doomed rename never
     # spends the upload budget or leaves a blob behind.
     if new_name and new_name != item_id and user_stock_ref.document(new_name).get().exists:
@@ -449,6 +455,8 @@ async def update_inventory_item(
         for key in _CARRY_ON_RENAME:
             if key in old_data:
                 new_data[key] = old_data[key]
+        if new_unit is not None:
+            new_data["unit"] = new_unit  # a unit picked in the sheet beats the carry-over
         new_data.update(image_fields)  # a replaced/removed photo beats the carry-over
 
         user_stock_ref.document(new_name).set(new_data)
@@ -466,6 +474,8 @@ async def update_inventory_item(
             update_data["quantity"] = new_quantity
         if new_price is not None:
             update_data["price"] = new_price
+        if new_unit is not None:
+            update_data["unit"] = new_unit
         doc_ref.update(update_data)
         _delete_item_images(stale)
         response = {

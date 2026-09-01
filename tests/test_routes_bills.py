@@ -10,7 +10,7 @@ from unittest import mock
 
 import pytest
 
-from routes.bills import _money, _num, _titlecase
+from routes.bills import _money, _num, _qty, _titlecase
 
 UID = "test-uid"
 ORDERS = f"users/{UID}/orders"
@@ -91,6 +91,24 @@ class TestFormatters:
     )
     def test_titlecase(self, value, expected):
         assert _titlecase(value) == expected
+
+    @pytest.mark.parametrize(
+        ("line", "expected"),
+        [
+            # Without the unit, "5 eggs at Rs. 60" reads as sixty rupees per egg.
+            ({"quantity": 5, "unit": "dozen"}, "5 dozen"),
+            ({"quantity": 1, "unit": "box"}, "1 box"),
+            ({"quantity": 3, "unit": "box"}, "3 boxes"),
+            ({"quantity": 2, "unit": "PACK"}, "2 packs"),
+            # Pieces and pre-unit lines both keep the bare number bills always had.
+            ({"quantity": 5, "unit": "pcs"}, "5"),
+            ({"quantity": 5, "unit": ""}, "5"),
+            ({"quantity": 5}, "5"),
+            ({"quantity": 1000, "unit": "dozen"}, "1,000 dozen"),
+        ],
+    )
+    def test_qty_names_the_unit_it_counts(self, line, expected):
+        assert _qty(line) == expected
 
 
 class TestGenerateBill:

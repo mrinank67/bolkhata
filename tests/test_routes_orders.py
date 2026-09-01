@@ -265,6 +265,95 @@ class TestModifyOrderItems:
         assert {fake_db.docs[p]["order_id"] for p in fake_db.paths_under(ORDERS)} == {"o1"}
 
 
+class TestLineItemUnits:
+    """An order line carries its own pack unit.
+
+    Orders are not limited to catalogued items, so for an off-catalogue item this
+    is the only record of what the quantity counts — there is no stock row to
+    read one from.
+    """
+
+    def test_create_stores_the_unit(self, authed_client, fake_db):
+        resp = authed_client.post(
+            "/orders",
+            json={
+                "customer_name": "Ramesh",
+                "items": [{"item": "eggs", "quantity": 5, "price": 60, "unit": "Dozen"}],
+            },
+        )
+
+        assert resp.status_code == 200, resp.text
+        stored = [fake_db.docs[p] for p in fake_db.paths_under(ORDERS)]
+        assert stored[0]["unit"] == "dozen", "normalised to lowercase"
+
+    def test_create_without_a_unit_is_plain_pieces(self, authed_client, fake_db):
+        authed_client.post(
+            "/orders",
+            json={
+                "customer_name": "Ramesh",
+                "items": [{"item": "rice", "quantity": 2, "price": 50}],
+            },
+        )
+
+        stored = [fake_db.docs[p] for p in fake_db.paths_under(ORDERS)]
+        assert stored[0]["unit"] == ""
+
+    def test_add_item_stores_the_unit(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/i1", _line(order_id="o1", item="rice"))
+
+        resp = authed_client.post(
+            "/orders/o1/items",
+            json={"item": "eggs", "quantity": 2, "price": 60, "unit": "dozen"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        added = next(
+            fake_db.docs[p]
+            for p in fake_db.paths_under(ORDERS)
+            if fake_db.docs[p]["item"] == "eggs"
+        )
+        assert added["unit"] == "dozen"
+
+    def test_update_changes_the_unit(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/i1", _line(item="eggs", unit="pcs"))
+
+        resp = authed_client.put("/orders/item/i1", json={"unit": "dozen"})
+
+        assert resp.status_code == 200, resp.text
+        assert fake_db.docs[f"{ORDERS}/i1"]["unit"] == "dozen"
+
+    def test_omitting_the_unit_on_update_leaves_it_alone(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/i1", _line(item="eggs", unit="dozen"))
+
+        authed_client.put("/orders/item/i1", json={"quantity": 3})
+
+        assert fake_db.docs[f"{ORDERS}/i1"]["unit"] == "dozen"
+
+    @pytest.mark.parametrize("unit", ["kg", "litre", "nonsense"])
+    def test_disallowed_unit_is_400_with_a_readable_message(self, authed_client, fake_db, unit):
+        fake_db.seed(f"{ORDERS}/i1", _line(item="eggs", unit="dozen"))
+
+        resp = authed_client.put("/orders/item/i1", json={"unit": unit})
+
+        assert resp.status_code == 400
+        assert isinstance(resp.json()["detail"], str)
+        assert fake_db.docs[f"{ORDERS}/i1"]["unit"] == "dozen", "left untouched"
+
+    def test_listing_returns_the_unit(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/i1", _line(item="eggs", unit="dozen"))
+
+        items = authed_client.get("/orders").json()["orders"][0]["items"]
+
+        assert items[0]["unit"] == "dozen"
+
+    def test_a_line_written_before_units_existed_lists_as_pieces(self, authed_client, fake_db):
+        fake_db.seed(f"{ORDERS}/i1", _line(item="rice"))
+
+        items = authed_client.get("/orders").json()["orders"][0]["items"]
+
+        assert items[0]["unit"] == ""
+
+
 class TestRenameOrderCustomer:
     """A voice sale with no name spoken books a customerless order; this
     endpoint is how it gets a name before the bill goes out."""
