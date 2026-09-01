@@ -108,4 +108,6 @@ def emit_voice_log(db, background_tasks, uid: str, status: str, **fields) -> Non
 
 def ms(started_at: float, now: float) -> int:
     """Elapsed milliseconds, rounded — the stored twin of the ⏱️ prints."""
-    return int(round((now - started_at) * 1000))
+    # round() with no ndigits already returns an int; wrapping it in int() is
+    # the redundant cast ruff flags as RUF046.
+    return round((now - started_at) * 1000)
