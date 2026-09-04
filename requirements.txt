@@ -2,7 +2,7 @@ fastapi==0.141.1
 python-multipart==0.0.32
 thefuzz==0.22.1
 requests==2.34.2
-groq==1.6.0
+groq==1.7.0
 python-dotenv==1.2.3
 firebase-admin==7.5.0
 uvicorn==0.52.4
