@@ -56,6 +56,8 @@ def build_voice_log(status: str, **fields) -> dict:
 
     if "transcript" in fields:
         entry["transcript"] = _clip(fields.pop("transcript"), MAX_TRANSCRIPT_CHARS)
+    if "translation" in fields:
+        entry["translation"] = _clip(fields.pop("translation"), MAX_TRANSCRIPT_CHARS)
     if "intent" in fields:
         # Stored as text: the intent is free-form LLM output, and Firestore
         # rejects nested nulls and over-deep maps that a dict write would hit.

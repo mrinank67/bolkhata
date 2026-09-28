@@ -15,8 +15,11 @@ import json
 from unittest import mock
 
 import pytest
+import requests
 
+import prompts
 import rate_limiter
+from tests.audio_helpers import empty_container, encode, speech
 
 UID = "test-uid"
 # Must clear the handler's 100-byte "audio too short" floor, or every test below
@@ -203,6 +206,287 @@ class TestSpeechToText:
         _post(authed_client)
 
         assert fake_db.docs["_system/rate_limit_events"]["count_429_sarvam_rpm"] >= 1
+
+
+class TestLongClipsAreSplit:
+    """Sarvam's REST STT refuses audio over 30 s with a 400; long lists used to fail.
+
+    These use real encoded audio (tests/audio_helpers.py) so the decode and the
+    split actually run.
+    """
+
+    @pytest.fixture
+    def per_chunk(self, sarvam):
+        """Answer each chunk with its own filename, so order is checkable."""
+
+        def _post(url, headers, data, files):
+            resp = mock.MagicMock(status_code=200)
+            resp.json.return_value = {"transcript": f"<{files['file'][0]}>"}
+            resp.raise_for_status.return_value = None
+            return resp
+
+        sarvam.post.side_effect = _post
+        return sarvam
+
+    def _send(self, client, audio: bytes):
+        return client.post("/process_voice", files={"audio": ("clip.webm", audio, "audio/webm")})
+
+    def test_a_short_clip_is_sent_exactly_as_uploaded(self, authed_client, fake_db, sarvam, groq):
+        audio = encode(speech(("talk", 5)))
+        self._send(authed_client, audio)
+
+        sarvam.post.assert_called_once()
+        name, body, mime = sarvam.post.call_args.kwargs["files"]["file"]
+        assert (name, body, mime) == ("clip.webm", audio, "audio/webm")
+
+    def test_a_long_clip_is_transcribed_in_chunks_and_rejoined_in_order(
+        self, authed_client, fake_db, per_chunk, groq
+    ):
+        audio = encode(
+            speech(("talk", 25), ("pause", 0.6), ("talk", 25), ("pause", 0.6), ("talk", 10))
+        )
+        resp = self._send(authed_client, audio)
+
+        assert resp.status_code == 200
+        assert resp.json()["raw_text"] == "<chunk0.wav> <chunk1.wav> <chunk2.wav>"
+        for call in per_chunk.post.call_args_list:
+            assert call.kwargs["files"]["file"][2] == "audio/wav"
+        user_msg = groq.client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "<chunk0.wav> <chunk1.wav> <chunk2.wav>" in user_msg
+
+    def test_every_chunk_is_charged_to_the_sarvam_quota(
+        self, authed_client, fake_db, per_chunk, groq
+    ):
+        audio = encode(speech(("talk", 25), ("pause", 0.6), ("talk", 20)))
+        self._send(authed_client, audio)
+
+        assert per_chunk.post.call_count == 2
+        assert len(fake_db.docs["_system/rate_limits"]["sarvam_rpm"]) == 2
+
+    def test_no_quota_for_the_extra_chunks_means_no_sarvam_call(
+        self, authed_client, fake_db, sarvam, groq, monkeypatch
+    ):
+        def _limit(db, config, cost=None):
+            # Only the extra-chunk charge passes a cost; the up-front checks pass.
+            return (False, 12.0) if cost is not None else (True, 0.0)
+
+        monkeypatch.setattr("routes.voice.check_global_rate_limit", _limit)
+        resp = self._send(authed_client, encode(speech(("talk", 25), ("pause", 0.6), ("talk", 20))))
+
+        assert resp.status_code == 429
+        sarvam.post.assert_not_called()
+
+    def test_the_log_records_duration_and_chunk_count(
+        self, authed_client, fake_db, per_chunk, groq
+    ):
+        self._send(authed_client, encode(speech(("talk", 25), ("pause", 0.6), ("talk", 20))))
+
+        (entry,) = [v for k, v in fake_db.docs.items() if "/voice_logs/" in k]
+        assert entry["stt_chunks"] == 2
+        assert entry["audio_seconds"] == pytest.approx(45.6, abs=0.2)
+
+    def test_a_tap_with_no_audio_never_reaches_sarvam(self, authed_client, fake_db, sarvam, groq):
+        body = self._send(authed_client, empty_container()).json()
+
+        assert "too short" in body["message"].lower()
+        sarvam.post.assert_not_called()
+
+    def test_over_two_minutes_is_refused_before_any_sarvam_call(
+        self, authed_client, fake_db, sarvam, groq, monkeypatch
+    ):
+        # A 2-minute encode is slow for a unit test; lower the cap instead.
+        monkeypatch.setattr("routes.voice.MAX_AUDIO_SECONDS", 30)
+        body = self._send(authed_client, encode(speech(("talk", 35)))).json()
+
+        assert "too long" in body["message"].lower()
+        sarvam.post.assert_not_called()
+
+    def test_one_chunk_hitting_429_twice_fails_the_request_as_rate_limited(
+        self, authed_client, fake_db, sarvam, groq, monkeypatch
+    ):
+        monkeypatch.setattr("routes.voice.time.sleep", lambda _s: None)
+        sarvam.status_code = 429
+
+        resp = self._send(authed_client, encode(speech(("talk", 25), ("pause", 0.6), ("talk", 20))))
+
+        assert resp.status_code == 429
+
+
+class TestSarvamRequest:
+    def test_sarvam_transcribes_without_translating(self, authed_client, fake_db, sarvam, groq):
+        """Translation is Groq's pass: Sarvam's made a per-unit price a line total."""
+        _post(authed_client)
+        assert sarvam.post.call_args.kwargs["data"]["mode"] == "codemix"
+
+    def test_sarvams_reason_for_a_400_reaches_the_log(self, authed_client, fake_db, sarvam, groq):
+        err = requests.HTTPError("400 Client Error: Bad Request")
+        err.response = mock.MagicMock(text='{"error": "Audio duration exceeds 30 seconds"}')
+        sarvam.raise_for_status.side_effect = err
+
+        resp = _post(authed_client)
+
+        assert resp.status_code == 500
+        assert "30 seconds" not in resp.text
+        (entry,) = [v for k, v in fake_db.docs.items() if "/voice_logs/" in k]
+        assert "Audio duration exceeds 30 seconds" in entry["error_detail"]
+
+
+class TestContextualTranslation:
+    """A Groq pass between Sarvam and intent extraction, for non-English speech.
+
+    Sarvam's own translation rendered "12 rupees each" and "12 rupees for the
+    lot" alike; this pass keeps the two apart before the intent model sees them.
+    """
+
+    HINDI = "रमेश को 5 Maggi 12 रुपये वाली दे दो"
+    ENGLISH = "Give Ramesh 5 Maggi at 12 rupees each."
+
+    @pytest.fixture
+    def llm(self, groq):
+        """Answer the translation prompt and the intent prompt differently."""
+        groq.translation = json.dumps({"english": self.ENGLISH})
+
+        def _create(**kwargs):
+            completion = mock.MagicMock()
+            system = kwargs["messages"][0]["content"]
+            is_translation = system == prompts.get_translation_prompt()
+            completion.choices[0].message.content = (
+                groq.translation if is_translation else json.dumps(groq.intent)
+            )
+            return completion
+
+        groq.client.chat.completions.create.side_effect = _create
+        return groq
+
+    def _calls(self, llm):
+        return [c.kwargs for c in llm.client.chat.completions.create.call_args_list]
+
+    def _log(self, fake_db):
+        (entry,) = [v for k, v in fake_db.docs.items() if "/voice_logs/" in k]
+        return entry
+
+    def test_the_intent_model_reads_the_translation(self, authed_client, fake_db, sarvam, llm):
+        sarvam.transcript = self.HINDI
+        body = _post(authed_client).json()
+
+        translate, intent = self._calls(llm)
+        assert translate["messages"][0]["content"] == prompts.get_translation_prompt()
+        assert translate["messages"][1]["content"] == self.HINDI
+        assert translate["model"] == intent["model"], "same Groq model for both passes"
+        assert self.ENGLISH in intent["messages"][1]["content"]
+        assert self.HINDI not in intent["messages"][1]["content"]
+        assert (body["raw_text"], body["translated_text"]) == (self.HINDI, self.ENGLISH)
+
+    def test_the_log_keeps_both_what_was_heard_and_what_was_read(
+        self, authed_client, fake_db, sarvam, llm
+    ):
+        sarvam.transcript = self.HINDI
+        _post(authed_client)
+
+        entry = self._log(fake_db)
+        assert entry["transcript"] == self.HINDI
+        assert entry["translation"] == self.ENGLISH
+        assert "translate_ms" in entry
+
+    @pytest.mark.parametrize(
+        "heard",
+        [
+            "ரமேஷுக்கு 2 Maggi 12 ரூபாய் ஒன்றுக்கு",  # Tamil
+            "রমেশকে 3টা সাবান, প্রতিটা 30 টাকা",  # Bengali
+            "رمیش کو 2 میگی دو",  # Urdu
+        ],
+    )
+    def test_every_indian_script_is_translated(self, authed_client, fake_db, sarvam, llm, heard):
+        sarvam.transcript = heard
+        _post(authed_client)
+        assert len(self._calls(llm)) == 2
+
+    def test_english_speech_skips_the_extra_call(self, authed_client, fake_db, sarvam, llm):
+        sarvam.transcript = "give Ramesh 5 maggi at 12 rupees each"
+        body = _post(authed_client).json()
+
+        (intent,) = self._calls(llm)
+        assert "give Ramesh 5 maggi" in intent["messages"][1]["content"]
+        assert body["translated_text"] is None
+
+    def test_the_translation_is_charged_to_the_groq_quotas(
+        self, authed_client, fake_db, sarvam, llm
+    ):
+        sarvam.transcript = self.HINDI
+        _post(authed_client)
+
+        limits = fake_db.docs["_system/rate_limits"]
+        assert len(limits["groq_rpm"]) == 2
+        assert limits["groq_rpd_count"] == 2
+
+    def test_unusable_translation_falls_back_to_the_transcript(
+        self, authed_client, fake_db, sarvam, llm
+    ):
+        sarvam.transcript = self.HINDI
+        llm.translation = "Give Ramesh five maggi"  # not JSON
+
+        resp = _post(authed_client)
+
+        assert resp.status_code == 200
+        intent = self._calls(llm)[-1]
+        assert self.HINDI in intent["messages"][1]["content"]
+        entry = self._log(fake_db)
+        assert "translation" not in entry
+        assert entry["translation_error"]
+
+    def test_no_groq_quota_for_the_translation_skips_it(
+        self, authed_client, fake_db, sarvam, llm, monkeypatch
+    ):
+        """The request already paid for STT and holds a slot for the intent call."""
+        seen = []
+
+        def _limit(db, config, cost=1):
+            seen.append(config.firestore_key)
+            # The up-front checks pass; the translation's own RPM charge is refused.
+            refused = config.firestore_key == "groq_rpm" and seen.count("groq_rpm") == 2
+            return (False, 20.0) if refused else (True, 0.0)
+
+        monkeypatch.setattr("routes.voice.check_global_rate_limit", _limit)
+        sarvam.transcript = self.HINDI
+
+        resp = _post(authed_client)
+
+        assert resp.status_code == 200
+        (intent,) = self._calls(llm)
+        assert self.HINDI in intent["messages"][1]["content"]
+        assert "groq_rpm" in self._log(fake_db)["translation_error"]
+
+    def test_a_groq_429_on_the_translation_is_retried_once(
+        self, authed_client, fake_db, sarvam, llm, monkeypatch
+    ):
+        monkeypatch.setattr("routes.voice.time.sleep", lambda _s: None)
+        sarvam.transcript = self.HINDI
+        busy = RuntimeError("rate limited")
+        busy.status_code = 429
+        answer = llm.client.chat.completions.create.side_effect
+        responses = iter([busy])
+
+        def _flaky(**kwargs):
+            err = next(responses, None)
+            if err:
+                raise err
+            return answer(**kwargs)
+
+        llm.client.chat.completions.create.side_effect = _flaky
+
+        body = _post(authed_client).json()
+
+        assert body["translated_text"] == self.ENGLISH
+        assert len(self._calls(llm)) == 3  # 429, retry, intent
+
+
+class TestPromptsAgree:
+    def test_the_translation_writes_the_price_phrases_the_intent_prompt_keys_on(self):
+        """If these drift apart, per-unit prices become line totals again."""
+        translation, intent = prompts.get_translation_prompt(), prompts.get_system_prompt()
+        for phrase in ("each", "per ", "for a total of"):
+            assert phrase in translation
+            assert phrase in intent
 
 
 class TestIntentExtraction:

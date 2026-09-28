@@ -37,11 +37,12 @@
 `routes/voice.py` → `db_operations.py`:
 
 1. Audio uploaded → rate limit checks (user cooldown, Sarvam RPM, Groq RPM/RPD).
-2. Sarvam AI STT (`saaras:v3`, `mode=translate`) → English transcript.
-3. Groq GPT-OSS 20B → structured JSON transactions (target/operation/item/qty/customer/supplier).
-4. `process_transactions()` applies each transaction: fuzzy-match items, update stock, log credit/orders.
-5. History saved as a background task.
-6. A diagnostic record is written to `voice_logs` (`voice_log.py`) at **every** exit point, not just this one — see below.
+2. Sarvam AI STT (`saaras:v3`, `mode=codemix`) → untranslated transcript: each language in its own script, English words (brands, units) in Latin, numbers as digits. Sarvam's REST API refuses audio over 30 s, so a longer clip (up to 2 minutes) is decoded by `audio_split.py` (PyAV), cut at the quietest point before each 28 s mark, and the chunks are transcribed in parallel and rejoined in order; each chunk is charged to the Sarvam RPM quota. A clip that fits in one request is sent exactly as uploaded.
+3. Groq GPT-OSS 20B, translation pass (`get_translation_prompt()`) → English. Runs only when the transcript contains non-Latin letters, and is charged to the Groq RPM/RPD quotas as its own request. It exists because Sarvam's translate mode rendered "12 rupees each" and "12 rupees for the lot" alike, so a per-unit price landed as a line total; this pass writes every price as "at X rupees each/per unit" or "for a total of X rupees" — the phrases the intent prompt keys on — and romanizes names instead of translating them. It fails open: a refused quota or unusable output sends the untranslated transcript to step 4, and `translation_error` in the voice log says why.
+4. Groq GPT-OSS 20B, intent pass (`get_system_prompt()`) → structured JSON transactions (target/operation/item/qty/customer/supplier).
+5. `process_transactions()` applies each transaction: fuzzy-match items, update stock, log credit/orders.
+6. History saved as a background task.
+7. A diagnostic record is written to `voice_logs` (`voice_log.py`) at **every** exit point, not just this one — see below.
 
 Voice **records transactions only — it never creates an inventory item or a supplier directory entry.** Both are catalogued through the manual forms, which capture the fields speech cannot carry (price, cost price, unit, category, photo; mobile, GST). `process_transactions()` enforces this: an unknown item name on a restock, supplier purchase or stock inquiry is rejected with an error rather than creating a stock doc, and any `target="supplier"` operation other than `read` is rejected.
 
@@ -57,7 +58,7 @@ Everything is per-user, under `users/{uid}/`:
 * `orders/{auto_id}` — customer order line items; items sharing an `order_id` form one order (legacy docs without it group by customer + day). Every line item also carries `order_no`, the shop's running order count, allocated once when the order is created and shared by all its items.
 * `bills/{order_id}` — per-bill metadata: `download_token`, `storage_path`, `generated_at`, `expires_at`, `stale`. The PDF itself lives in Firebase Storage at `users/{uid}/bills/{order_id}.pdf`. Deliberately **disposable** — see [Bill Retention](bill-retention.md).
 * `history/{auto_id}` — voice processing logs, the user-facing History screen. Written only when a request produced results or errors, and clearable by the shopkeeper.
-* `voice_logs/{auto_id}` — the support console's diagnostic record of one voice request: `transcript`, `intent` (raw LLM text), `status`, `error_detail`, per-stage timings, model names, audio size/mime, and the recent-customer context injected into the prompt. Written on **every** outcome including the failures — that is the point, since the request being complained about is the one that went wrong. No audio is stored. Deleted by a Firestore TTL on `expires_at` after 30 days; `DELETE /history` deliberately leaves it alone.
+* `voice_logs/{auto_id}` — the support console's diagnostic record of one voice request: `transcript` (as heard), `translation` (what the intent model read, when one was needed), `intent` (raw LLM text), `status`, `error_detail`, per-stage timings, model names and STT mode, audio size/mime, decoded duration (`audio_seconds`) and chunk count (`stt_chunks`), and the recent-customer context injected into the prompt. Written on **every** outcome including the failures — that is the point, since the request being complained about is the one that went wrong. No audio is stored. Deleted by a Firestore TTL on `expires_at` after 30 days; `DELETE /history` deliberately leaves it alone.
 * `suppliers/{auto_id}` — saved supplier directory entries.
 * `suppliers_purchases/{auto_id}` — wholesale purchase records.
 * `_meta/voice_cooldown`, `_meta/image_upload_limit` — per-user rate limit state, one document per feature.
