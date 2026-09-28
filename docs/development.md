@@ -51,7 +51,7 @@ line there whenever you introduce a new variable.
 ## Running the Checks
 
 ```bash
-pytest                              # full suite (682 tests, no network, no live data)
+pytest                              # full suite (716 tests, no network, no live data)
 pytest --cov=. --cov-report=term-missing
 ruff check .                        # Python lint
 ruff format --check tests/          # test formatting (only tests/ is format-gated)

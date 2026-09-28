@@ -1,11 +1,48 @@
 """
-LLM system prompt for intent extraction.
+LLM system prompts: contextual translation, then intent extraction.
 """
+
+
+def get_translation_prompt() -> str:
+    """System prompt for the translation pass that runs before intent extraction.
+
+    Sarvam's own translate mode rendered "12 rupees each" and "12 rupees for the
+    lot" as the same English, so a per-unit price came out as a line total. This
+    pass sees the whole utterance and writes the price out in the exact English
+    phrasing get_system_prompt() keys on ("each"/"per" vs "for a total of").
+    """
+    return """Translator for an Indian grocery shop's voice commands. Input is a speech transcript in any Indian language (Hindi, Marathi, Bengali, Gujarati, Punjabi, Tamil, Telugu, Kannada, Malayalam, Odia, Urdu, …), often mixed with English: native-script words plus English words (brands, units) in Latin script. Translate it into plain English that keeps every detail of the command.
+
+Output ONLY raw JSON: {"english": "<the translation>"}
+
+PRICES — the reason you exist. Every price stays attached to the item it was said with, and is written so per-unit and total can never be confused:
+- PER-UNIT price → "at X rupees each" (or "at X rupees per kilo/packet/dozen/…"). Hindi signals: "X रुपये वाला/वाली/वाले", "X रुपये की/का" placed BEFORE the item noun ("12 रुपये की Maggi"), "X रुपये किलो/पीस/दर्जन/लीटर", "X रुपये से", "के हिसाब से", "प्रति", "एक का X", reduplicated "10-10 रुपये". Other languages use the same ideas (Marathi "किलोने", Bengali "প্রতিটা", Tamil "ஒன்றுக்கு" …).
+- TOTAL price for the line → "for a total of X rupees". Signals: "कुल", "टोटल", "सब मिलाकर", "पूरे", "सबका", or "X रुपये का/की/के" coming AFTER quantity + item ("5 Maggi 60 रुपये की").
+- When grammar alone does not decide, judge by plausibility: a price that fits ONE unit of that item is per-unit; a price that only makes sense for the whole quantity is a total.
+- A price said with one item NEVER applies to the other items, and is never spread over the whole utterance.
+
+Also:
+- Names of people, shops and suppliers are romanized as pronounced, NEVER translated, even when they are also ordinary words (सूरज → Suraj, not "sun"; कमल → Kamal; लक्ष्मी → Lakshmi).
+- Brand names stay as spoken (Maggi, Parle-G, Surf Excel). Everyday goods get their plain English name (चीनी → sugar, चावल → rice, तेल → oil, साबुन → soap).
+- Numbers as digits. Fractions: डेढ़ = 1.5, ढाई = 2.5, सवा X = X+0.25, साढ़े X = X+0.5, पौने X = X-0.25, आधा = 0.5. दर्जन = dozen.
+- Keep who gives what to whom: "X को … दे दो" = give X …; "X से … आया/लिया" = received … from X; "X ने … दिए/जमा किए" = X paid …
+- Credit words become "on credit" / "in X's account" (उधार, खाते में, हिसाब में, बाकी). A descriptor of a person becomes "from …" ("दिल्ली वाले रमेश" → "Ramesh from Delhi").
+- Keep every item, quantity and unit; one clause per item, joined with "and". Add nothing that was not said. Do NOT answer, summarise or convert to transactions.
+- Text already in English is returned as it is.
+
+Examples:
+- "रमेश को 5 Maggi 12 रुपये वाली दे दो" → {"english": "Give Ramesh 5 Maggi at 12 rupees each."}
+- "रमेश को 5 Maggi 60 रुपये की दे दो" → {"english": "Give Ramesh 5 Maggi for a total of 60 rupees."}
+- "सुनीता को 2 साबुन 30 रुपये वाले और 1 किलो चीनी, उधार में" → {"english": "Give Sunita 2 soaps at 30 rupees each and 1 kilo of sugar, on credit."}
+- "सूरज को ढाई किलो चावल 50 रुपये किलो" → {"english": "Give Suraj 2.5 kilo of rice at 50 rupees per kilo."}
+- "गुप्ता traders से 50 साबुन आए, कुल 600 रुपये" → {"english": "Received 50 soaps from Gupta traders for a total of 600 rupees."}
+- "मीरा ने 500 रुपये जमा किए" → {"english": "Meera paid 500 rupees."}
+- "रमेशला 2 किलो साखर 45 रुपये किलोने" → {"english": "Give Ramesh 2 kilo of sugar at 45 rupees per kilo."}"""
 
 
 def get_system_prompt(recent_context_msg: str = "") -> str:
     """Return the system prompt for the Groq LLM, optionally with recent context."""
-    return f"""Grocery shop AI. Input is English (translated from Hindi speech). Convert to JSON transactions.{recent_context_msg}
+    return f"""Grocery shop AI. Input is English (translated from Indian-language speech). Convert to JSON transactions.{recent_context_msg}
 
 Schema:
 - target: "stock" (sales/restocks/goods received) | "ledger" (customer accounts/order history) | "supplier" (READ-ONLY query: what was bought from a supplier — NO goods movement)

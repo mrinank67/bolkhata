@@ -6,6 +6,7 @@ import datetime
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from fastapi import APIRouter, BackgroundTasks, File, Header, HTTPException, UploadFile
@@ -13,10 +14,19 @@ from fastapi.responses import JSONResponse
 from firebase_admin import firestore
 from groq import Groq
 
+from audio_split import (
+    MAX_AUDIO_SECONDS,
+    MAX_CHUNK_SECONDS,
+    MIN_AUDIO_SECONDS,
+    decode_pcm,
+    pcm_seconds,
+    split_pcm,
+    to_wav,
+)
 from auth import verify_token
 from db_operations import process_transactions
 from models import ResolveTransactionRequest
-from prompts import get_system_prompt
+from prompts import get_system_prompt, get_translation_prompt
 from rate_limiter import (
     GROQ_RPD,
     GROQ_RPM,
@@ -42,6 +52,17 @@ GROQ_REASONING_EFFORT = "low"
 # the voice log records which model produced a transcript — the first thing
 # worth knowing when transcription quality changes after an upgrade.
 STT_MODEL = "saaras:v3"
+# codemix, not translate: speech comes back untranslated — each language in its
+# own script, English words (brands, units) in Latin, numbers as digits. The
+# translation is a separate Groq pass (get_translation_prompt), because Sarvam's
+# translate mode rendered "12 rupees each" and "12 rupees for the lot" alike and
+# a per-unit price landed as the line total.
+STT_MODE = "codemix"
+SARVAM_URL = "https://api.sarvam.ai/speech-to-text"
+
+
+class SarvamBusy(Exception):
+    """Sarvam still answered 429 after the one retry."""
 
 
 def _get_groq_client():
@@ -64,6 +85,113 @@ def _debug_logs() -> bool:
     return os.getenv("DEBUG_LOGS", "").lower() in ("1", "true", "yes")
 
 
+def _needs_translation(text: str) -> bool:
+    """True when the transcript has any non-Latin letters.
+
+    codemix writes every Indian language in its own script, so a transcript of
+    plain ASCII letters is already English and the translation call is skipped.
+    """
+    return any(c.isalpha() and not c.isascii() for c in text)
+
+
+def _groq_json(db, system_prompt: str, user_content: str) -> str:
+    """One JSON-mode call to GROQ_MODEL, retried once on a Groq 429.
+
+    Returns the raw message content; raises Groq's error if the retry fails too.
+    """
+    kwargs = {
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "model": GROQ_MODEL,
+        "response_format": {"type": "json_object"},
+        "temperature": 0.0,
+        "reasoning_effort": GROQ_REASONING_EFFORT,
+    }
+    try:
+        completion = _get_groq_client().chat.completions.create(**kwargs)
+    except Exception as groq_err:
+        # Retry once on Groq 429 (rate limit from their side)
+        if getattr(groq_err, "status_code", None) != 429:
+            raise
+        record_rate_limit_hit(db, GROQ_RPM)
+        print("⚠️ Groq 429 — retrying after 3s...")
+        time.sleep(3)
+        completion = _get_groq_client().chat.completions.create(**kwargs)
+    return completion.choices[0].message.content
+
+
+def _translate(db, transcript: str) -> str:
+    """The transcript in English, from the contextual translation pass.
+
+    Charges its own Groq request to the global quotas. Raises on anything short
+    of a usable translation — including a refused quota — so the caller can fall
+    back to the untranslated transcript.
+    """
+    for config in (GROQ_RPM, GROQ_RPD):
+        allowed, retry_after = check_global_rate_limit(db, config)
+        if not allowed:
+            raise RuntimeError(f"skipped: {config.firestore_key} quota, retry_after={retry_after}")
+
+    raw = _groq_json(db, get_translation_prompt(), transcript)
+    english = json.loads(raw).get("english")
+    if not isinstance(english, str) or not english.strip():
+        raise ValueError(f"no translation in model output: {raw[:200]!r}")
+    return english.strip()
+
+
+def _transcribe_clip(db, clip: tuple) -> dict:
+    """One Sarvam REST call for one (filename, bytes, mime) clip of <= 30 s.
+
+    Retries once on 429 and raises SarvamBusy if the retry is refused too.
+    """
+    data = {
+        "model": STT_MODEL,
+        "language_code": "unknown",
+        "mode": STT_MODE,
+        "with_diarization": "false",
+    }
+    headers = {"api-subscription-key": _get_sarvam_key()}
+
+    response = requests.post(SARVAM_URL, headers=headers, data=data, files={"file": clip})
+    if response.status_code == 429:
+        record_rate_limit_hit(db, SARVAM_RPM)
+        print("⚠️ Sarvam 429 — retrying after 2s...")
+        time.sleep(2)
+        response = requests.post(SARVAM_URL, headers=headers, data=data, files={"file": clip})
+        if response.status_code == 429:
+            raise SarvamBusy()
+
+    response.raise_for_status()
+    return response.json()
+
+
+def _prepare_clips(audio_bytes: bytes, filename, mime) -> tuple[list[tuple], float | None]:
+    """The clips to send to Sarvam, and the decoded duration when it is known.
+
+    A clip under Sarvam's limit goes up exactly as uploaded. A longer one is cut
+    at pauses into WAV chunks (see audio_split.py). If the audio cannot be
+    decoded, it also goes up as uploaded: Sarvam may still read it, and if not,
+    that failure is logged exactly as it was before the splitting existed.
+    """
+    original = [(filename, audio_bytes, mime)]
+    try:
+        pcm = decode_pcm(audio_bytes)
+    except Exception as e:
+        print(f"⚠️ Could not decode audio for splitting: {type(e).__name__}: {e!s}")
+        return original, None
+
+    seconds = pcm_seconds(pcm)
+    if seconds <= MAX_CHUNK_SECONDS:
+        return original, seconds
+
+    clips = [
+        (f"chunk{i}.wav", to_wav(chunk), "audio/wav") for i, chunk in enumerate(split_pcm(pcm))
+    ]
+    return clips, seconds
+
+
 @router.post("/process_voice")
 async def process_voice(
     background_tasks: BackgroundTasks,
@@ -80,7 +208,7 @@ async def process_voice(
     # written at any exit point carries everything known by that point. A dict
     # rather than locals because the earliest exits (rate limits) happen before
     # the transcript, the intent or even the audio size exist.
-    ctx: dict = {"stt_model": STT_MODEL, "llm_model": GROQ_MODEL}
+    ctx: dict = {"stt_model": STT_MODEL, "stt_mode": STT_MODE, "llm_model": GROQ_MODEL}
 
     def _log(status: str, **fields):
         emit_voice_log(
@@ -253,68 +381,97 @@ async def process_voice(
                 "message": "Audio too short. Please hold the button while speaking.",
             }
 
-        # Push-to-talk clips are well under 1 MB; cap before spending Sarvam quota
+        # A 2-minute clip is ~2 MB at the browser's default Opus bitrate; cap
+        # before spending any effort on it
         if len(audio_bytes) > 2 * 1024 * 1024:
             _log("audio_too_long")
             return {
                 "status": "error",
-                "message": "Audio too long. Please keep messages under 30 seconds.",
+                "message": "Audio too long. Please keep messages under 2 minutes.",
             }
 
-        url = "https://api.sarvam.ai/speech-to-text"
-        files = {"file": (audio.filename, audio_bytes, audio.content_type)}
-        data = {
-            "model": STT_MODEL,
-            "language_code": "unknown",
-            "mode": "translate",
-            "with_diarization": "false",
-        }
-        headers = {"api-subscription-key": _get_sarvam_key()}
+        clips, seconds = _prepare_clips(audio_bytes, audio.filename, audio.content_type)
+        ctx["stt_chunks"] = len(clips)
+        if seconds is not None:
+            ctx["audio_seconds"] = round(seconds, 1)
+            if seconds < MIN_AUDIO_SECONDS:
+                _log("audio_too_short")
+                return {
+                    "status": "error",
+                    "message": "Audio too short. Please hold the button while speaking.",
+                }
+            if seconds > MAX_AUDIO_SECONDS:
+                _log("audio_too_long")
+                return {
+                    "status": "error",
+                    "message": "Audio too long. Please keep messages under 2 minutes.",
+                }
 
-        response = requests.post(url, headers=headers, data=data, files=files)
-
-        # Retry once on 429 from Sarvam
-        if response.status_code == 429:
-            record_rate_limit_hit(db, SARVAM_RPM)
-            print("⚠️ Sarvam 429 — retrying after 2s...")
-            time.sleep(2)
-            # Re-read audio bytes for retry (file pointer already consumed)
-            files_retry = {"file": (audio.filename, audio_bytes, audio.content_type)}
-            response = requests.post(url, headers=headers, data=data, files=files_retry)
-            if response.status_code == 429:
+        if len(clips) > 1:
+            # The Sarvam slot taken above pays for the first chunk; every further
+            # chunk is another request against the same per-minute quota.
+            allowed, retry_after = check_global_rate_limit(db, SARVAM_RPM, cost=len(clips) - 1)
+            if not allowed:
+                print(f"⚠️ Sarvam STT rate limit hit (chunked) — retry_after={retry_after}s")
                 _log(
                     "rate_limited",
-                    stt_ms=ms(t1, time.time()),
-                    error_detail="sarvam 429 after one retry",
+                    error_detail=f"global sarvam rpm ({len(clips)} chunks), retry_after={retry_after}",
                 )
                 return JSONResponse(
                     status_code=429,
                     content={
                         "status": "rate_limited",
-                        "message": "Voice service is busy. Please try again in a few seconds.",
-                        "retry_after": 5,
+                        "message": f"Server busy. Please try again in {retry_after:.0f} seconds.",
+                        "retry_after": retry_after,
                     },
-                    headers={"Retry-After": "5"},
+                    headers={"Retry-After": str(int(retry_after) + 1)},
                 )
 
-        response.raise_for_status()
+        if len(clips) == 1:
+            results = [_transcribe_clip(db, clips[0])]
+        else:
+            # In parallel, so a 1-minute clip costs about the latency of a
+            # 30-second one. map() keeps the chunks in spoken order.
+            with ThreadPoolExecutor(max_workers=len(clips)) as pool:
+                results = list(pool.map(lambda clip: _transcribe_clip(db, clip), clips))
 
-        result = response.json()
-        hindi_text = result.get("transcript", result.get("text", ""))
+        parts = (r.get("transcript", r.get("text", "")) or "" for r in results)
+        hindi_text = " ".join(p.strip() for p in parts if p.strip())
 
         ctx["stt_ms"] = ms(t1, time.time())
         ctx["transcript"] = hindi_text
-        print(f"⏱️ STT (Sarvam): {time.time() - t1:.2f}s")
+        ctx["stt_language"] = results[0].get("language_code")
+        print(f"⏱️ STT (Sarvam, {len(clips)} chunk(s)): {time.time() - t1:.2f}s")
         if _debug_logs():
             print(f"Heard: {hindi_text}")
 
+    except SarvamBusy:
+        _log(
+            "rate_limited",
+            stt_ms=ms(t1, time.time()),
+            error_detail="sarvam 429 after one retry",
+        )
+        return JSONResponse(
+            status_code=429,
+            content={
+                "status": "rate_limited",
+                "message": "Voice service is busy. Please try again in a few seconds.",
+                "retry_after": 5,
+            },
+            headers={"Retry-After": "5"},
+        )
+
     except Exception as e:
         print(f"❌ SARVAM STT ERROR: {e!s}")
-        if hasattr(e, "response") and e.response is not None:
+        error_detail = f"{type(e).__name__}: {e!s}"
+        if getattr(e, "response", None) is not None:
             print(f"Response: {e.response.text}")
+            # Sarvam's body is the only place a 400 says *why* it refused the
+            # audio; without it every rejection reads as a bare "Bad Request".
+            error_detail += f" | {e.response.text}"
         # The client is told nothing beyond "it failed"; the log is where the
         # actual reason lives, which is the whole point of writing one.
-        _log_now("stt_error", stt_ms=ms(t1, time.time()), error_detail=f"{type(e).__name__}: {e!s}")
+        _log_now("stt_error", stt_ms=ms(t1, time.time()), error_detail=error_detail)
         # Don't leak internal error details to the client
         raise HTTPException(status_code=500, detail="Speech recognition failed. Please try again.")
 
@@ -322,7 +479,25 @@ async def process_voice(
         _log("stt_empty")
         return {"status": "error", "message": "Could not hear anything clearly."}
 
-    # --- STEP 2: Intent Extraction via Groq LLM ---
+    # --- STEP 2: Contextual translation via Groq ---
+    # Fail-open: if the translation is refused or unusable, the intent model
+    # gets the untranslated transcript. It reads Indian languages well enough
+    # that this beats failing a request whose STT has already been paid for.
+    english_text = hindi_text
+    if _needs_translation(hindi_text):
+        t_tr = time.time()
+        try:
+            english_text = _translate(db, hindi_text)
+            ctx["translation"] = english_text
+            if _debug_logs():
+                print(f"Translated: {english_text}")
+        except Exception as e:
+            print(f"⚠️ Translation failed, using the raw transcript: {type(e).__name__}: {e!s}")
+            ctx["translation_error"] = f"{type(e).__name__}: {e!s}"
+        ctx["translate_ms"] = ms(t_tr, time.time())
+        print(f"⏱️ Translation (Groq {GROQ_MODEL}): {time.time() - t_tr:.2f}s")
+
+    # --- STEP 3: Intent Extraction via Groq LLM ---
     t2 = time.time()
     try:
         recent_context_msg = ""
@@ -331,38 +506,7 @@ async def process_voice(
 
         system_prompt = get_system_prompt(recent_context_msg)
 
-        try:
-            chat_completion = _get_groq_client().chat.completions.create(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Text to process: '{hindi_text}'"},
-                ],
-                model=GROQ_MODEL,
-                response_format={"type": "json_object"},
-                temperature=0.0,
-                reasoning_effort=GROQ_REASONING_EFFORT,
-            )
-        except Exception as groq_err:
-            # Retry once on Groq 429 (rate limit from their side)
-            err_status = getattr(groq_err, "status_code", None)
-            if err_status == 429:
-                record_rate_limit_hit(db, GROQ_RPM)
-                print("⚠️ Groq 429 — retrying after 3s...")
-                time.sleep(3)
-                chat_completion = _get_groq_client().chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Text to process: '{hindi_text}'"},
-                    ],
-                    model=GROQ_MODEL,
-                    response_format={"type": "json_object"},
-                    temperature=0.0,
-                    reasoning_effort=GROQ_REASONING_EFFORT,
-                )
-            else:
-                raise groq_err
-
-        json_str = chat_completion.choices[0].message.content
+        json_str = _groq_json(db, system_prompt, f"Text to process: '{english_text}'")
         intent = json.loads(json_str)
         ctx["llm_ms"] = ms(t2, time.time())
         # The raw string, not the parsed dict: when the LLM emits something the
@@ -394,7 +538,7 @@ async def process_voice(
         _log_now("llm_error", llm_ms=ms(t2, time.time()), error_detail=f"{type(e).__name__}: {e!s}")
         raise HTTPException(status_code=500, detail="Failed to understand the intent.")
 
-    # --- STEP 3: Standardization & Database Loop ---
+    # --- STEP 4: Standardization & Database Loop ---
     t3 = time.time()
     # Handle LLM returning either a flat object or a transactions array
     # (or "transactions": null)
@@ -449,6 +593,7 @@ async def process_voice(
         "results": result_list,
         "errors": errors,
         "raw_text": hindi_text,
+        "translated_text": ctx.get("translation"),
         "understood_intent": intent,
     }
 

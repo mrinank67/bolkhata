@@ -49,6 +49,7 @@ function formatIntent(raw) {
 function timingBar(entry) {
   const parts = [
     ["STT", entry.stt_ms],
+    ["Translate", entry.translate_ms],
     ["Intent", entry.llm_ms],
     ["Database", entry.db_ms],
     ["Total", entry.total_ms]
@@ -97,6 +98,14 @@ function buildEntry(entry) {
     ? `<blockquote class="admin-transcript">${esc(entry.transcript)}</blockquote>`
     : `<div class="admin-none">Nothing was transcribed.</div>`;
 
+  // The English the intent model actually read. Absent for an English
+  // utterance (no translation needed) and when the translation failed open.
+  const translation = entry.translation
+    ? `<div class="admin-hint">Translated</div><blockquote class="admin-transcript">${esc(entry.translation)}</blockquote>`
+    : entry.translation_error
+      ? `<div class="admin-none">Translation failed; the model read the transcript as heard.</div>`
+      : "";
+
   const intent = entry.intent
     ? `<pre class="admin-json">${esc(formatIntent(entry.intent))}</pre>`
     : `<div class="admin-none">The model was never reached.</div>`;
@@ -128,6 +137,7 @@ function buildEntry(entry) {
         <section>
           <h4>1 · Heard <span class="admin-hint">Sarvam</span></h4>
           ${transcript}
+          ${translation}
         </section>
         <section>
           <h4>2 · Understood <span class="admin-hint">Groq</span></h4>

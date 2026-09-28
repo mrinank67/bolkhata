@@ -16,13 +16,15 @@ from typing import Tuple
 # CONFIGURABLE LIMITS — Change these when upgrading API plans
 # ═══════════════════════════════════════════════════════════════
 
+
 @dataclass
 class RateLimitConfig:
     """Rate limit configuration for a single API."""
-    name: str               # Display name (e.g. "Groq LLM")
-    max_requests: int       # Max requests allowed in the window
-    window_seconds: int     # Sliding window size in seconds
-    firestore_key: str      # Key used in the Firestore rate_limits document
+
+    name: str  # Display name (e.g. "Groq LLM")
+    max_requests: int  # Max requests allowed in the window
+    window_seconds: int  # Sliding window size in seconds
+    firestore_key: str  # Key used in the Firestore rate_limits document
 
 
 # ── Groq Free Tier ──
@@ -32,14 +34,14 @@ class RateLimitConfig:
 # We use 80% to leave headroom.
 GROQ_RPM = RateLimitConfig(
     name="Groq LLM",
-    max_requests=24,         # 80% of 30 RPM
+    max_requests=24,  # 80% of 30 RPM
     window_seconds=60,
     firestore_key="groq_rpm",
 )
 
 GROQ_RPD = RateLimitConfig(
     name="Groq LLM (daily)",
-    max_requests=800,        # 80% of 1,000 RPD
+    max_requests=800,  # 80% of 1,000 RPD
     window_seconds=86400,
     firestore_key="groq_rpd",
 )
@@ -49,7 +51,7 @@ GROQ_RPD = RateLimitConfig(
 # We use 80% to leave headroom
 SARVAM_RPM = RateLimitConfig(
     name="Sarvam STT",
-    max_requests=48,         # 80% of 60 RPM
+    max_requests=48,  # 80% of 60 RPM
     window_seconds=60,
     firestore_key="sarvam_rpm",
 )
@@ -71,14 +73,14 @@ USER_DAILY_LIMIT = 400
 # their own budget rather than sharing the voice cooldown document.
 IMAGE_UPLOAD_RPM = RateLimitConfig(
     name="Item image upload",
-    max_requests=60,         # onboarding is bursty: ~10 shops adding items at once
+    max_requests=60,  # onboarding is bursty: ~10 shops adding items at once
     window_seconds=60,
     firestore_key="image_upload_rpm",
 )
 
 IMAGE_UPLOAD_RPD = RateLimitConfig(
     name="Item image upload (daily)",
-    max_requests=2000,       # ~2000 x 150 KB ≈ 300 MB/day worst case
+    max_requests=2000,  # ~2000 x 150 KB ≈ 300 MB/day worst case
     window_seconds=86400,
     firestore_key="image_upload_rpd",
 )
@@ -88,13 +90,14 @@ IMAGE_UPLOAD_RPD = RateLimitConfig(
 class UserLimitConfig:
     """Per-user cooldown + daily cap, scoped to its own _meta document so one
     feature's budget can never eat another's."""
-    doc: str                    # users/{uid}/_meta/{doc}
+
+    doc: str  # users/{uid}/_meta/{doc}
     cooldown_seconds: float
     daily_limit: int
 
 
 VOICE_USER_LIMIT = UserLimitConfig(
-    doc="voice_cooldown",                    # unchanged path — existing docs keep working
+    doc="voice_cooldown",  # unchanged path — existing docs keep working
     cooldown_seconds=USER_COOLDOWN_SECONDS,
     daily_limit=USER_DAILY_LIMIT,
 )
@@ -119,15 +122,18 @@ _RATE_LIMITS_COLLECTION = "_system"
 _RATE_LIMITS_DOC = "rate_limits"
 
 
-def check_global_rate_limit(
-    db, config: RateLimitConfig
-) -> Tuple[bool, float]:
+def check_global_rate_limit(db, config: RateLimitConfig, cost: int = 1) -> Tuple[bool, float]:
     """
     Check and update the global sliding-window rate limit for an API.
 
     For short windows (< 3600s): uses timestamp-based sliding window.
     For long windows (daily): uses a simple counter with date key
     to avoid storing thousands of timestamps in Firestore.
+
+    `cost` is how many upstream requests this one call will make — a long voice
+    clip is transcribed as several Sarvam requests, and each counts against the
+    provider's quota. All of them are admitted or none are. Only the sliding
+    window honours it; no daily limit is ever charged more than one.
 
     Uses a Firestore transaction to atomically read/prune/append.
 
@@ -155,14 +161,19 @@ def check_global_rate_limit(
         timestamps = data.get(config.firestore_key, [])
         active = [ts for ts in timestamps if ts > window_start]
 
-        if len(active) >= config.max_requests:
-            # Find earliest timestamp to calculate when a slot opens
-            oldest = min(active)
-            retry_after = round((oldest + config.window_seconds) - now, 1)
+        overflow = len(active) + cost - config.max_requests
+        if overflow > 0:
+            # The window has to shed `overflow` requests before this one fits;
+            # the last of those to expire is when enough slots open
+            if overflow <= len(active):
+                freeing = sorted(active)[overflow - 1]
+            else:
+                freeing = now  # cost exceeds the whole window
+            retry_after = round((freeing + config.window_seconds) - now, 1)
             return False, max(retry_after, 0.5)
 
-        # Allow: append current timestamp
-        active.append(now)
+        # Allow: append one timestamp per request being admitted
+        active.extend([now] * cost)
         transaction.set(doc_ref, {config.firestore_key: active}, merge=True)
         return True, 0.0
 
@@ -175,9 +186,7 @@ def check_global_rate_limit(
         return True, 0.0
 
 
-def _check_daily_rate_limit(
-    db, doc_ref, config: RateLimitConfig, now: float
-) -> Tuple[bool, float]:
+def _check_daily_rate_limit(db, doc_ref, config: RateLimitConfig, now: float) -> Tuple[bool, float]:
     """Counter-based daily rate limit — stores count + date string."""
     today = datetime.date.today().isoformat()  # e.g. "2026-05-31"
     count_key = f"{config.firestore_key}_count"
@@ -199,8 +208,7 @@ def _check_daily_rate_limit(
             # Calculate seconds until midnight
             now_dt = datetime.datetime.now()
             midnight = datetime.datetime.combine(
-                now_dt.date() + datetime.timedelta(days=1),
-                datetime.time.min
+                now_dt.date() + datetime.timedelta(days=1), datetime.time.min
             )
             retry_after = (midnight - now_dt).total_seconds()
             return False, round(retry_after, 0)
@@ -220,7 +228,6 @@ def _check_daily_rate_limit(
         return True, 0.0
 
 
-
 def check_user_limit(db, uid: str, config: UserLimitConfig) -> Tuple[bool, float]:
     """
     Check one feature's per-user cooldown and daily request cap.
@@ -238,12 +245,7 @@ def check_user_limit(db, uid: str, config: UserLimitConfig) -> Tuple[bool, float
 
     try:
         # Inside the try so the fail-open guarantee below covers every step.
-        doc_ref = (
-            db.collection("users")
-            .document(uid)
-            .collection("_meta")
-            .document(config.doc)
-        )
+        doc_ref = db.collection("users").document(uid).collection("_meta").document(config.doc)
         doc = doc_ref.get()
         data = doc.to_dict() if doc.exists else {}
 
@@ -262,11 +264,13 @@ def check_user_limit(db, uid: str, config: UserLimitConfig) -> Tuple[bool, float
             )
             return False, round((midnight - now_dt).total_seconds(), 0)
 
-        doc_ref.set({
-            "last_request_at": now,
-            "daily_count": daily_count + 1,
-            "daily_date": today,
-        })
+        doc_ref.set(
+            {
+                "last_request_at": now,
+                "daily_count": daily_count + 1,
+                "daily_date": today,
+            }
+        )
         return True, 0.0
     except Exception as e:
         print(f"⚠️ User limit check failed ({config.doc}): {e}")
@@ -314,13 +318,16 @@ def record_rate_limit_hit(db, config: RateLimitConfig):
 # FIRESTORE HELPERS
 # ═══════════════════════════════════════════════════════════════
 
+
 def _firestore_transactional(func):
     """Decorator to run a function inside a Firestore transaction."""
     from google.cloud.firestore_v1 import transactional
+
     return transactional(func)
 
 
 def _firestore_increment(value):
     """Firestore increment sentinel."""
     from google.cloud.firestore_v1 import Increment
+
     return Increment(value)

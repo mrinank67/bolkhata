@@ -126,6 +126,31 @@ class TestSlidingWindow:
         assert allowed is False
         assert retry_after >= 0.5
 
+    def test_cost_records_one_timestamp_per_request(self, fake_db):
+        """A voice clip split into three chunks is three Sarvam requests."""
+        allowed, _ = check_global_rate_limit(fake_db, self.config, cost=3)
+
+        assert allowed is True
+        assert len(fake_db.docs[RATE_DOC]["test_key"]) == 3
+
+    def test_cost_is_admitted_whole_or_not_at_all(self, fake_db):
+        fake_db.seed(RATE_DOC, {"test_key": [time.time()] * 2})
+
+        allowed, _ = check_global_rate_limit(fake_db, self.config, cost=2)
+
+        assert allowed is False
+        assert len(fake_db.docs[RATE_DOC]["test_key"]) == 2, "no partial charge"
+
+    def test_retry_after_for_a_cost_waits_for_enough_slots(self, fake_db):
+        now = time.time()
+        fake_db.seed(RATE_DOC, {"test_key": [now - 50, now - 20, now]})
+
+        # Needs two free slots: the second one opens when the -20s entry expires.
+        allowed, retry_after = check_global_rate_limit(fake_db, self.config, cost=2)
+
+        assert allowed is False
+        assert retry_after == pytest.approx(40, abs=2)
+
     def test_separate_apis_have_independent_windows(self, fake_db):
         other = RateLimitConfig(
             name="Other", max_requests=3, window_seconds=60, firestore_key="other_key"
