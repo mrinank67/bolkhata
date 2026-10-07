@@ -35,7 +35,9 @@ def fb_auth():
         stub.get_user.return_value = _fb_user()
         stub.get_user_by_email.return_value = _fb_user()
         stub.get_user_by_phone_number.return_value = _fb_user()
-        stub.list_users.return_value = SimpleNamespace(users=[_fb_user()])
+        stub.list_users.return_value = SimpleNamespace(
+            users=[_fb_user()], get_next_page=lambda: None
+        )
         yield stub
 
 
@@ -76,7 +78,29 @@ class TestUserLookup:
     def test_an_empty_query_lists_recent_signups(self, admin_client, fake_db, fb_auth):
         body = admin_client.get("/admin/users").json()
         assert len(body["users"]) == 1
+        assert body["total"] == 1
         fb_auth.list_users.assert_called_once()
+
+    def test_an_empty_query_counts_every_page_and_lists_the_newest_first(
+        self, admin_client, fake_db, fb_auth
+    ):
+        """Auth pages in uid order, so 'recent' has to be sorted out server-side."""
+
+        def user(i):
+            u = _fb_user(uid=f"u{i:03d}")
+            u.user_metadata = SimpleNamespace(
+                creation_timestamp=1700000000000 + i, last_sign_in_timestamp=None
+            )
+            return u
+
+        second = SimpleNamespace(users=[user(i) for i in range(20, 40)], get_next_page=lambda: None)
+        first = SimpleNamespace(users=[user(i) for i in range(20)], get_next_page=lambda: second)
+        fb_auth.list_users.return_value = first
+
+        body = admin_client.get("/admin/users").json()
+
+        assert body["total"] == 40
+        assert [u["uid"] for u in body["users"]] == [f"u{i:03d}" for i in range(39, 14, -1)]
 
 
 class TestOverview:
