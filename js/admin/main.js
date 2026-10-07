@@ -91,7 +91,9 @@ async function searchShops() {
       return;
     }
     results.innerHTML = `
-      <div class="admin-results-head">${q ? "Matches" : "Recent signups"}</div>
+      <div class="admin-results-head">${
+        q ? "Matches" : `Recent signups · ${esc(data.total ?? users.length)} shops in total`
+      }</div>
       <div class="admin-shop-rows">${users.map(buildShopRow).join("")}</div>`;
   } catch (err) {
     results.innerHTML = `<div class="admin-empty error">${esc(err.message)}</div>`;

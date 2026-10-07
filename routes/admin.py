@@ -13,6 +13,8 @@ claim. Uids arrive as path parameters here rather than as the acting header,
 because these routes are *about* a shop rather than acting as one.
 """
 
+import heapq
+
 from fastapi import APIRouter, Header, HTTPException, Query
 from firebase_admin import auth as fb_auth
 from firebase_admin import firestore
@@ -83,8 +85,22 @@ async def admin_find_users(
 
     query = (q or "").strip()
     if not query:
-        page = fb_auth.list_users(max_results=MAX_USER_RESULTS)
-        return {"users": [_user_summary(u) for u in page.users], "query": ""}
+        # list_users() pages in uid order, not signup order, and Auth has no
+        # count endpoint — so walk every page once, which yields both the total
+        # and the genuinely newest signups. Fine at this scale; revisit if the
+        # project grows past a few tens of thousands of accounts.
+        total = 0
+        newest = []
+        page = fb_auth.list_users()
+        while page:
+            total += len(page.users)
+            newest = heapq.nlargest(
+                MAX_USER_RESULTS,
+                [*newest, *page.users],
+                key=lambda u: getattr(u.user_metadata, "creation_timestamp", None) or 0,
+            )
+            page = page.get_next_page()
+        return {"users": [_user_summary(u) for u in newest], "query": "", "total": total}
 
     # Try each interpretation of the string; a phone number typed without the
     # country code is the common support case, so +91 is attempted as well.

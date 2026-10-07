@@ -50,7 +50,7 @@ These require the `admin` custom claim (`scripts/grant_admin.py`) and return **4
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
 | `/admin/me` | `GET` | Confirms the caller's claim server-side; the console renders nothing until this returns 200 |
-| `/admin/users?q=` | `GET` | Finds a shop by phone, email, or uid via Firebase Auth. A bare 10-digit number is retried with `+91`. Empty `q` lists recent signups |
+| `/admin/users?q=` | `GET` | Finds a shop by phone, email, or uid via Firebase Auth. A bare 10-digit number is retried with `+91`. Empty `q` lists the 25 newest signups plus `total`, the count of all accounts |
 | `/admin/users/{uid}/overview` | `GET` | Account, shop settings, per-collection counts, and today's voice usage |
 | `/admin/users/{uid}/voice-logs` | `GET` | The diagnostic records: transcript, intent, outcome, timings. Optional `status` filter and `limit` |
 | `/admin/users/{uid}/bills` | `GET` | Bill metadata. The `download_token` is deliberately omitted — with the storage path it reconstructs a public, never-expiring URL |
