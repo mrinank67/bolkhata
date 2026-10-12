@@ -21,14 +21,14 @@ function normalizeSupplierName(name) {
 }
 
 // ── Tab Switching ──
+export function showSupplierTab(target) {
+  document.querySelectorAll('.supplier-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === target));
+  document.querySelectorAll('.supplier-tab-content').forEach(c => c.classList.add('hidden'));
+  $(`supplier-tab-${target}`).classList.remove('hidden');
+}
+
 document.querySelectorAll('.supplier-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.supplier-tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    const target = tab.dataset.tab;
-    document.querySelectorAll('.supplier-tab-content').forEach(c => c.classList.add('hidden'));
-    $(`supplier-tab-${target}`).classList.remove('hidden');
-  });
+  tab.addEventListener('click', () => showSupplierTab(tab.dataset.tab));
 });
 
 // ── Load Saved Suppliers (Directory) ──
