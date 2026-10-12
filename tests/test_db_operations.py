@@ -799,17 +799,44 @@ class TestProcessTransactions:
 
     # --- "pichle order mein …" ------------------------------------------
 
-    def _seed_order(self, fake_db, doc_id, order_id, order_no, customer="", days_ago=0):
+    def _seed_order(
+        self,
+        fake_db,
+        doc_id,
+        order_id,
+        order_no,
+        customer="",
+        days_ago=0,
+        item="rice",
+        quantity=1,
+        price=0,
+    ):
         fake_db.seed(
             f"users/{self.UID}/orders/{doc_id}",
             {
                 "customer_name": customer,
                 "customer_modifier": "",
-                "item": "rice",
+                "item": item,
+                "quantity": quantity,
+                "price": price,
+                "amount": price * quantity,
                 "order_id": order_id,
                 "order_no": order_no,
                 "timestamp": _ts(days_ago),
             },
+        )
+
+    def _change(self, fake_db, change, item="maggi", qty=0, **overrides):
+        return self._run(
+            fake_db,
+            self._txn(
+                operation="subtract",
+                item=item,
+                qty=qty,
+                add_to_last_order=True,
+                order_change=change,
+                **overrides,
+            ),
         )
 
     def _lines_for(self, fake_db, item):
@@ -889,6 +916,168 @@ class TestProcessTransactions:
         lines = fake_db.paths_under(f"users/{self.UID}/orders")
         assert len({fake_db.docs[p]["order_id"] for p in lines}) == 1
         assert [g["title"] for g in results] == ["Customer Order"]
+
+    # --- "pichle order mein maggi ko 4 kardo" ---------------------------
+
+    def test_set_rewrites_the_line_to_the_new_total_and_moves_stock_by_the_difference(self):
+        """ "Badha ke 4 kardo" on an order of 2 means 4 on the order — not a
+        second line of 4 — and only the 2 extra leave the shelf."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=48, price=12)
+        self._seed_order(fake_db, "line", "o1", 4, item="maggi", quantity=2, price=12)
+
+        results, errors = self._change(fake_db, "set", qty=4)
+
+        assert errors == []
+        (line,) = self._lines_for(fake_db, "maggi")
+        assert (line["quantity"], line["amount"], line["order_id"]) == (4, 48, "o1")
+        assert fake_db.docs[f"users/{self.UID}/stock/maggi"]["quantity"] == 46
+        assert [g["title"] for g in results] == ["Order #4 Updated"]
+        assert results[0]["rows"][0]["Before"] == 2
+
+    def test_reduce_lowers_the_line_and_puts_stock_back(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=45, price=12)
+        self._seed_order(fake_db, "line", "o1", 4, item="maggi", quantity=5, price=12)
+
+        self._change(fake_db, "reduce", qty=2)
+
+        (line,) = self._lines_for(fake_db, "maggi")
+        assert (line["quantity"], line["amount"]) == (3, 36)
+        assert fake_db.docs[f"users/{self.UID}/stock/maggi"]["quantity"] == 47
+
+    def test_remove_deletes_the_line_and_puts_its_stock_back(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=45, price=12)
+        self._seed_order(fake_db, "line", "o1", 4, item="maggi", quantity=5, price=12)
+        self._seed_order(fake_db, "other", "o1", 4, item="rice", quantity=1, price=50)
+
+        results, _ = self._change(fake_db, "remove")
+
+        assert self._lines_for(fake_db, "maggi") == []
+        assert len(self._lines_for(fake_db, "rice")) == 1, "the rest of the order stays"
+        assert fake_db.docs[f"users/{self.UID}/stock/maggi"]["quantity"] == 50
+        assert results[0]["rows"][0]["Now"] == "Removed"
+
+    def test_set_collapses_several_lines_of_the_item_into_one(self):
+        """An earlier "aur 3 maggi" left two maggi lines; "4 kardo" means 4 in
+        all, so the order holds one line of 4 and one maggi returns to stock."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=45, price=12)
+        self._seed_order(fake_db, "a", "o1", 4, item="maggi", quantity=2, price=12)
+        self._seed_order(fake_db, "b", "o1", 4, item="maggi", quantity=3, price=12)
+
+        self._change(fake_db, "set", qty=4)
+
+        (line,) = self._lines_for(fake_db, "maggi")
+        assert line["quantity"] == 4
+        assert fake_db.docs[f"users/{self.UID}/stock/maggi"]["quantity"] == 46
+
+    def test_a_change_matches_the_orders_item_by_a_close_spoken_name(self):
+        """An uncatalogued item has no inventory name to snap to; the order's
+        own items are what a slightly-off transcript is matched against."""
+        fake_db = FakeFirestore()
+        self._seed_order(fake_db, "line", "o1", 4, item="birthday candle", quantity=2, price=20)
+
+        _, errors = self._change(fake_db, "set", item="birthday candles", qty=5)
+
+        assert errors == []
+        (line,) = self._lines_for(fake_db, "birthday candle")
+        assert (line["quantity"], line["amount"]) == (5, 100)
+
+    def test_removing_an_item_not_on_the_order_changes_nothing(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=45, price=12)
+        self._seed_order(fake_db, "line", "o1", 4, item="rice", quantity=1, price=50)
+
+        results, errors = self._change(fake_db, "remove")
+
+        assert results == []
+        assert errors == ["Maggi pichle order mein nahi hai."]
+        assert fake_db.docs[f"users/{self.UID}/stock/maggi"]["quantity"] == 45
+
+    def test_setting_an_item_not_on_the_order_adds_it_there(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=45, price=12)
+        self._seed_order(fake_db, "line", "o1", 4, item="rice", quantity=1, price=50)
+
+        self._change(fake_db, "set", qty=4)
+
+        (line,) = self._lines_for(fake_db, "maggi")
+        assert (line["order_id"], line["quantity"]) == ("o1", 4)
+        assert fake_db.docs[f"users/{self.UID}/stock/maggi"]["quantity"] == 41
+
+    def test_a_change_with_no_previous_order_books_nothing(self):
+        """A change is not a sale: with no order to change, the spoken quantity
+        must not turn into a new order."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=45, price=12)
+
+        results, errors = self._change(fake_db, "set", qty=4)
+
+        assert results == []
+        assert errors == ["Pichla order nahi mila — kuch nahi badla."]
+        assert fake_db.paths_under(f"users/{self.UID}/orders") == []
+        assert fake_db.docs[f"users/{self.UID}/stock/maggi"]["quantity"] == 45
+
+    # --- bills of orders voice changes ----------------------------------
+
+    def _seed_bill(self, fake_db, order_id):
+        fake_db.seed(f"users/{self.UID}/bills/{order_id}", {"order_id": order_id, "stale": False})
+
+    def test_adding_to_a_billed_order_marks_its_bill_stale(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=45, price=12)
+        self._seed_order(fake_db, "line", "o1", 4)
+        self._seed_bill(fake_db, "o1")
+
+        self._run(
+            fake_db, self._txn(operation="subtract", item="maggi", qty=2, add_to_last_order=True)
+        )
+
+        assert fake_db.docs[f"users/{self.UID}/bills/o1"]["stale"] is True
+
+    def test_changing_a_billed_order_marks_its_bill_stale(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=45, price=12)
+        self._seed_order(fake_db, "line", "o1", 4, item="maggi", quantity=2, price=12)
+        self._seed_bill(fake_db, "o1")
+
+        self._change(fake_db, "set", qty=4)
+
+        assert fake_db.docs[f"users/{self.UID}/bills/o1"]["stale"] is True
+
+    def test_a_follow_up_within_the_window_marks_the_bill_stale_too(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=45, price=12)
+        self._seed_order(fake_db, "line", "o1", 4, customer="sujal")
+        self._seed_bill(fake_db, "o1")
+
+        process_transactions(
+            [self._txn(operation="subtract", item="maggi", qty=1, customer_name="sujal")],
+            recent_customer="sujal",
+            recent_order_id="o1",
+            **self._refs(fake_db),
+        )
+
+        assert fake_db.docs[f"users/{self.UID}/bills/o1"]["stale"] is True
+
+    def test_a_billed_order_nothing_was_added_to_keeps_its_bill_fresh(self):
+        """The window seeds the recent order whether or not anything joins it;
+        only an order that actually changed loses its bill."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=45, price=12)
+        self._seed_order(fake_db, "line", "o1", 4, customer="sujal")
+        self._seed_bill(fake_db, "o1")
+
+        process_transactions(
+            [self._txn(operation="subtract", item="maggi", qty=1, customer_name="meera")],
+            recent_customer="sujal",
+            recent_order_id="o1",
+            **self._refs(fake_db),
+        )
+
+        assert fake_db.docs[f"users/{self.UID}/bills/o1"]["stale"] is False
 
     def test_supplier_purchase_of_known_item_records_purchase_without_directory_entry(self):
         """Decision: an unsaved supplier does not block a delivery, but voice

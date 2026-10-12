@@ -27,7 +27,7 @@ Also:
 - Numbers as digits. Fractions: डेढ़ = 1.5, ढाई = 2.5, सवा X = X+0.25, साढ़े X = X+0.5, पौने X = X-0.25, आधा = 0.5. दर्जन = dozen.
 - Keep who gives what to whom: "X को … दे दो" = give X …; "X से … आया/लिया" = received … from X; "X ने … दिए/जमा किए" = X paid …
 - Credit words become "on credit" / "in X's account" (उधार, खाते में, हिसाब में, बाकी). A descriptor of a person becomes "from …" ("दिल्ली वाले रमेश" → "Ramesh from Delhi").
-- Adding to an order already made becomes "to the previous order" (पिछले order में, last order में, उसी order में, पिछले वाले में, पहले वाले order में); with a name, "to X's previous order" (रमेश के पिछले order में).
+- Adding to an order already made becomes "to the previous order" (पिछले order में, last order में, उसी order में, पिछले वाले में, पहले वाले order में); with a name, "to X's previous order" (रमेश के पिछले order में). Changes to an item on it keep their meaning exactly: "बढ़ा के 4 कर दो"/"4 कर दो" → "increase to 4" (a new total), "2 कम कर दो" → "reduce by 2", "हटा दो"/"निकाल दो" → "remove".
 - Keep every item, quantity and unit; one clause per item, joined with "and". Add nothing that was not said. Do NOT answer, summarise or convert to transactions.
 - Text already in English is returned as it is.
 
@@ -39,6 +39,8 @@ Examples:
 - "गुप्ता traders से 50 साबुन आए, कुल 600 रुपये" → {"english": "Received 50 soaps from Gupta traders for a total of 600 rupees."}
 - "मीरा ने 500 रुपये जमा किए" → {"english": "Meera paid 500 rupees."}
 - "पिछले order में 2 Maggi और डाल दो" → {"english": "Add 2 more Maggi to the previous order."}
+- "पिछले order में Maggi को बढ़ा के 4 कर दो" → {"english": "In the previous order, increase Maggi to 4."}
+- "पिछले order से साबुन हटा दो" → {"english": "Remove the soap from the previous order."}
 - "रमेशला 2 किलो साखर 45 रुपये किलोने" → {"english": "Give Ramesh 2 kilo of sugar at 45 rupees per kilo."}"""
 
 
@@ -58,7 +60,8 @@ Schema:
 - customer_modifier: descriptor ("from delhi"). "" if none
 - supplier_name: vendor name, ONLY when shop is buying/receiving goods. Strip suffixes (supplier/wholesale/traders/distributor/supply) — "crazy girl supplier"→"crazy girl". "" if not supplier purchase
 - is_credit: true if "credit"/"account"/"dues"/"balance"/"pending"/"owed"/"on account" mentioned. false for "order"
-- add_to_last_order: true ONLY when the items go onto an order already made ("to the previous order"/"last order"/"same order"/"that order"/"pichle order mein"/"usi order mein"). Apply to ALL items in utterance. customer_name stays "" unless a name is spoken with it ("Ramesh's previous order"). false otherwise
+- add_to_last_order: true ONLY when the items go onto, or change, an order already made ("to the previous order"/"in the last order"/"same order"/"that order"/"pichle order mein"/"usi order mein"). Apply to ALL items in utterance. customer_name stays "" unless a name is spoken with it ("Ramesh's previous order"). false otherwise
+- order_change: ONLY with add_to_last_order=true, for an item ALREADY on that order. "set" = make its quantity qty ("increase to 4"/"make it 4"/"change to 4"/"badha ke 4 kardo"/"4 kar do") — qty is the NEW TOTAL, never the difference. "reduce" = lower it BY qty ("2 less"/"reduce by 2"/"2 kam kardo"). "remove" = take it off the order ("remove"/"hata do"/"cancel"/"nikal do"), qty=0. "" when adding more ("add 2 more"/"aur 2 de do") — that is a new line
 
 Rules:
 - Any item spoken for a NAMED customer is recorded, stocked or not. Never skip or rename an item because it sounds unfamiliar — pass it through as spoken
@@ -70,7 +73,7 @@ Rules:
 - Supplier query (NO item): "how much did I buy from X"/"X se kitna maal liya"/"X se kya khareeda" → target=supplier, operation=read, supplier_name=X
 
 Output ONLY raw JSON:
-{{"transactions":[{{"target":"stock","operation":"add","item":"clutcher","qty":120,"unit":"","amount":7800,"rate":0,"customer_name":"","customer_modifier":"","supplier_name":"asha wholesale","is_credit":false,"add_to_last_order":false}}]}}
+{{"transactions":[{{"target":"stock","operation":"add","item":"clutcher","qty":120,"unit":"","amount":7800,"rate":0,"customer_name":"","customer_modifier":"","supplier_name":"asha wholesale","is_credit":false,"add_to_last_order":false,"order_change":""}}]}}
 
 Examples:
 - "2 maggi in Ramesh from Delhi's account" → subtract, maggi, qty=2, ramesh, delhi, is_credit=true
@@ -86,4 +89,7 @@ Examples:
 - "Suresh gave 400 out of 1000, rest on credit" → ledger, payment, amount=400, suresh, is_credit=true (only the PAID amount, remaining is auto-calculated)
 - "add 2 more maggi to the previous order" → subtract, maggi, 2, customer_name="", add_to_last_order=true
 - "add 1 soap and 2 biscuits to Ramesh's previous order" → TWO txns, subtract, ramesh, add_to_last_order=true on both
+- "in the previous order, increase maggi to 4" → subtract, maggi, qty=4, add_to_last_order=true, order_change="set" (4 is the new total)
+- "reduce soap by 2 in the last order" → subtract, soap, qty=2, add_to_last_order=true, order_change="reduce"
+- "remove the biscuits from the previous order" → subtract, biscuit, qty=0, add_to_last_order=true, order_change="remove"
 - "give Ramesh 3 birthday candles at 20 rupees each" → subtract, birthday candle, 3, ramesh, rate=20 (unfamiliar item — record it as spoken, do not substitute)"""

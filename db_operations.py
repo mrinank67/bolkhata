@@ -12,7 +12,9 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from thefuzz import process
 
 from models import normalize_unit
-from routes.orders import _allocate_order_no  # one order-numbering path for the whole app
+
+# One order-numbering, pricing and bill-invalidation path for the whole app
+from routes.orders import _allocate_order_no, _display_price, _mark_bill_stale
 
 SUPPLIER_SUFFIXES = {
     "supplier",
@@ -203,6 +205,9 @@ def process_transactions(
     order_sessions = {}
     # Orders started by this call, so "the previous order" never means one of them.
     minted_order_ids = set()
+    # Every order this call wrote a line to or changed. Any that existed before
+    # the call may already have a bill, which no longer matches — see the end.
+    touched_order_ids = set()
 
     def _existing_order_no(order_id):
         """The number already carried by an order, so appending to it does not
@@ -226,6 +231,8 @@ def process_transactions(
                 _allocate_order_no(db, user_orders_ref.parent),
             )
             minted_order_ids.add(order_sessions[ckey][0])
+        # Called only where a line is about to be written to the order.
+        touched_order_ids.add(order_sessions[ckey][0])
         return order_sessions[ckey]
 
     # "Pichle order mein 2 maggi aur" — the shopkeeper adding to an order that is
@@ -313,6 +320,11 @@ def process_transactions(
         # dozen clutches read as ten clutches on the order and on the bill.
         order_unit = normalize_unit(txn_unit)
         add_to_last_order = bool(txn.get("add_to_last_order")) and operation == "subtract"
+        # How the item already on that order changes: "set" ("badha ke 4 kardo"),
+        # "reduce" ("2 kam kardo") or "remove" ("hata do"). Blank adds a new line.
+        order_change = str(txn.get("order_change") or "").lower() if add_to_last_order else ""
+        if order_change not in ("set", "reduce", "remove"):
+            order_change = ""
 
         # "Pichle order mein …" with no name belongs to whoever that order is
         # for — blank for a counter sale. The pair comes off a real order, so it
@@ -384,12 +396,18 @@ def process_transactions(
         # After disambiguation, so a named customer's order is looked up by the
         # namesake the shopkeeper actually picked. Seeding the session is all it
         # takes: every order line below books through _order_session_for().
+        previous = None
         if add_to_last_order and raw_item:
             ckey = f"{customer_name}|{customer_modifier if customer_name else ''}"
             previous = _previous_order(customer_name, customer_modifier)
             if previous and previous.get("order_id"):
                 order_sessions[ckey] = (previous["order_id"], previous.get("order_no"))
                 appended_orders[ckey] = previous.get("order_no")
+            elif order_change:
+                # A change to an order that cannot be found must change nothing,
+                # not book the quantity as a fresh sale.
+                errors.append("Pichla order nahi mila — kuch nahi badla.")
+                continue
             else:
                 missing = "Pichla order nahi mila — naya order banaya."
                 if missing not in errors:
@@ -836,6 +854,91 @@ def process_transactions(
         stock_doc = stock_doc_ref.get()
         in_inventory = stock_doc.exists
 
+        # --- Change an item already on the previous order ---
+        # "Pichle order mein maggi ko badha ke 4 kardo" means the order ends up
+        # with 4 maggi, not 4 more — so the existing lines are rewritten rather
+        # than a new one added.
+        if order_change and previous:
+            order_id = previous["order_id"]
+            lines = [
+                (doc.reference, doc.to_dict())
+                for doc in user_orders_ref.where(
+                    filter=FieldFilter("order_id", "==", order_id)
+                ).stream()
+            ]
+            # The order's own items are the candidates: the line may be an
+            # uncatalogued item, or carry a name inventory matching would miss.
+            item_names = sorted({d.get("item") for _, d in lines if d.get("item")})
+            line_item = standard_item if standard_item in item_names else None
+            if not line_item and item_names:
+                best_match, score = process.extractOne(raw_item, item_names)
+                if score > 70:
+                    line_item = best_match
+
+            if not line_item:
+                if order_change != "set":
+                    errors.append(f"{raw_item.capitalize()} pichle order mein nahi hai.")
+                    continue
+                # "Maggi 4 kardo" for an order with no maggi on it: the
+                # shopkeeper wants 4 on the order, which is a plain addition.
+                # Falls through to the sale path, already seeded to this order.
+            else:
+                matching = [(ref, d) for ref, d in lines if d.get("item") == line_item]
+                before = sum(_to_number(d.get("quantity")) for _, d in matching)
+                spoken = _to_number(raw_qty, default=1 if order_change == "reduce" else 0)
+                if order_change == "set":
+                    after = max(0, spoken)
+                elif order_change == "reduce":
+                    after = max(0, before - spoken)
+                else:
+                    after = 0
+
+                # Several lines of one item (an earlier "aur 2 maggi") collapse
+                # into the first, at its price unless a new one was spoken.
+                first_ref, first = matching[0]
+                price = txn_rate or _display_price(first)
+                if after > 0:
+                    first_ref.update(
+                        {"quantity": after, "price": price, "amount": round(price * after, 2)}
+                    )
+                    extra = matching[1:]
+                else:
+                    extra = matching
+                for ref, _ in extra:
+                    ref.delete()
+                touched_order_ids.add(order_id)
+
+                # A voice sale took its quantity out of stock, so a change by
+                # voice moves stock by the difference: up when the order shrinks.
+                stock_cell = "!"
+                line_stock_ref = user_stock_ref.document(line_item)
+                line_stock = line_stock_ref.get()
+                if line_stock.exists:
+                    stock_qty = _to_number(line_stock.to_dict().get("quantity"))
+                    stock_cell = max(0, stock_qty - (after - before))
+                    line_stock_ref.set(
+                        {"quantity": stock_cell, "updated_at": firestore.SERVER_TIMESTAMP},
+                        merge=True,
+                    )
+
+                order_no = previous.get("order_no")
+                group = get_group(
+                    f"order_change_{order_id}",
+                    f"Order #{order_no} Updated" if order_no else "Previous Order Updated",
+                    "✏️",
+                    ["Item", "Before", "Now", "Amount", "Stock"],
+                )
+                group["rows"].append(
+                    {
+                        "Item": line_item.capitalize(),
+                        "Before": before,
+                        "Now": after if after > 0 else "Removed",
+                        "Amount": f"₹{price * after:,.0f}" if after > 0 and price else "-",
+                        "Stock": stock_cell,
+                    }
+                )
+                continue
+
         # A sale is an order, and an order records whatever the shopkeeper
         # actually handed over — the inventory is a price/stock reference, not a
         # menu of what may be sold. An uncatalogued item is written to the order
@@ -1119,6 +1222,12 @@ def process_transactions(
                         "Current": new_qty,
                     }
                 )
+
+    # A bill already generated for an order this call added to or changed now
+    # shows the old items. Same as an edit on the Orders page: flag it so the app
+    # rebuilds it. A brand-new order has no bill yet.
+    for order_id in touched_order_ids - minted_order_ids:
+        _mark_bill_stale(user_orders_ref.parent, order_id)
 
     result_list = list(result_groups.values())
 
