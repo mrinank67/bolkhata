@@ -797,6 +797,99 @@ class TestProcessTransactions:
         assert [d["order_no"] for d in added] == [4]
         assert fake_db.docs[f"users/{self.UID}"]["order_seq"] == 4, "counter must not advance"
 
+    # --- "pichle order mein …" ------------------------------------------
+
+    def _seed_order(self, fake_db, doc_id, order_id, order_no, customer="", days_ago=0):
+        fake_db.seed(
+            f"users/{self.UID}/orders/{doc_id}",
+            {
+                "customer_name": customer,
+                "customer_modifier": "",
+                "item": "rice",
+                "order_id": order_id,
+                "order_no": order_no,
+                "timestamp": _ts(days_ago),
+            },
+        )
+
+    def _lines_for(self, fake_db, item):
+        return [
+            fake_db.docs[p]
+            for p in fake_db.paths_under(f"users/{self.UID}/orders")
+            if fake_db.docs[p].get("item") == item
+        ]
+
+    def test_previous_order_joins_the_latest_order_however_old(self):
+        """A counter sale, hours ago — no time window to fall out of, and the
+        nameless order is joined because the shopkeeper asked for it."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=50, price=12)
+        self._seed_order(fake_db, "older", "o1", 3, customer="sujal", days_ago=2)
+        self._seed_order(fake_db, "latest", "o2", 4, days_ago=1)
+        fake_db.seed(f"users/{self.UID}", {"order_seq": 4})
+
+        results, errors = self._run(
+            fake_db, self._txn(operation="subtract", item="maggi", qty=2, add_to_last_order=True)
+        )
+
+        assert errors == []
+        (line,) = self._lines_for(fake_db, "maggi")
+        assert (line["order_id"], line["order_no"], line["customer_name"]) == ("o2", 4, "")
+        assert fake_db.docs[f"users/{self.UID}"]["order_seq"] == 4, "counter must not advance"
+        assert [g["title"] for g in results] == ["Added to Order #4"]
+
+    def test_previous_order_unnamed_takes_that_orders_customer(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=50, price=12)
+        self._seed_order(fake_db, "latest", "o1", 7, customer="ramesh", days_ago=1)
+
+        self._run(
+            fake_db, self._txn(operation="subtract", item="maggi", qty=2, add_to_last_order=True)
+        )
+
+        (line,) = self._lines_for(fake_db, "maggi")
+        assert (line["order_id"], line["customer_name"]) == ("o1", "ramesh")
+
+    def test_a_named_previous_order_is_that_customers_latest(self):
+        """ "Ramesh ke pichle order mein" — Ramesh's newest order, not the
+        shop's newest, which belongs to someone else."""
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=50, price=12)
+        self._seed_order(fake_db, "r_old", "o1", 1, customer="ramesh", days_ago=5)
+        self._seed_order(fake_db, "r_new", "o2", 2, customer="ramesh", days_ago=3)
+        self._seed_order(fake_db, "s_new", "o3", 3, customer="sujal", days_ago=1)
+
+        self._run(
+            fake_db,
+            self._txn(
+                operation="subtract",
+                item="maggi",
+                qty=2,
+                customer_name="ramesh",
+                add_to_last_order=True,
+            ),
+        )
+
+        (line,) = self._lines_for(fake_db, "maggi")
+        assert (line["order_id"], line["order_no"]) == ("o2", 2)
+
+    def test_previous_order_with_none_to_join_starts_one_and_says_so(self):
+        fake_db = FakeFirestore()
+        self._seed_item(fake_db, "maggi", quantity=50, price=12)
+
+        results, errors = process_transactions(
+            [
+                self._txn(operation="subtract", item="maggi", qty=2, add_to_last_order=True),
+                self._txn(operation="subtract", item="rice", qty=1, add_to_last_order=True),
+            ],
+            **self._refs(fake_db),
+        )
+
+        assert errors == ["Pichla order nahi mila — naya order banaya."], "said once"
+        lines = fake_db.paths_under(f"users/{self.UID}/orders")
+        assert len({fake_db.docs[p]["order_id"] for p in lines}) == 1
+        assert [g["title"] for g in results] == ["Customer Order"]
+
     def test_supplier_purchase_of_known_item_records_purchase_without_directory_entry(self):
         """Decision: an unsaved supplier does not block a delivery, but voice
         still never writes to the suppliers directory."""

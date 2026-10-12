@@ -165,7 +165,9 @@ def process_transactions(
 
     When recent_order_id is supplied, items sold to recent_customer in this call
     append to that existing order (the "add to the same order within a timeframe"
-    feature) instead of starting a new order card.
+    feature) instead of starting a new order card. Independently of that window,
+    a transaction flagged add_to_last_order ("pichle order mein …") joins the
+    shop's latest order, or the named customer's latest, however old it is.
 
     Returns:
         (result_list, errors) — structured result groups and error messages.
@@ -199,6 +201,8 @@ def process_transactions(
     # all items spoken in a single command for the same customer group into one
     # order on the Orders page, under one order number.
     order_sessions = {}
+    # Orders started by this call, so "the previous order" never means one of them.
+    minted_order_ids = set()
 
     def _existing_order_no(order_id):
         """The number already carried by an order, so appending to it does not
@@ -221,7 +225,48 @@ def process_transactions(
                 user_orders_ref.document().id,  # pre-generated shared id
                 _allocate_order_no(db, user_orders_ref.parent),
             )
+            minted_order_ids.add(order_sessions[ckey][0])
         return order_sessions[ckey]
+
+    # "Pichle order mein 2 maggi aur" — the shopkeeper adding to an order that is
+    # already booked, however long ago. The LLM marks such items with
+    # add_to_last_order. Unnamed, it means the shop's latest order; with a name
+    # ("Ramesh ke last order mein …") it means that customer's latest. Read
+    # before the loop writes anything, so this call's own lines can't shadow it.
+    shop_last_order = None
+    if any(isinstance(t, dict) and t.get("add_to_last_order") for t in transactions):
+        try:
+            for doc in (
+                user_orders_ref.order_by("timestamp", direction=firestore.Query.DESCENDING)
+                .limit(1)
+                .stream()
+            ):
+                shop_last_order = doc.to_dict()
+        except Exception as e:
+            print(f"⚠️ Could not read the last order: {e}")
+
+    # customer key -> order_no of the existing order its items joined, so the
+    # result card can say "Added to Order #12" instead of "Customer Order".
+    appended_orders = {}
+
+    def _previous_order(customer, modifier):
+        """The order a "previous order" item joins, or None if there is none."""
+        if not customer:
+            return shop_last_order
+        latest = None
+        for doc in user_orders_ref.where(
+            filter=FieldFilter("customer_name", "==", customer)
+        ).stream():
+            data = doc.to_dict()
+            if (data.get("customer_modifier") or "").lower() != modifier:
+                continue
+            if not data.get("order_id") or data["order_id"] in minted_order_ids:
+                continue
+            if latest is None or (data.get("timestamp") or _EPOCH_MIN) > (
+                latest.get("timestamp") or _EPOCH_MIN
+            ):
+                latest = data
+        return latest
 
     # Seed the recent customer's session with their last order's id so a follow-up
     # command within the recent-context window appends to that same order card
@@ -267,6 +312,15 @@ def process_transactions(
         # plain count. Without this every voice sale landed unitless, and ten
         # dozen clutches read as ten clutches on the order and on the bill.
         order_unit = normalize_unit(txn_unit)
+        add_to_last_order = bool(txn.get("add_to_last_order")) and operation == "subtract"
+
+        # "Pichle order mein …" with no name belongs to whoever that order is
+        # for — blank for a counter sale. The pair comes off a real order, so it
+        # already points at one person and needs no "which Ramesh?" prompt.
+        if add_to_last_order and not customer_name and shop_last_order:
+            customer_name = (shop_last_order.get("customer_name") or "").lower()
+            customer_modifier = (shop_last_order.get("customer_modifier") or "").lower()
+            txn["_resolved"] = True
 
         # --- A ledger line has to name someone ---
         # Money owed to nobody can never be collected, and without a name the
@@ -325,6 +379,21 @@ def process_transactions(
                 group["disambiguation_options"] = options
                 group["pending_transaction"] = txn
                 continue
+
+        # --- Join the previous order ---
+        # After disambiguation, so a named customer's order is looked up by the
+        # namesake the shopkeeper actually picked. Seeding the session is all it
+        # takes: every order line below books through _order_session_for().
+        if add_to_last_order and raw_item:
+            ckey = f"{customer_name}|{customer_modifier if customer_name else ''}"
+            previous = _previous_order(customer_name, customer_modifier)
+            if previous and previous.get("order_id"):
+                order_sessions[ckey] = (previous["order_id"], previous.get("order_no"))
+                appended_orders[ckey] = previous.get("order_no")
+            else:
+                missing = "Pichla order nahi mila — naya order banaya."
+                if missing not in errors:
+                    errors.append(missing)
 
         # --- Handle Supplier Directory & Purchase Queries ---
         if target == "supplier":
@@ -937,12 +1006,27 @@ def process_transactions(
             # Every sale lands here, named or not: a counter sale books an order
             # with no customer on it rather than being recorded as stock movement
             # alone, so it can be priced, corrected and billed from the Orders page.
-            group = get_group(
-                "order_sale",
-                "Customer Order",
-                "🛍️",
-                ["Customer", "Item", "Qty", "Unit", "Rate", "Amount", "Total Ordered", "Stock"],
-            )
+            columns = [
+                "Customer",
+                "Item",
+                "Qty",
+                "Unit",
+                "Rate",
+                "Amount",
+                "Total Ordered",
+                "Stock",
+            ]
+            ckey = f"{order_customer}|{order_modifier}"
+            if ckey in appended_orders:
+                # Its own card, so the shopkeeper can see the items went onto the
+                # existing order rather than starting a new one.
+                appended_no = appended_orders[ckey]
+                title = (
+                    f"Added to Order #{appended_no}" if appended_no else "Added to previous order"
+                )
+                group = get_group(f"order_append_{ckey}", title, "➕", columns)
+            else:
+                group = get_group("order_sale", "Customer Order", "🛍️", columns)
 
             # Log every sale as its own order entry (a transaction record),
             # rather than merging into the customer's existing item entry. The
