@@ -948,6 +948,40 @@ input::placeholder {
   letter-spacing: -0.01em;
 }
 
+/* A card that opens the page its change landed on */
+.result-card-link {
+  cursor: pointer;
+  transition: border-color var(--transition);
+}
+
+.result-card-link:hover {
+  border-color: var(--border-focus);
+}
+
+.result-card-go {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition);
+}
+
+.result-card-link:hover .result-card-go {
+  color: var(--accent);
+}
+
+.result-card-go:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .result-card-empty {
   padding: 16px;
   color: var(--text-tertiary);

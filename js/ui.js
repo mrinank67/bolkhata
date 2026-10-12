@@ -5,7 +5,7 @@
 import { $, auth } from "./config.js";
 import { loadDashboardInventory } from "./dashboard.js";
 import { loadHistory } from "./history.js";
-import { loadSuppliers, loadSavedSuppliers } from "./suppliers.js";
+import { loadSuppliers, loadSavedSuppliers, showSupplierTab } from "./suppliers.js";
 import { loadLedgerCustomers } from "./ledger.js";
 import { loadOrders } from "./orders.js";
 
@@ -16,16 +16,44 @@ export const WA_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="#ff
 // ═══════ TABLE RENDERER ═══════
 const numericColumns = new Set(["#", "Stock", "Qty", "Sold", "Added", "Previous", "Current", "Current Stock", "Qty Owed", "Amount Owed", "Amount", "Stock Now", "Rate", "Total Owed", "Total Ordered", "Entries", "Amount Cleared"]);
 
+// The page a voice result card opens when tapped, matched on the prefix of the
+// group's action key from process_transactions() — per-customer and
+// per-supplier groups carry a suffix. Disambiguation and inventory-clear cards
+// have no entry: their action isn't done until the shopkeeper answers them.
+const resultPages = [
+  ["order_", "orders"],        // order_sale, order_append_*, order_change_*, order_inquiry_*
+  ["udhaar_sale", "ledger"],
+  ["ledger_inquiry_", "ledger"],
+  ["clear_ledger_", "ledger"],
+  ["send_reminder_", "ledger"],
+  ["payment_", "ledger"],
+  ["supplier_purchase", "suppliers"], // supplier_purchase, supplier_purchases_*
+  ["full_inventory", "inventory"],
+  ["inquiry", "inventory"],
+  ["increase", "inventory"],
+];
+
+function resultPage(action) {
+  const key = String(action || '');
+  const hit = resultPages.find(([prefix]) => key.startsWith(prefix));
+  return hit ? hit[1] : null;
+}
+
 export function buildResultHTML(results, errors, { isHistory = false } = {}) {
   // Escape any value before inserting into innerHTML — customer/item names
   // come from voice transcripts and manual entry
   const esc = (v) => escapeHtml(String(v ?? '-'));
   let html = '';
   for (const group of results) {
-    html += '<div class="result-card">';
+    // History renders the same cards but wires no listeners, so no link there
+    const page = isHistory ? null : resultPage(group.action);
+    html += page
+      ? `<div class="result-card result-card-link" data-page="${page}">`
+      : '<div class="result-card">';
     html += `<div class="result-card-header">
       <span class="result-card-icon">${esc(group.icon)}</span>
       <span class="result-card-title">${esc(group.title)}</span>
+      ${page ? `<button class="result-card-go" aria-label="Open ${pageTitles[page]}">${pageTitles[page]} <span aria-hidden="true">›</span></button>` : ''}
     </div>`;
     if (group.empty_message) {
       html += `<div class="result-card-empty">${esc(group.empty_message)}</div>`;
@@ -270,6 +298,22 @@ export function navigateTo(page) {
   if (page === "ledger") loadLedgerCustomers();
   if (page === "orders") loadOrders();
 }
+
+// Tapping a voice result card opens the page the change landed on. Delegated,
+// so cards appended after a disambiguation answer link up too. Other buttons
+// inside a card (WhatsApp, confirm) keep their own job, and a drag to select
+// text in the table is not a tap.
+$("result").addEventListener("click", e => {
+  const card = e.target.closest(".result-card-link");
+  if (!card) return;
+  const btn = e.target.closest("button");
+  if (btn && !btn.classList.contains("result-card-go")) return;
+  if (!btn && window.getSelection()?.toString()) return;
+  navigateTo(card.dataset.page);
+  // A supplier named by voice may not be in the directory yet; the Purchases
+  // tab always lists what was just recorded.
+  if (card.dataset.page === "suppliers") showSupplierTab("purchases");
+});
 
 // Wire nav items
 document.querySelectorAll(".nav-item").forEach(btn => {
