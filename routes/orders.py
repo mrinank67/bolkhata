@@ -126,13 +126,34 @@ def _order_id_for_doc(data: dict) -> str:
     return f"legacy|{cname}|{cmod}|{day}"
 
 
+def _added_at(doc) -> float:
+    """Sort key putting an order's lines in the sequence they were added.
+
+    Every line is written by its own add() with a SERVER_TIMESTAMP, and edits
+    never re-date a line, so the timestamp is the order it was spoken or typed
+    in. A line with no usable timestamp sorts last rather than failing the sort.
+    """
+    ts = (doc.to_dict() or {}).get("timestamp")
+    try:
+        return ts.timestamp()
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return float("inf")
+
+
 def _load_order_docs(orders_ref, order_id: str) -> list:
-    """Every line-item doc belonging to one order.
+    """Every line-item doc belonging to one order, in the order they were added.
+
+    An unordered query comes back in document-ID order, and auto IDs are random,
+    so without the sort a bill lists its lines in no particular sequence.
 
     Orders written before `order_id` existed have no such field: `get_orders`
     addresses them by the synthetic `legacy|{cname}|{cmod}|{day}` key, so they
     have to be matched back by customer + day instead of by a query.
     """
+    return sorted(_query_order_docs(orders_ref, order_id), key=_added_at)
+
+
+def _query_order_docs(orders_ref, order_id: str) -> list:
     if order_id.startswith("legacy|"):
         parts = order_id.split("|")
         cname = parts[1] if len(parts) > 1 else ""
@@ -264,6 +285,11 @@ async def get_orders(
         total_value += amount
 
     order_list = list(orders.values())
+    # The query runs newest-first so the newest orders lead the list, which
+    # leaves each order's lines newest-first too. Flip them back to the sequence
+    # they were added in — the same sequence the bill prints.
+    for o in order_list:
+        o["items"].reverse()
     _attach_bills(user_ref, order_list)
 
     return {

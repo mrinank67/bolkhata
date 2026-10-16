@@ -85,6 +85,19 @@ class TestGetOrders:
         assert len(orders) == 1
         assert len(orders[0]["items"]) == 2
 
+    def test_line_items_are_listed_in_the_order_they_were_added(self, authed_client, fake_db):
+        """Same sequence the bill prints — not newest-first, not by document ID."""
+        start = _ts()
+        for doc_id, item, secs in [("z", "rice", 0), ("a", "dal", 1), ("m", "atta", 2)]:
+            fake_db.seed(
+                f"{ORDERS}/{doc_id}",
+                _line(item=item, timestamp=start + datetime.timedelta(seconds=secs)),
+            )
+
+        items = authed_client.get("/orders").json()["orders"][0]["items"]
+
+        assert [it["item"] for it in items] == ["rice", "dal", "atta"]
+
     def test_separate_order_ids_stay_separate(self, authed_client, fake_db):
         fake_db.seed(f"{ORDERS}/a", _line(order_id="o1"))
         fake_db.seed(f"{ORDERS}/b", _line(order_id="o2"))

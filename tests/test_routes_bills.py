@@ -203,6 +203,23 @@ class TestGenerateBill:
         (pdf,) = storage.blobs.values()
         assert pdf.startswith(b"%PDF-")
 
+    def test_lines_print_in_the_order_they_were_added(self, fake_db, bill):
+        """Document IDs are random, so ID order is no order at all on a bill."""
+        start = datetime.datetime.now(datetime.UTC)
+        for doc_id, item, secs in [("z", "rice", 0), ("a", "dal", 1), ("m", "atta", 2)]:
+            fake_db.seed(
+                f"{ORDERS}/{doc_id}",
+                _line(item=item, timestamp=start + datetime.timedelta(seconds=secs)),
+            )
+        # A line whose timestamp never resolved goes last instead of failing the bill.
+        fake_db.seed(f"{ORDERS}/b", _line(item="sugar", timestamp=None))
+
+        with mock.patch("routes.bills._render_bill_pdf", return_value=b"%PDF-") as render:
+            assert bill().status_code == 200
+
+        printed = [it["item"] for it in render.call_args.kwargs["items"]]
+        assert printed == ["rice", "dal", "atta", "sugar"]
+
     def test_null_amounts_do_not_break_rendering(self, fake_db, bill):
         """Legacy rows can carry null quantity/amount."""
         fake_db.seed(f"{ORDERS}/a", _line(amount=None, qty=None))
