@@ -8,5 +8,5 @@ firebase-admin==7.7.0
 uvicorn==0.54.0
 itsdangerous==2.2.0
 reportlab==5.0.1
-pillow==12.3.0
+pillow==13.0.0
 av==19.0.1
