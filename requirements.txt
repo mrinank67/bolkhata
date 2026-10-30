@@ -1,4 +1,4 @@
-fastapi==0.143.0
+fastapi==0.162.0
 python-multipart==0.0.32
 thefuzz==0.22.1
 requests==2.34.2
@@ -7,6 +7,6 @@ python-dotenv==1.2.4
 firebase-admin==7.7.0
 uvicorn==0.54.0
 itsdangerous==2.2.0
-reportlab==5.0.1
+reportlab==5.1.0
 pillow==12.3.0
-av==19.0.1
+av==19.0.2
